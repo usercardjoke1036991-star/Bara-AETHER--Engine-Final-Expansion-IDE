@@ -1,0 +1,19 @@
+# ─────────────────────────────────────────────────────────────────────────
+#  Programa de ejemplo de bara-ide (sintaxis *Shoresh*)
+#
+#  El kernel es TOTAL: cualquier línea —incluidas las raíces desconocidas—
+#  se degrada a un valor tolerado en lugar de provocar un fallo. Los
+#  comentarios con `#` los descarta el propio lexer, no el IDE.
+#
+#  Uso:  cargo run -p bara-ide -- bara-ide/samples/genesis.bara
+#        (o, desde dentro de bara-ide: bara-ide samples/genesis.bara)
+# ─────────────────────────────────────────────────────────────────────────
+בָּרָא                       # manifestación ex nihilo (nikud tolerado)
+חכם                         # superposición adaptativa
+memoria: 42                 # etiqueta + literal numérico
+אמר "estado inicial"        # emisión de una cadena
+עבד + שפט                   # ejecución y juicio (disyunción)
+!!
+ברא -> memoria ?
+נצח                         # raíz desconocida ⇒ activa la autopoiesis
+שמר                         # sellado preventivo

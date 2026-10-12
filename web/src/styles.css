@@ -1,0 +1,509 @@
+/* Bara IDE — tema oscuro del oráculo (AETHER-Ω). */
+
+:root {
+  color-scheme: dark;
+  --bg: #0b0f14;
+  --pane: #111821;
+  --line: #1e2a38;
+  --text: #d7e3f0;
+  --muted: #7f8ea3;
+  --accent: #f0b429;
+  --root: #4fd1c5;
+  --unknown: #e07a5f;
+  --ident: #9ecbff;
+  --error: #ff6b6b;
+  /* Ancho del panel del asistente (reserva lateral del escritorio). */
+  --ai-width: 400px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body,
+#root {
+  margin: 0;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.bar {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.bar h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+}
+
+.tag,
+.status,
+.muted {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.grow {
+  flex: 1;
+}
+
+.error {
+  padding: 0.5rem 1rem;
+  background: #2a1418;
+  border-bottom: 1px solid var(--error);
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1.1fr;
+  gap: 1px;
+  flex: 1;
+  min-height: 0;
+  background: var(--line);
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--bg);
+  min-height: 0;
+  overflow: auto;
+}
+
+.pane h2 {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.path,
+.code {
+  background: var(--pane);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+  padding: 0.4rem;
+}
+
+.path {
+  flex: 1;
+  min-width: 0;
+}
+
+.code {
+  flex: 1;
+  min-height: 12rem;
+  resize: none;
+  line-height: 1.45;
+}
+
+button {
+  background: var(--pane);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.4rem 0.7rem;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.8rem;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.2rem 0.35rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.summary th {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.num {
+  font-family: "Consolas", monospace;
+  text-align: right;
+}
+
+.lexeme {
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+  unicode-bidi: plaintext;
+}
+
+.cls {
+  white-space: nowrap;
+}
+
+.cls.rootKnown {
+  color: var(--root);
+}
+
+.cls.rootUnknown {
+  color: var(--unknown);
+}
+
+.cls.identifier {
+  color: var(--ident);
+}
+
+.roots {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.roots li {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.glyph {
+  color: var(--root);
+  font-size: 1rem;
+}
+
+.meaning {
+  flex: 1;
+  color: var(--muted);
+}
+
+.count {
+  color: var(--accent);
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tokens {
+  min-width: 0;
+}
+
+/* ---------- Panel del asistente (AETHER-Ω) ---------- */
+
+/* Con el panel abierto, el escritorio reserva su ancho: nada queda tapado. */
+.app.ai-open {
+  padding-right: var(--ai-width);
+}
+
+.ai-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: var(--ai-width);
+  height: 100vh;
+  padding: 0.75rem;
+  border-left: 1px solid var(--line);
+  background: var(--pane);
+}
+
+/* Zona de arrastre activa: el panel es el destino de las imágenes. */
+.ai-panel.dragging {
+  outline: 1px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+.ai-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ai-head h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.ai-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
+.ai-log {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ai-welcome p {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+}
+
+.ai-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.ai-msg.user {
+  border-color: #24405c;
+}
+
+.ai-msg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ai-msg-head button {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+}
+
+.ai-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ai-text {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.inline-code {
+  padding: 0 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--pane);
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+  font-size: 0.85em;
+}
+
+/* ---------- Código, imágenes y redacción del asistente ---------- */
+
+.ai-code {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--pane);
+}
+
+.ai-code-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.75rem;
+}
+
+.ai-code-head button {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+}
+
+.ai-code-body {
+  max-height: 18rem;
+  margin: 0;
+  padding: 0.5rem;
+  overflow: auto;
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ai-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.ai-thumbs img {
+  max-width: 96px;
+  max-height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.ai-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ai-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+}
+
+.ai-chip img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.ai-chip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-chip button {
+  padding: 0 0.35rem;
+}
+
+.ai-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ai-input {
+  min-height: 3.5rem;
+}
+
+/* El botón de adjuntar es una etiqueta; el <input type="file"> va oculto. */
+.ai-attach {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--pane);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.ai-attach:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ai-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 0.8rem;
+}
+
+.ai-problems {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+/* ---------- Ajustes del cliente de IA ---------- */
+
+.ai-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ai-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.ai-field input,
+.ai-field select {
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+}
+
+.ai-field-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ai-field-row .ai-field {
+  flex: 1;
+}
+
+.ai-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.ai-check input {
+  margin-top: 0.15rem;
+}
+
+.ai-report summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+

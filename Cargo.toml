@@ -1,0 +1,43 @@
+[package]
+name = "bara-ide"
+version = "0.1.0"
+edition = "2021"
+description = "Front-end de IDE para el kernel Bara (AETHER-Omega)"
+license = "MIT"
+
+# Paquete interno del workspace: no se publica en crates.io.
+publish = false
+
+# Modelo de análisis (biblioteca) compartido por la CLI y por el backend de
+# escritorio Tauri (`src-tauri/`).
+[lib]
+name = "bara_ide"
+path = "src/lib.rs"
+
+# CLI clásica: `cargo run -p bara-ide -- samples/genesis.bara`.
+[[bin]]
+name = "bara-ide"
+path = "src/main.rs"
+
+[features]
+default = []
+
+# Deriva `serde::Serialize` sobre el modelo de análisis para que el backend de
+# escritorio (Tauri v2) pueda devolverlo como JSON al front-end React.
+# La CLI se compila SIN dependencias externas: la feature está apagada.
+serde = ["dep:serde"]
+
+[dependencies]
+
+# Kernel Bara enlazado por ruta: se usa su biblioteca tal cual (mismo lexer,
+# mismos tipos) en lugar de reimplementarla. `bara` es el paquete del repo
+# `BAR`, miembro del mismo workspace.
+bara = { path = "../BAR" }
+
+# Opcional: sólo la activa el crate `bara-ide-desktop` (`src-tauri/`).
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+# Sólo para las pruebas: verifica que el modelo serializado (feature `serde`)
+# publica exactamente las claves y clases que consume `web/src/engine.ts`.
+serde_json = "1"

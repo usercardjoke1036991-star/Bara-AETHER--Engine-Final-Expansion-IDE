@@ -1,0 +1,40 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Bara IDE Desktop — backend Tauri v2 del IDE Bara (AETHER-Ω)
+#
+#  Crate miembro del workspace raíz (`../../Cargo.toml`): no declara
+#  `[workspace]` propio a propósito, para no romper la pertenencia.
+#
+#  Capas (una sola dirección, cero duplicación de tipos):
+#      web/ (React+TS) --IPC--> src-tauri/ --> bara-ide (lib) --> bara (kernel)
+# ══════════════════════════════════════════════════════════════════════════
+[package]
+name = "bara-ide-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Aplicacion de escritorio (Tauri v2) del IDE Bara"
+license = "MIT"
+publish = false
+
+# Biblioteca del backend: `main.rs` sólo arranca la ventana.
+[lib]
+name = "bara_ide_desktop_lib"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "bara-ide-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Backend Tauri v2. Sin plugins: el IDE sólo necesita comandos propios.
+tauri = { version = "2", features = [] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Motor del IDE: la biblioteca `bara-ide` con la feature `serde` activada
+# (modelo serializable a JSON) y, tras ella, el kernel `bara` por ruta.
+bara-ide = { path = "..", features = ["serde"] }

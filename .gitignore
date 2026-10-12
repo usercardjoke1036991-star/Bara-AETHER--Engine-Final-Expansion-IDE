@@ -1,0 +1,18 @@
+# Front-end (Node)
+/node_modules
+/web/dist
+/.vite
+
+# Rust (el target real es el del workspace: ../../target)
+/target
+/src-tauri/gen
+
+# Secretos locales del panel de IA (nunca versionar una clave)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Caché del autodiagnóstico (`npm run test:ai`)
+/node_modules/.cache
+

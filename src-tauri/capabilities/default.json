@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capacidad de la ventana principal: API core de Tauri. Los comandos propios del IDE (analyze_source, analyze_file, kernel_catalogue, sample_genesis) no requieren permisos ACL.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
