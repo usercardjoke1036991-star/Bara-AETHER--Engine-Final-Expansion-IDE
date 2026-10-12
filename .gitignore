@@ -16,3 +16,6 @@
 # Caché del autodiagnóstico (`npm run test:ai`)
 /node_modules/.cache
 
+
+# Cache del autodiagnostico tambien bajo web/
+**/node_modules/.cache/
