@@ -383,7 +383,13 @@ y `pub fn run()` (arranque de la aplicación Tauri, invocado desde `src/main.rs`
   contra el 5.82 de System32, que **no exporta** `TaskDialogIndirect` → el arranque muere con
   `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND`; sin `RT_GROUP_ICON`, `tao` falla con `0x80070715`.
 
-### 5.3 Scripts del toolchain GNU (pendientes de commit)
+### 5.3 Scripts del toolchain GNU (versionados en `main`)
+
+> **Hallazgo verificado empíricamente:** Cargo **no** resuelve la ruta del `runner` contra el `config.toml`, sino
+> contra el **directorio de trabajo** desde el que se invoca `cargo`. Prueba: con `runner = ["python",
+> "scripts/win-gnu-runner.py"]` funciona desde `src-tauri\` pero falla desde `src-tauri\scripts\` (`can't open file
+> '…\src-tauri\scripts\scripts\win-gnu-runner.py'`, exit 2). Por eso la ruta va **absoluta** y el fichero documenta las
+> dos vías para portarla a otra máquina.
 
 | Fichero | Contenido |
 |---|---|
@@ -525,21 +531,20 @@ backend se cubre con `cargo check` + `cargo clippy`.
 
 ---
 
-## 9. Estado del árbol de trabajo (cierre del reconocimiento)
+## 9. Estado del árbol de trabajo (guardado en GitHub)
 
-| Camino | Estado |
+Todo este trabajo está **commiteado y empujado** a `origin/main`
+(`https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion-IDE.git`):
+
+| Commit | Contenido |
 |---|---|
-| `bara-ide\src-tauri\build.rs` | **Modificado** (corrección del toolchain GNU: `--exclude-all-symbols`, degradación a `cargo:warning`, lanzamiento del parcheador) — **sin commitear** |
-| `bara-ide\src-tauri\.cargo\config.toml` | **Nuevo, sin seguimiento** (runner GNU) |
-| `bara-ide\src-tauri\scripts\win-gnu-runner.py` | **Nuevo, sin seguimiento** |
-| `bara-ide\src-tauri\scripts\win-gnu-recursos.py` | **Nuevo, sin seguimiento** |
-| Todo el kernel `BAR\` | Limpio (no se tocó: el repo sigue intacto en `v0.1.0-kernel`) |
-| Este documento | Nuevo: `bara-ide\docs\INVENTARIO.md` |
+| `bef5b3b` | `fix(tauri): arranque del .exe con toolchain GNU sin windres` — 4 ficheros, +551/−8: `build.rs`, `.cargo/config.toml`, `scripts/win-gnu-runner.py`, `scripts/win-gnu-recursos.py` |
+| `be097b0` | `docs: inventario funcional del workspace (kernel + IDE)` — 2 ficheros, +606: `docs/INVENTARIO.md` y su enlace en `README.md` |
 
-Acción pendiente recomendada: `git add src-tauri/.cargo/ src-tauri/scripts/ src-tauri/build.rs docs/INVENTARIO.md` y
-commit de la corrección GNU.
+El árbol queda **limpio** (`git status --short` sin salida) y `main` al día con `origin/main`. El kernel **`BAR` no
+necesitó cambios**: sigue limpio y sincronizado en su rama `dev` (`## dev...origin/dev`).
 
-**Salida literal de `git status --porcelain`** (12/10/2026):
+Antes del commit el reconocimiento dejó este estado (`git status --porcelain`, 12/10/2026):
 
 ```
 bara-ide>  M src-tauri/build.rs
@@ -549,12 +554,20 @@ bara-ide> ?? src-tauri/scripts/
 BAR>       (sin cambios)
 ```
 
-Últimos commits del IDE: `76f6b2d chore(git): ignorar la cache del autodiagnostico bajo web/node_modules` ·
+**Salida literal del `git push`:**
+
+```
+To https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion-IDE.git
+   76f6b2d..be097b0  main -> main
+```
+
+Commits anteriores del IDE (contexto): `76f6b2d chore(git): ignorar la cache del autodiagnostico bajo web/node_modules` ·
 `bea4a84 chore: árbol completo de la interfaz Bara (Tauri + React)` ·
 `5efc893 feat(ipc): expone oráculo, biláttice de Belnap y control temporal Δ⁻¹ del kernel`.
 Últimos commits del kernel: `66aff83 fix(calidad): cierra H1-H6 (totalidad, perfiles, formato y metricas)` ·
 `04967ee chore(scripts): versionar el helper de CI como scripts/ci_status.ps1` ·
 `c7fa4a0 ci(workflow): YAML apto para validadores estrictos (yamllint limpio)`.
+
 
 ---
 
