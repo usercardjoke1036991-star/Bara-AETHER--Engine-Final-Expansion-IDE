@@ -24,6 +24,7 @@ web/  (React + TS)  --IPC-->  src-tauri/  -->  bara-ide (lib)  -->  bara (kernel
 ```
 bara-ide/
 ├── Cargo.toml              paquete `bara-ide`: biblioteca + CLI
+├── docs/INVENTARIO.md      inventario funcional del workspace completo (kernel + IDE)
 ├── src/
 │   ├── lib.rs              modelo (tokens, resumen, inventario), informes y pruebas
 │   └── main.rs             CLI histórica: `--tokens` / `--summary` / `--help` / `--version`
