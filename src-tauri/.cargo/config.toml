@@ -1,0 +1,28 @@
+# Runner de cargo para el toolchain GNU (MinGW).
+#
+# Por qué: `tauri-build` embebe icono y manifiesto en el `.exe` con `windres`,
+# pero un toolchain `stable-x86_64-pc-windows-gnu` de rustup no trae MinGW. Un
+# `.exe` sin manifiesto resuelve `comctl32` contra el 5.82 de System32, que no
+# exporta `TaskDialogIndirect` (lo importa la app): el proceso muere al arrancar
+# con 0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND. Y sin `RT_GROUP_ICON` falla con
+# 0x80070715 al cargar el icono de la ventana.
+#
+# `build.rs` corre *antes* del enlace, así que no puede embeber el recurso; el
+# runner sí, porque recibe la ruta del `.exe` ya enlazado. Ver
+# `scripts/win-gnu-runner.py` y `scripts/win-gnu-recursos.py`. En MSVC no hace
+# falta nada de esto (hay `rc.exe` y `WebView2Loader` se enlaza estáticamente).
+#
+# `rustflags`: el toolchain GNU de rustup no trae gcc/ld, así que se enlaza con
+# el `rust-lld` autocontenido y las bibliotecas MinGW que incluye rustup. Con
+# esto, `npm run tauri dev` (o `cargo run`) funciona sin variables de entorno.
+#
+# OJO con la ruta del `runner`: Cargo NO la resuelve contra este fichero, sino
+# contra el directorio de trabajo desde el que se invoca `cargo`. Por eso va
+# ABSOLUTA (única forma que funciona desde cualquier CWD). Para portarla a otra
+# máquina hay dos caminos:
+#   * editar la ruta de abajo y poner la de tu clone, o
+#   * poner "scripts/win-gnu-runner.py" y ejecutar siempre `cargo` desde la
+#     carpeta `src-tauri/` (con ese CWD sí resuelve; desde una subcarpeta no).
+[target.x86_64-pc-windows-gnu]
+runner = ["python", "C:/Users/Vexor/Downloads/bara-ide/src-tauri/scripts/win-gnu-runner.py"]
+rustflags = ["-C", "link-self-contained=yes"]
