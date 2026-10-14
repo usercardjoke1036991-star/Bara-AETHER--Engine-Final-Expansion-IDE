@@ -12,6 +12,11 @@
 //! catálogo de raíces ([`catalogue`]) y el traductor de lengua natural a
 //! *Shoresh* ([`translate`], el mismo léxico que usa el oráculo del REPL).
 //!
+//! El panel del **constructor visual** ([`visual`]) es la tercera proyección:
+//! envuelve el motor `bara::visual_builder` del kernel (lienzo JSON estricto →
+//! AST *Shoresh* validado → ADN firmado) para que el IDE pinte el lienzo, su
+//! retícula áurea y su sello.
+//!
 //! ## Invariantes
 //! 1. **Cero dependencias por defecto** — igual que el kernel, compilar esta
 //!    biblioteca (y por tanto la CLI) no arrastra *crates* externos. `serde` es
@@ -42,6 +47,17 @@ pub use aether::{
     timeline, AmplitudeView, AutopoiesisReport, AxiomView, BellView, BindingView, FractalCellView,
     FractalMemoryView, MeshNodeView, MeshView, MetalOpView, MetalView, ParadoxView, QuantumView,
     QubitView, RegisterView, TimelineDeltaView, TimelineView, ZkCheckView, ZkGateView,
+};
+
+// Panel del **constructor visual**: proyecta el motor `bara::visual_builder`
+// del núcleo (lienzo JSON estricto → AST *Shoresh* validado → ADN firmado) al
+// lienzo del IDE, sin reimplementar ni una regla del contrato.
+pub mod visual;
+
+pub use visual::{
+    visual_build, visual_catalogue, visual_compose, visual_sample, VisualBlockView,
+    VisualBuildView, VisualCatalogueView, VisualCellView, VisualCheckView, VisualKindView,
+    VisualLimitsView, VisualNodeView, VisualReportView, VisualSlotView, VisualTypeView,
 };
 
 /// Versión de este *front-end* (la del paquete `bara-ide`).
@@ -468,7 +484,11 @@ pub struct BelnapPoint {
 
 impl BelnapPoint {
     /// Proyecta un estado del kernel: aquí no se toma ninguna decisión lógica.
-    fn project(state: &QuantumState) -> Self {
+    ///
+    /// `pub(crate)` porque el panel del constructor visual ([`crate::visual`])
+    /// publica la valencia de cada nodo *Shoresh* con **este** mismo
+    /// proyector: la clasificación sigue siendo la del núcleo.
+    pub(crate) fn project(state: &QuantumState) -> Self {
         let (truth, falsity) = state.belnap();
         let observation = state.observe();
         BelnapPoint {

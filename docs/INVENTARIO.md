@@ -12,6 +12,12 @@
 para producirlo: los símbolos se extrajeron con volcados (`findstr`/`Select-String`) sobre los fuentes reales, de modo
 que **todo lo que aparece aquí existe en el árbol** con el nombre exacto que figura en él.
 
+**Actualización (14/10/2026):** se incorporan la **capa AETHER‑Ω** (cinco módulos exteriores de sólo lectura),
+`fractal_geometry` y el **constructor visual** (`visual_builder.rs` + su panel), y se corrigen los recuentos con
+mediciones de hoy: **17 módulos** en el kernel, **25 comandos IPC**, **110** pruebas del kernel y **34** del motor del
+IDE. La sección 3.1 detalla la API de los diez módulos del núcleo y la 3.3 la de los siete módulos añadidos después;
+el contrato del lienzo se documenta además en `docs/VISUAL_BUILDER.md` y la capa exterior en `BAR/README.md`.
+
 ---
 
 ## 0. Cómo leer este documento
@@ -34,7 +40,7 @@ runtime **paraconsistente/autopoiético** (lógica de Belnap: la contradicción 
 * El flujo de datos es de **una sola dirección**:
 
 ```
-web/ (React 19 + TS + Vite 7)  ──IPC──▶  src-tauri/ (Tauri v2 · 14 comandos)
+web/ (React 19 + TS + Vite 7)  ──IPC──▶  src-tauri/ (Tauri v2 · 25 comandos)
         interfaz gráfica                      │
                                               ▼
                                  bara-ide (lib/CLI · modelo serializable)
@@ -54,11 +60,11 @@ el IDE enseña el error del kernel y no uno propio.
 
 | Capa | Ámbito | Qué contiene |
 |---|---|---|
-| **A** | `bara-ide/src` | Motor del IDE: modelo serializable + CLI histórica (`bara-ide`) |
-| **B** | `bara-ide/src-tauri` | Backend Tauri v2 (`bara-ide-desktop`): 14 comandos IPC + build.rs + scripts de toolchain GNU |
-| **C** | `bara-ide/web/src` | Interfaz React/TypeScript (ventana, editor, tabla de tokens, panel de IA) |
+| **A** | `bara-ide/src` | Motor del IDE: modelo serializable, proyecciones AETHER‑Ω (`aether.rs`), constructor visual (`visual.rs`) y CLI histórica (`bara-ide`) |
+| **B** | `bara-ide/src-tauri` | Backend Tauri v2 (`bara-ide-desktop`): 25 comandos IPC + build.rs + scripts de toolchain GNU |
+| **C** | `bara-ide/web/src` | Interfaz React/TypeScript (ventana, editor, tabla de tokens, paneles AETHER‑Ω, lienzo visual y panel de IA) |
 | **D** | `bara-ide/web/scripts` | Autodiagnóstico en Node (`ai-check.mjs`) |
-| **E** | `BAR/src` | Kernel `bara`: 11 módulos + 2 binarios |
+| **E** | `BAR/src` | Kernel `bara`: 17 módulos + 2 binarios |
 | **F** | `BAR/` (raíz) | Manifiesto de ejemplo, scripts de CI, tests, workflows, configuración Cargo |
 
 ### 2.2 Árbol de ficheros
@@ -78,30 +84,42 @@ C:\Users\Vexor\Downloads\
 │   │   ├── check_profiles.ps1
 │   │   └── ci_status.ps1
 │   ├── src\
-│   │   ├── lib.rs            (10 `pub mod` + 4 reexportaciones)
-│   │   ├── main.rs           bin `bara` (programa génesis, 13 fases)
-│   │   ├── bin\bara_oracle.rs bin `bara_oracle` (REPL interactivo)
+│   │   ├── lib.rs            (65)   17 `pub mod` + 5 reexportaciones
+│   │   ├── main.rs           (782)  bin `bara` (programa génesis, 13 fases)
+│   │   ├── bin\bara_oracle.rs (335) bin `bara_oracle` (REPL interactivo)
 │   │   ├── lexer.rs          (388)
-│   │   ├── runtime.rs        (1131)
-│   │   ├── memory_region.rs  (290)
+│   │   ├── runtime.rs        (1203)
+│   │   ├── memory_region.rs  (317)
 │   │   ├── zk_proof.rs       (482)
-│   │   ├── ffi_ingest.rs     (273)
-│   │   ├── temporal_rollback.rs (380)
+│   │   ├── ffi_ingest.rs     (1108)
+│   │   ├── fractal_geometry.rs (463)
+│   │   ├── temporal_rollback.rs (273)
 │   │   ├── quantum_native.rs (955)
 │   │   ├── mesh_sync.rs      (1053)
 │   │   ├── metal_ir.rs       (949)
-│   │   └── repl.rs           (859)
+│   │   ├── repl.rs           (865)
+│   │   ├── visual_builder.rs (1614) constructor visual → *Shoresh* firmado
+│   │   ├── ast_dna.rs        (483)  AETHER‑Ω
+│   │   ├── crypto_native.rs  (1722) AETHER‑Ω
+│   │   ├── emission.rs       (1577) AETHER‑Ω
+│   │   ├── immunity_gateway.rs (1241) AETHER‑Ω
+│   │   └── net_camouflage.rs (2919) AETHER‑Ω
 │   └── tests\
-│       ├── integration_suite.rs (1412)
+│       ├── integration_suite.rs (1685)
+│       ├── fractal_suite.rs     (330)
 │       └── stress_test.rs       (596)
 │
 └── bara-ide\                          IDE
     ├── Cargo.toml  package.json  package-lock.json
     ├── vite.config.ts  tsconfig.json  README.md  .env.example  .gitignore
-    ├── docs\INVENTARIO.md             (este documento)
+    ├── docs\
+    │   ├── INVENTARIO.md              (este documento)
+    │   └── VISUAL_BUILDER.md          contrato del constructor visual (lienzo → *Shoresh* firmado)
     ├── samples\genesis.bara
     ├── src\
-    │   ├── lib.rs   (1408)   motor: tipos + informes + 18 pruebas
+    │   ├── lib.rs   (1439)   motor: tipos + informes + 34 pruebas
+    │   ├── aether.rs (1580)  paneles AETHER‑Ω (autopoiesis, ψ, malla, Metal-IR, Δ⁻¹, fractales)
+    │   ├── visual.rs (711)   constructor visual: lienzo → `bara::visual_builder` + sello del IDE
     │   └── main.rs  (101)    CLI `bara-ide`
     ├── src-tauri\
     │   ├── Cargo.toml  tauri.conf.json  build.rs (190)
@@ -110,27 +128,30 @@ C:\Users\Vexor\Downloads\
     │   ├── .cargo\config.toml         [sin commitear] runner GNU
     │   ├── scripts\                   [sin commitear]
     │   │   ├── win-gnu-runner.py   (48)
-    │   │   └── win-gnu-recursos.py (389)
-    │   └── src\{lib.rs (176), main.rs (13)}
+    │   │   └── win-gnu-recursos.py (388)
+    │   └── src\{lib.rs (310), main.rs (12)}
     └── web\
         ├── index.html
         ├── scripts\ai-check.mjs  (40)
         └── src\
-            ├── main.tsx (17)  App.tsx  engine.ts  styles.css  vite-env.d.ts
-            ├── ai\{types.ts (78), config.ts (241), images.ts (202),
+            ├── main.tsx (17)  App.tsx (548)  engine.ts (280)  aether.ts (551)
+            ├── visual.ts (198)  styles.css  vite-env.d.ts
+            ├── ai\{types.ts (79), config.ts (241), images.ts (202),
             │       prompt.ts (129), providers.ts (338), selfcheck.ts (429)}
             └── components\{ChatPanel.tsx (543), AiSettings.tsx (229),
-                            AssistantText.tsx (146)}
+                            AssistantText.tsx (146), KernelPanel.tsx (199),
+                            KernelCards.tsx (745), VisualBuilder.tsx (491)}
 ```
 
-**Métricas:** 1887 líneas de Rust en `bara-ide/src` + `src-tauri/src` + `build.rs`; kernel ≈ 7 900 líneas de
-código y ≈ 2 000 de pruebas.
+**Métricas (14/10/2026):** 4 343 líneas de Rust en el IDE —motor 3 831 (`lib.rs` 1 439 + `aether.rs` 1 580 +
+`visual.rs` 711 + CLI 101) + backend 322 (`src-tauri/src`) + `build.rs` 190—; kernel: **18 794** líneas de código
+(`src/` + `src/bin/`) y **2 611** de pruebas (`tests/`). Recuento con `Get-Content` / `find /c /v ""` sobre los ficheros.
 
 ---
 
 ## 3. Capa E/F — Kernel `bara` (`BAR`)
 
-### 3.1 Los 11 módulos y toda su API pública
+### 3.1 Los diez módulos del núcleo y su API pública
 
 #### `lexer.rs` — análisis léxico triconsonántico (388 líneas)
 | Elemento | Detalle |
@@ -141,7 +162,7 @@ código y ≈ 2 000 de pruebas.
 | `struct Token` | glifo, semántica, ubicación física (línea/columna) · `keyword()` |
 | `struct Lexer` | `new(source)`, `tokenize()` |
 
-#### `runtime.rs` — estado cuántico, memoria holográfica y ejecución (1131 líneas)
+#### `runtime.rs` — estado cuántico, memoria holográfica y ejecución (1203 líneas)
 | Elemento | Detalle |
 |---|---|
 | `enum Observation` | las 4 valencias de Belnap: `True` (⊤) · `False` (⊥) · `Both` (**contradicción tolerada**) · `Neither` (indeterminado) · `glyph()`, `name()` |
@@ -153,7 +174,7 @@ código y ≈ 2 000 de pruebas.
 | `enum ExecutionEvent` | eventos del log ontológico (cada variante describe su significado) · `describe()` |
 | `struct BaraRuntime` | `new`, `log()`, `push(state)`, `pop()`, `peek()`, `certify()` (ZK del AST), `ingest_c(source)`, `ingest_python(source)`, `note(event)`, `superpose_native(...)`, `entangle_native(...)`, `collapse_native(name)`, `mesh_sync(peers, rounds, threaded)`, `lower_metal(label, device, tokens)`, `execute(tokens)` |
 
-#### `memory_region.rs` — inferencia de regiones zero‑copy CPU/GPU (290 líneas)
+#### `memory_region.rs` — inferencia de regiones zero‑copy CPU/GPU (317 líneas)
 `RegionId(pub usize)` · `RegionKind` + `label`,`glyph` · `Device` + `label` · `Region` · `ZeroCopyHandle` · `Access` ·
 `RegionPlan` · `RegionTable` + `new`, `introduce`, `get`, `regions`, `len`, `is_empty`, `total_bytes`, `max_depth`,
 `depth_of`, `contains`, `share` · `RegionAnalyzer::infer(accesses) -> RegionPlan`
@@ -164,13 +185,17 @@ código y ≈ 2 000 de pruebas.
 `from_invariants`, `statement` · `ZkEvals` · `Proof` · `VerifyResult` · `fn prove(system, statement)` ·
 `fn verify(statement, proof)` · `ZkCertificate::certify(system, statement)`
 
-#### `ffi_ingest.rs` — ingesta omnívora de legado C/Python (273 líneas)
+#### `ffi_ingest.rs` — ingesta omnívora de legado C/Python/JSON/TypeScript (1108 líneas)
 `LegacyLang` + `label` · `Param` · `IngestedDecl` · `BaraType` + `label`, `glyph`, `from_legacy(ctype)` ·
-`ShoreshNode` · `ShoreshAst` + `hazard_score`, `sanitized_count`, `roots()` · `fn root_from_name(name)` ·
+`ShoreshNode` · `ShoreshAst` + `hazard_score`, `sanitized_count`, `roots()` · `BelnapCensus` ·
+`const MAX_STRUCT_MEMBERS = 4` · `fn root_from_name(name)` ·
 `fn hazard_of(text)` · `fn sanitize(decl) -> (f64, QuantumState, bool)` · `fn to_shoresh(decls)` ·
-`fn ingest_c(source) -> Vec<IngestedDecl>` · `fn ingest_python(source) -> Vec<IngestedDecl>`
+`fn ingest_c(source) -> Vec<IngestedDecl>` · `fn ingest_python(source) -> Vec<IngestedDecl>` ·
+`fn ingest_json(source) -> Vec<IngestedDecl>` · `fn ingest_typescript(source) -> Vec<IngestedDecl>` ·
+`fn detect_lang(source) -> Option<LegacyLang>` · `fn ingest(source, lang) -> Vec<IngestedDecl>` ·
+`fn ingest_auto(source) -> Vec<IngestedDecl>` · `fn ingest_auto_to_shoresh(source) -> ShoreshAst`
 
-#### `temporal_rollback.rs` — navegación temporal y `Δ⁻¹` (380 líneas)
+#### `temporal_rollback.rs` — navegación temporal y `Δ⁻¹` (273 líneas)
 `Marker(pub u64)` · `DeltaKind` + `inverse_label` · `Delta` + `inv_label` · `RollbackReport` · `Paradox` ·
 `fn detect_paradox(state) -> Option<Paradox>` · `TemporalEngine` + `new`, `now_micros`, `stack()`, `deltas()`,
 `mark()`, `push(state)`, `pop()`, `replace(after)`, `perform(kind, label)`, `rollback_to(marker)`,
@@ -217,7 +242,7 @@ código y ≈ 2 000 de pruebas.
   `dispatch()`
 * `MetalMapper::lower(label, device, tokens) -> MetalProgram`
 
-#### `repl.rs` — oráculo interactivo con monitor `Δ⁻¹` (859 líneas)
+#### `repl.rs` — oráculo interactivo con monitor `Δ⁻¹` (865 líneas)
 | Elemento | Detalle |
 |---|---|
 | `enum MetaCommand` | `Help`, `Status`, `Memory`, `Timeline`, `Quantum`, `Mesh`, `Metal`, `Zk`, `Undo`, `Quit`, `Unknown(String)` (tolerado) · `parse(raw)` (alias bilingües, acentos plegados) · `name()` |
@@ -241,9 +266,85 @@ código y ≈ 2 000 de pruebas.
 |---|---|---|
 | `bara` | `src/main.rs` | Ejecuta el **programa génesis** (`GENESIS_SOURCE`: `ברא`, `חכם`, `עבד`, `ברא`, `ברא`, `!!`, `עבד`, `שמר`, `נצח`, `עבד`, `אמר`, `שפט`, `אמר`) y emite el **log ontológico**. Si la entrada es un terminal real, entra además en el oráculo. Constante interna `GENESIS_SOURCE`. |
 | `bara` | idem | `bara --oracle` — **fuerza** el bucle interactivo aunque la entrada esté redirigida (guiones / CI). |
-| `bara_oracle` | `src/bin/bara_oracle.rs` (55) | REPL del oráculo: 10 meta‑comandos, turnos, `Δ⁻¹`, informe. |
+| `bara_oracle` | `src/bin/bara_oracle.rs` (335) | REPL del oráculo: 11 meta‑comandos (`10` + `Unknown`), turnos, `Δ⁻¹`, informe. |
 
-### 3.3 Las 13 fases del génesis (orden exacto)
+### 3.3 Módulos añadidos después del primer reconocimiento
+
+`fractal_geometry` pertenece al **núcleo** (reparto espacial de la memoria holográfica); `ast_dna`, `crypto_native`,
+`emission`, `immunity_gateway` y `net_camouflage` forman la **capa AETHER‑Ω** (exterior y de **sólo lectura** sobre
+el AST *Shoresh*), y `visual_builder` es el motor del **constructor visual** del IDE. Ninguno añade dependencias ni
+`unsafe`, y todos nacen con **0 llamadas a `unwrap()`/`expect()`** (axioma A1).
+
+#### `fractal_geometry.rs` — proporción áurea y reparto fractal (463 líneas)
+`phi()` · `golden_angle()` · `padding_bound()` · `POW2_PADDING_BOUND` · `FIB_SATURATION_INDEX` · `fibonacci(n)` ·
+`fib_series(n)` · `harmonic_series(n)` · `fib_ceil(bytes)` · `pow2_ceil(bytes)` · `golden_key(index)` ·
+`golden_order(count)` · `golden_slots(count)` · `FractalLayout` (`lib.rs` reexporta `fibonacci`, `fib_ceil`,
+`golden_angle`, `golden_slots` y `FractalLayout`).
+
+#### `ast_dna.rs` — ADN sintáctico firmado (483 líneas)
+`GOLDEN_FRACTION` · `DNA_KEY_INFO` · `type_code(kind)` · `root_fold(root)` · `canonical_node_bytes(node)` ·
+`node_identity(node)` · `golden_key(seed)` · `NodeDna` + `node_dna(node)` · `merkle_root(leaves)` · `key_id(key)` ·
+`AstDna` · `ast_dna(label, ast, key)` · `signature_is_valid(dna, key)` · `verify(label, ast, dna, key)` ·
+`short_hex(bytes)`
+
+#### `crypto_native.rs` — bóveda criptográfica autóctona (1722 líneas)
+`Sha256` · `sha256(data)` · `sha256_hex(data)` · `digest_eq(left, right)` · `SHA256_BLOCK` ·
+`hmac_sha256(key, message)` · `hkdf_extract(salt, ikm)` · `hkdf_expand(prk, info, out)` ·
+`hkdf_sha256(salt, ikm, info, out)` · `hkdf_32(salt, ikm, info)` · `chacha20_block(key, counter, nonce)` ·
+`chacha20_xor(key, counter, nonce, data)` · `poly1305_mac(message, key)` · `AEAD_TAG` ·
+`aead_seal(key, nonce, aad, plaintext)` · `aead_open(key, nonce, aad, sealed)` · `AES128_KEY` · `AES_BLOCK` ·
+`AES128_SCHEDULE` · `GCM_TAG` · `AES128_ROUNDS` · `Aes128` · `aes128_gcm_seal` · `aes128_gcm_open(key, nonce, aad, sealed)` ·
+`x25519(scalar, u_coordinate)` · `x25519_base(scalar)`
+
+#### `emission.rs` — emisión multiplataforma (1577 líneas)
+`EmitFormat` · `EmitHost` · `EmitOptions` · `SectionRecord` · `EmissionArtifact` ·
+`seal_statement(label, digest, root)` · `write_var_u32` · `write_var_i32` · `read_var_u32` · `read_var_i32` ·
+`WASM_HEADER` · `WASM_PAGE` · `SAFE_WASM_OPS` · `is_safe_wasm_op(opcode)` · `wasm_section_name(id)` ·
+`collect_wasm_sections(module)` · `WasmSummary` · `parse_wasm(module)` · `wasm_note(id)` · `emit_wasm` ·
+`AETHER_MAGIC` · `AetherRecord` · `aether_record(dna, metal)` · `parse_aether(bytes)` · `ELF_BASE` ·
+`ELF_TEXT_OFFSET` · `PORTABLE_MAGIC` · `NativeSummary` · `parse_native(image)` · `native_note(name)` · `emit_native`
+
+#### `immunity_gateway.rs` — pasarela de inmunidad paraconsistente (1241 líneas)
+`MAX_PAYLOAD` · `Packet` · `LoopbackIngress` · `TcpIngress` · `DESIGNATION` · `DANGER_CEILING` ·
+`SIZE_BOMB_BYTES` · `CONTROL_PADDING_PERMILLE` · `ATTACK_NEEDLES` · `MARK_SIZE_BOMB` · `MARK_CONTROL_PADDING` ·
+`MARK_DEEP_NESTING` · `MARK_NUL` · `MARK_UNREADABLE` · `Threat` · `is_legible(payload)` · `threat_of(payload)` ·
+`BubbleVerdict` · `Bubble` · `neutralized(payload, seed)` · `DoorPolicy` · `Gateway` · `GatewayReport` · `shelter`
+
+#### `net_camouflage.rs` — camuflaje de red TLS 1.3 (2919 líneas)
+Registro: `CT_CHANGE_CIPHER_SPEC` · `CT_ALERT` · `CT_HANDSHAKE` · `CT_APPLICATION_DATA` · `HS_CLIENT_HELLO` ·
+`HS_SERVER_HELLO` · `HS_ENCRYPTED_EXTENSIONS` · `HS_CERTIFICATE` · `HS_CERTIFICATE_VERIFY` · `HS_FINISHED` ·
+`LEGACY_VERSION` · `LEGACY_RECORD_VERSION` · `TLS13_VERSION` · `TLS_AES_128_GCM_SHA256` ·
+`TLS_AES_256_GCM_SHA384` · `TLS_CHACHA20_POLY1305_SHA256` · `TLS_AES_128_CCM_SHA256` · `SUITE_AES128_KEY` ·
+`SUITE_CHACHA_KEY` · `SUITE_IV` · `FINISHED_LEN` · `suite_key_length(cipher)` · `suite_is_supported(cipher)` ·
+`suite_name(cipher)` · `GROUP_X25519` · `GROUP_SECP256R1` · `SIG_ECDSA_P256` · `SIG_RSA_PSS` · `SIG_ED25519` ·
+extensiones `EXT_SERVER_NAME` … `EXT_KEY_SHARE` · `PSK_DHE_KE` · `MAX_RECORD` · `CAMOUFLAGE_MARK` ·
+`BROWSER_SESSION_ID` · `initial_record(content_type, payload)` · `plain_record(content_type, payload)` ·
+`CamouflageProfile` · `DnaStream` · `client_hello_body` · `client_hello` · `swarm_adn(seed)` ·
+`camouflage_mark(adn, fingerprint, random)` · `fingerprint_of(body)` · `CamouflagedClient` · `ParsedClientHello` ·
+`parse_client_hello(message)` · `verify_camouflage(message, adn)` · `ParsedServerHello` · `server_hello` ·
+`parse_server_hello(message)` · `hkdf_expand_label(secret, label, context, length)` ·
+`derive_secret(secret, label, transcript_hash)` · `transcript_hash(messages)` · `HandshakeSecrets` ·
+`handshake_secrets(shared, transcript)` · `master_secret(handshake_secret)` · `application_secrets` ·
+`TrafficKeys` · `record_overhead()` · `seal_record` · `open_record(keys, sequence, message)` ·
+`parse_finished(record)` · `parse_encrypted_extensions(record)` · `finished_key(traffic_secret)` ·
+`finished_verify_data(finished_key, transcript)` · `verify_finished` · `finished_message(verify_data)` ·
+`seal_finished` · `HandshakeState` · `ServerHelloOutcome` · `FinishedOutcome` · `ApplicationKeys` ·
+`HandshakeMachine` · `READ_TIMEOUT_MS` · `HttpsSession`
+
+#### `visual_builder.rs` — constructor visual: lienzo → *Shoresh* firmado (1614 líneas)
+`MAX_BLOCKS` (256) · `MAX_BLUEPRINT_BYTES` (64 KiB) · `MAX_JSON_DEPTH` (32) · `MAX_ID_CHARS` (64) ·
+`SEAL_THRESHOLD` (0.5) · `MIN_CELL_DISTANCE` (0.28) · `BlockKind` · `Slot` · `VisualBlock` · `Blueprint` · `Cell` ·
+`VisualCheck` · `VisualReport` · `VisualBuild` · `bara_type_from_name(name)` · `valid_id(id)` ·
+`triconsonantal(root)` · `parse_blueprint(json)` · `layout(count)` · `min_distance(cells)` · `radius(cells)` ·
+`topological(blueprint)` · `depth(blueprint)` · `risk_bounds(blueprint)` · `validate(blueprint)` ·
+`edges(blueprint)` · `blueprint_ast(blueprint)` · `blueprint_source(blueprint)` ·
+`build_blueprint(blueprint, key)` · `build(json, key)` · `build_composed(lienzos, key)` · `SAMPLE_BLUEPRINT` ·
+`sample_blueprint()`
+
+El contrato del lienzo (esquema JSON, clases de bloque, tipos, informe `VisualReport` y cotas) está documentado en
+`bara-ide/docs/VISUAL_BUILDER.md`; el panel que lo consume, en el README del IDE.
+
+### 3.4 Las 13 fases del génesis (orden exacto)
 
 1. Análisis léxico triconsonántico.
 2. Ejecución ontológica (log del génesis).
@@ -259,15 +360,20 @@ código y ≈ 2 000 de pruebas.
 12. **Metal‑IR**: mapeo de registros y bypass del driver.
 13. Oráculo **REPL** interactivo con monitor `Δ⁻¹`.
 
-### 3.4 Pruebas y guardas de calidad (Capa F)
+### 3.5 Pruebas y guardas de calidad (Capa F)
 
-* `tests/integration_suite.rs` (1412 líneas) + `tests/stress_test.rs` (596 líneas) = **40 pruebas** (30 + 10) según el README del kernel.
+* `cargo test -p bara`: **110** pruebas = **59** unitarias (una por módulo: `ast_dna` 5, `crypto_native` 12,
+  `emission` 6, `fractal_geometry` 9, `immunity_gateway` 8, `net_camouflage` 11, `visual_builder` 8) más **51** de
+  integración (`tests/integration_suite.rs` 1685 líneas / **33** pruebas · `tests/fractal_suite.rs` 330 / **8** ·
+  `tests/stress_test.rs` 596 / **10**).
+* `cargo test -p bara -p bara-ide --features bara-ide/serde`: **144** en el workspace (los 110 del kernel más **34**
+  del motor del IDE: `lib.rs` 18, `aether.rs` 11, `visual.rs` 5).
 * Guardas declaradas: **grep de totalidad** (sin `expect`/`unwrap` en `src`), `scripts/check_profiles.ps1` (perfiles), `cargo fmt`, `cargo clippy`, `.github/workflows/ci.yml` (5 verificaciones) y `.github/main-protection.json`.
 * `manifests/shoresh_manifest.bara` — manifiesto de ejemplo en raíces *Shoresh* que consume `Oracle::run_manifest`.
 
 ---
 
-## 4. Capa A — Motor del IDE (`bara-ide`, `src/lib.rs` + `src/main.rs`)
+## 4. Capa A — Motor del IDE (`bara-ide`: `src/lib.rs` + `src/aether.rs` + `src/visual.rs` + `src/main.rs`)
 
 Proyecta el lexer/oráculo del kernel a un **modelo serializable** (`Analysis`) que viaja por IPC. Reexporta el
 vocabulario del kernel: `pub use bara::lexer::{Keyword, Lexer, Token, TokenKind}`.
@@ -326,7 +432,7 @@ Privadas/respaldo: `token_class`, `lexeme`, `describe`, `summarize`, `inventory`
 `USAGE` con modos: `--tokens` · `--summary` · `--help`/`-h` · `--version`/`-V`; entrada por argumento de ruta o por
 `stdin` (`read_source`). Comparte el modelo y los informes con el backend (una sola fuente de verdad).
 
-### 4.5 Pruebas del motor (18 `#[test]`, no 11 como dice el README)
+### 4.5 Pruebas del motor (34 `#[test]`: 18 en `lib.rs`, 11 en `aether.rs`, 5 en `visual.rs`)
 
 `el_oraculo_y_la_bilattice_serializan_con_el_contrato_de_la_interfaz` ·
 `el_oraculo_de_la_sesion_usa_el_pipeline_del_kernel` · `la_sesion_es_determinista_y_el_rollback_idempotente` ·
@@ -340,11 +446,23 @@ Privadas/respaldo: `token_class`, `lexeme`, `describe`, `summarize`, `inventory`
 
 Ayudantes internos: `assert_counts_consistent`, `firma`.
 
+### 4.6 Capa AETHER‑Ω y constructor visual (`src/aether.rs` + `src/visual.rs`)
+
+* `aether.rs` (1580 líneas) proyecta siete servicios del kernel para los paneles: `AutopoiesisReport` (+
+  `ZkGateView`), `QuantumView`, `MeshView`, `MetalView`, `TimelineView` y `FractalMemoryView`, con las funciones
+  `autopoiesis(source)`, `quantum_register(source)`, `mesh_status(source, peers, rounds, threaded)`,
+  `metal_program(source, device)`, `timeline(source)`, `fractal_memory(source)` y `fractal_plan(widths)`.
+* `visual.rs` (711 líneas) envuelve `bara::visual_builder`: `visual_catalogue() -> VisualCatalogueView` (clases de
+  bloque, tipos y cotas **servidos por el kernel**, de modo que el panel no repite un solo literal del contrato),
+  `visual_sample() -> String`, `visual_build(blueprint: &str) -> Result<VisualBuildView, String>` y
+  `visual_compose(blueprints: &[String]) -> Result<VisualBuildView, String>`. Cada ADN se firma con la semilla
+  **pública y fija** del IDE (`VISUAL_KEY_SEED`): prueba **integridad y reproducibilidad**, no identidad de usuario.
+
 ---
 
 ## 5. Capa B — Backend Tauri (`bara-ide/src-tauri`, crate `bara-ide-desktop`)
 
-### 5.1 Los 14 comandos IPC (`src/lib.rs`, 176 líneas)
+### 5.1 Los 25 comandos IPC (`src/lib.rs`, 310 líneas)
 
 | # | Comando | Firma |
 |---|---|---|
@@ -359,12 +477,24 @@ Ayudantes internos: `assert_counts_consistent`, `firma`.
 | 9 | `oracle_turns` | `(state) -> Result<Vec<TurnView>, String>` |
 | 10 | `oracle_reset` | `(state) -> Result<SessionStatus, String>` |
 | 11 | `temporal_deltas` | `(state) -> Result<Vec<DeltaView>, String>` |
-| 12 | `temporal_rollback` | `(marker, state) -> Result<TurnResult, String>` |
+| 12 | `temporal_rollback` | `(marker: u64, state) -> Result<TurnResult, String>` |
 | 13 | `belnap_lattice` | `() -> BelnapLattice` |
 | 14 | `belnap_evaluate` | `(truth: f64, falsity: f64) -> BelnapEvaluation` |
+| 15 | `autopoiesis` | `(source: String) -> AutopoiesisReport` |
+| 16 | `quantum_native` | `(source: String) -> QuantumView` |
+| 17 | `mesh_sync` | `(source: String, peers: usize, rounds: usize, threaded: bool) -> MeshView` |
+| 18 | `metal_ir` | `(source: String, device: Option<String>) -> MetalView` |
+| 19 | `temporal_timeline` | `(source: String) -> TimelineView` |
+| 20 | `fractal_memory` | `(source: String) -> FractalMemoryView` |
+| 21 | `fractal_plan` | `(widths: Vec<usize>) -> FractalMemoryView` |
+| 22 | `visual_catalogue` | `() -> VisualCatalogueView` |
+| 23 | `visual_sample` | `() -> String` |
+| 24 | `visual_build` | `(blueprint: String) -> Result<VisualBuildView, String>` |
+| 25 | `visual_compose` | `(blueprints: Vec<String>) -> Result<VisualBuildView, String>` |
 
 Además: `fn with_session<T>(...)` (ayudante que resuelve el `Mutex<Session>` y traduce los fallos a errores legibles)
-y `pub fn run()` (arranque de la aplicación Tauri, invocado desde `src/main.rs`, 13 líneas).
+y `pub fn run()` (arranque de la aplicación Tauri, con `tauri::generate_handler!` listando los **25** comandos; se
+invoca desde `src/main.rs`, 12 líneas).
 
 ### 5.2 `build.rs` (190 líneas) — recursos de Windows sin pánicos
 
@@ -395,14 +525,15 @@ y `pub fn run()` (arranque de la aplicación Tauri, invocado desde `src/main.rs`
 |---|---|
 | `.cargo/config.toml` | `[target.x86_64-pc-windows-gnu] runner = ["python", "…\\scripts\\win-gnu-runner.py"]` |
 | `scripts/win-gnu-runner.py` (48) | Runner de cargo: si el binario es `bara-ide-desktop.exe` (`NOMBRE_APP`) lo parchea llamando a `win-gnu-recursos.py --exe …` (con aviso si falla) y después lo ejecuta con `subprocess.call` — el mismo camino (`CreateProcess`) que usan `cargo` y `tauri`. Los demás binarios (pruebas, ejemplos, `bench`) se ejecutan sin tocar nada. |
-| `scripts/win-gnu-recursos.py` (389) | Embebe los recursos que `windres` habría puesto, **solo con `ctypes`** y de forma **idempotente**: `RT_MANIFEST` (id 1) con la dependencia **Common‑Controls 6.0.0.0**; `RT_ICON` + `RT_GROUP_ICON` desde `icons/icon.ico`, con el grupo en dos ids — `1` (icono “principal” del `.exe`, el del Explorador) y `32512 = ID_ICONO_APP` (`tauri_utils` lo busca para el icono de ventana); **copia `WebView2Loader.dll`** junto al `.exe` (en MSVC va estático). Funciones clave: `leer_ico()` (ICO multi‑tamaño), `embebe_recursos()` (`BeginUpdateResourceW` / `UpdateResourceW` / `EndUpdateResourceW`), `_existe_recurso()` (`LoadLibraryExW` con `LOAD_LIBRARY_AS_DATAFILE` + `FindResourceW`, sin ejecutar nada). Uso: `--exe RUTA [--forzar]`, `--wait 900` (espera al enlace) y `--probar 20` (prueba de humo: lanza y mide segundos de supervivencia). |
+| `scripts/win-gnu-recursos.py` (388) | Embebe los recursos que `windres` habría puesto, **solo con `ctypes`** y de forma **idempotente**: `RT_MANIFEST` (id 1) con la dependencia **Common‑Controls 6.0.0.0**; `RT_ICON` + `RT_GROUP_ICON` desde `icons/icon.ico`, con el grupo en dos ids — `1` (icono “principal” del `.exe`, el del Explorador) y `32512 = ID_ICONO_APP` (`tauri_utils` lo busca para el icono de ventana); **copia `WebView2Loader.dll`** junto al `.exe` (en MSVC va estático). Funciones clave: `leer_ico()` (ICO multi‑tamaño), `embebe_recursos()` (`BeginUpdateResourceW` / `UpdateResourceW` / `EndUpdateResourceW`), `_existe_recurso()` (`LoadLibraryExW` con `LOAD_LIBRARY_AS_DATAFILE` + `FindResourceW`, sin ejecutar nada). Uso: `--exe RUTA [--forzar]`, `--wait 900` (espera al enlace) y `--probar 20` (prueba de humo: lanza y mide segundos de supervivencia). |
 
 ---
 
 ## 6. Capa C/D — Interfaz React (`bara-ide/web`)
 
-React 19 + TypeScript 5 + Vite 7. Tres ficheros raíz (`main.tsx`, `App.tsx`, `engine.ts`), seis módulos en `ai/`
-y tres componentes. **Regla de oro:** la interfaz no traduce ni reinterpreta el kernel; solo pinta lo que recibe.
+React 19 + TypeScript 5 + Vite 7. Cinco ficheros raíz (`main.tsx`, `App.tsx`, `engine.ts`, `aether.ts`, `visual.ts`),
+seis módulos en `ai/` y seis componentes. **Regla de oro:** la interfaz no traduce ni reinterpreta el kernel; solo
+pinta lo que recibe.
 
 ### 6.1 `main.tsx` (17 líneas)
 Monta el árbol React sobre `#root` (`const container = document.getElementById("root")`), importa `styles.css`.
@@ -419,6 +550,11 @@ Monta el árbol React sobre `#root` (`const container = document.getElementById(
   `sampleGenesis` → `sample_genesis` · `shoreshTranslate` → `shoresh_translate` · `readDocument` → `read_document` ·
   `oracleConverse` · `oracleStatus` · `oracleTurns` · `oracleReset` · `temporalDeltas` · `temporalRollback` ·
   `belnapLattice` · `belnapEvaluate` · más `describeError(error)` (convierte cualquier fallo en un texto legible).
+* Los otros dos clientes IPC tipados son `aether.ts` (551 líneas), que cubre los siete comandos de la capa AETHER‑Ω
+  (`autopoiesis`, `quantum_native`, `mesh_sync`, `metal_ir`, `temporal_timeline`, `fractal_memory`, `fractal_plan`)
+  con sus tipos espejo (`AutopoiesisReport`, `QuantumView`, `MeshView`, `MetalView`, `TimelineView`,
+  `FractalMemoryView`), y `visual.ts` (198), con los cuatro del constructor visual (`visual_catalogue`,
+  `visual_sample`, `visual_build`, `visual_compose` → `VisualCatalogueView`, `VisualBuildView`).
 
 ### 6.3 `App.tsx` — ventana principal
 
@@ -438,6 +574,9 @@ Monta el árbol React sobre `#root` (`const container = document.getElementById(
 | *Tokens* (`section.pane.tokens`) | `div.scroll` con tabla: `line`, `column`, clase (`td.cls ${token.class}` con `CLASS_LABEL`), `lexeme` (el salto de línea se pinta `⏎`) y `display`/semántica |
 
 * El panel de IA se abre con `aiOpen` (clase `ai-open` en la raíz) y se pinta en `ChatPanel`.
+* Los otros dos paneles de la barra superior se abren igual desde `App`, también fuera de la rejilla:
+  **«paneles AETHER‑Ω»** (`KernelPanel` + `KernelCards`, servidos por los siete comandos de `aether.ts`) y
+  **«lienzo visual»** (`VisualBuilder`, servido por los cuatro comandos de `visual.ts`).
 
 ### 6.4 Componentes (`web/src/components`)
 
@@ -446,12 +585,15 @@ Monta el árbol React sobre `#root` (`const container = document.getElementById(
 | `ChatPanel.tsx` (543) | `ChatPanelProps` + `ChatPanel` (por defecto) + internos `MessageRow`, `TranslationBox`, `newId`, `reasonOf`. Pintado: `aside.ai-panel` (con estado `dragging`), `header.ai-head`, `div.ai-body`, `div.ai-log`, bienvenida `ai-welcome` + `describeConfig`, lista `ai-problems`, indicador `consultando al modelo…`, `form.ai-composer` (`textarea.code.ai-input`), chips de imágenes `ai-chips`/`ai-chip`(+`formatBytes`), zona de adjuntar `label.ai-attach`, `details.ai-report` con el **prompt del sistema** (con su recuento de caracteres) y otro con el **autodiagnóstico**; cada mensaje es `article.ai-msg.{user|assistant}` con `ai-msg-head` (nombre del modelo), miniaturas `ai-thumbs`, error `ai-error`; los bloques cercados se muestran en `div.ai-code` con `TranslationBox` («usar en el editor» → `shoresh_translate`). |
 | `AiSettings.tsx` (229) | `AiSettings` (por defecto); `PROVIDERS: ProviderId[] = ["anthropic","openai"]`, `clamp`. Pintado: `div.ai-settings` con campos `label.ai-field` (proveedor, modelo, clave con `maskSecret` y `sin clave`, raíz de la API, `maxTokens` con `clamp`, temperatura), casillas `label.ai-check` (incluida la de enviar `max_completion_tokens` para modelos de razonamiento), lista `ai-problems`, `describeConfig`, `modelos: {status}` (resultado de `listModels`) y botones de acción. |
 | `AssistantText.tsx` (146) | `Block`, `splitBlocks(markdown)` (separador de bloques cercados con `FENCE = /^\s*```([A-Za-z0-9_+-]*)\s*$/`), `codeBlocks(markdown)`, `AssistantText` (por defecto) + internos `renderInline`, `CodeBlock`. Pinta `div.ai-answer` con prosa `p.ai-text` y bloques `div.ai-code` (`ai-code-head` con el lenguaje y botón de copiar/usar, `pre.ai-code-body`); código en línea `inline-code`; `Sin respuesta.` si no hay nada. |
+| `KernelPanel.tsx` (199) | `KernelPanel` (por defecto): selector de los siete paneles AETHER‑Ω del kernel (autopoiesis, cuántica, malla, Metal‑IR, `Δ⁻¹` y fractales) y estado de carga; delega el pintado en `KernelCards`. |
+| `KernelCards.tsx` (745) | Un componente por proyección del kernel: informe de autopoiesis con la puerta ZK, banco de qubits y par de Bell, malla holográfica con relojes vectoriales, programa Metal‑IR, diario temporal y reparto áureo/Fibonacci de la memoria. |
+| `VisualBuilder.tsx` (491) | `VisualBuilder`: editor del lienzo JSON estricto (contrato pedido al kernel), retícula áurea, grafo de bloques, los siete chequeos del informe (`VisualCheck`) y salida doble (guion *Shoresh* y ADN firmado); compone hasta `MAX_COMPOSED_CANVASES` (**8**) lienzos. |
 
-### 6.5 Panel de IA (`web/src/ai`, 1 417 líneas)
+### 6.5 Panel de IA (`web/src/ai`, 1 418 líneas)
 
 | Fichero | API pública |
 |---|---|
-| `types.ts` (78) | `ProviderId = "anthropic" \| "openai"` · `ChatRole = "user" \| "assistant"` · `ImageAttachment` · `ChatMessage` · `AiConfig` · `ChatUsage` · `ChatResult` · `ModelInfo` |
+| `types.ts` (79) | `ProviderId = "anthropic" \| "openai"` · `ChatRole = "user" \| "assistant"` · `ImageAttachment` · `ChatMessage` · `AiConfig` · `ChatUsage` · `ChatResult` · `ModelInfo` |
 | `config.ts` (241) | `STORAGE_KEY = "bara-ide.ai.config.v1"` · `PROVIDER_ENDPOINTS` · `PROVIDER_LABELS` · `PROVIDER_ENV_KEYS` · `PROVIDER_MODEL_PRESETS` · `ANTHROPIC_VERSION = "2023-06-01"` · `ANTHROPIC_BROWSER_HEADER = "anthropic-dangerous-direct-browser-access"` · `DEFAULT_CONFIG` · `TOKEN_RANGE = {min:256,max:8192}` · `KeyValueStore` · funciones `defaultStore`, `envValue`, `envKeyFor`, `sanitizeConfig`, `loadStoredConfig`, `loadConfig`, `saveConfig`, `forgetConfig`, `withProvider`, `maskSecret`, `configProblems`, `describeConfig` |
 | `prompt.ts` (129) | `MAX_DOCUMENT_CHARS = 4000` · `PromptContext` · `excerpt(source, max)`, `inventoryLine(analysis)`, `rootTable(catalogue)`, `liveContext(context)`, `baraSystemPrompt(context)` y los bloques `IDENTITY_RULES`, `ONTOLOGY_RULES` (autopoiesis: qué hacer con una raíz desconocida), `CONTRACT_RULES` (traducción desde lengua natural). El prompt **se construye con lo que el kernel dice** del documento vivo y del catálogo. |
 | `providers.ts` (338) | `WireMessage`, `MAX_WIRE_MESSAGES = 12`, `wireMessages(messages, limit)`, `normalizeBaseUrl`, `HttpRequest`, `anthropicBody`, `anthropicRequest`, `openAiBody`, `openAiRequest`, `chatRequest`, `extractApiError`, `usageOf`, `parseAnthropicResponse`, `parseOpenAiResponse`, `parseChatResponse`, `sendChat`, `listModels` |
@@ -505,11 +647,11 @@ y **sale con código 1** si alguna comprobación falla. Cero dependencias nuevas
 cargo run -p bara                 # ejecuta el programa génesis (13 fases) y su log ontológico
 cargo run -p bara -- --oracle     # fuerza el REPL del oráculo aunque la entrada esté redirigida
 cargo run --bin bara_oracle       # binario dedicado del oráculo
-cargo test -p bara                # 40 pruebas (30 integración + 10 estrés)
+cargo test -p bara                # 110 pruebas (59 unitarias + 51 de integración)
 
 # ── IDE: aval completo del workspace ────────────────────────────────────────
 cargo check  --workspace
-cargo test   -p bara -p bara-ide --features bara-ide/serde   # kernel + motor (18)
+cargo test   -p bara -p bara-ide --features bara-ide/serde   # kernel (110) + motor del IDE (34)
 cargo clippy --workspace --all-targets                       # solo verifica: clippy no enlaza
 cargo run    -p bara-ide -- samples\genesis.bara             # CLI: --tokens | --summary | --help | --version
 
@@ -541,8 +683,21 @@ Todo este trabajo está **commiteado y empujado** a `origin/main`
 | `bef5b3b` | `fix(tauri): arranque del .exe con toolchain GNU sin windres` — 4 ficheros, +551/−8: `build.rs`, `.cargo/config.toml`, `scripts/win-gnu-runner.py`, `scripts/win-gnu-recursos.py` |
 | `be097b0` | `docs: inventario funcional del workspace (kernel + IDE)` — 2 ficheros, +606: `docs/INVENTARIO.md` y su enlace en `README.md` |
 
-El árbol queda **limpio** (`git status --short` sin salida) y `main` al día con `origin/main`. El kernel **`BAR` no
-necesitó cambios**: sigue limpio y sincronizado en su rama `dev` (`## dev...origin/dev`).
+Aquel día el árbol quedó **limpio** (`git status --short` sin salida) y `main` al día con `origin/main`, con el
+kernel **`BAR` sin cambios**.
+
+**Actualización (14/10/2026):** hay trabajo **sin commitear** en ambos repos —el constructor visual del IDE y las
+correcciones de documentación de esta sesión—. Estado real medido hoy:
+
+```
+bara-ide>  M README.md  M docs/INVENTARIO.md  M src-tauri/src/lib.rs  M src/lib.rs  M web/src/App.tsx  M web/src/styles.css
+bara-ide> ?? docs/VISUAL_BUILDER.md  ?? src/visual.rs  ?? web/src/components/VisualBuilder.tsx  ?? web/src/visual.ts
+BAR>       M .github/workflows/ci.yml  M README.md  M src/crypto_native.rs  M src/ffi_ingest.rs  M src/lib.rs  M src/net_camouflage.rs
+BAR>       ?? src/visual_builder.rs
+```
+
+Ramas: `bara-ide` en **`main`** y `BAR` en **`dev`**. La capa AETHER‑Ω del IDE (`src/aether.rs`, `web/src/aether.ts`,
+`KernelPanel.tsx`, `KernelCards.tsx`) ya estaba commiteada y no aparece en la lista.
 
 Antes del commit el reconocimiento dejó este estado (`git status --porcelain`, 12/10/2026):
 
@@ -592,27 +747,28 @@ Escribir una raíz en el editor dispara exactamente esta cadena, sin ramas ni du
 | Magnitud | Valor |
 |---|---|
 | Crates / paquetes | 3 (`bara`, `bara-ide`, `bara-ide-desktop`) |
-| Módulos del kernel | 11 (+ `lib`/`main`) |
-| Binarios | **5 ejecutables**: `bara`, `bara_oracle`, `bara-ide` (CLI), `bara-ide-desktop` |
+| Módulos del kernel | 17 (+ `lib`/`main`): 10 del núcleo + `fractal_geometry` + 5 de la capa AETHER‑Ω + `visual_builder` |
+| Binarios | **4 ejecutables**: `bara`, `bara_oracle`, `bara-ide` (CLI), `bara-ide-desktop` |
 | Fases del génesis | 13 |
 | Meta‑comandos del oráculo | 11 variantes (`10` + `Unknown`) con alias en español e inglés |
 | Clases de `TokenKind` | 16 |
 | Raíces semánticas | 6 |
 | Valencias de Belnap | 4 |
-| Comandos IPC | 14 |
-| Funciones del cliente IPC (`engine.ts`) | 15 |
-| Componentes React | 3 + `App`/`SummaryPanel` |
-| Módulos de IA | 6 (1 417 líneas) |
-| Pruebas | kernel **40** (30 + 10) · motor del IDE **18** · autodiagnóstico IA **11** |
+| Comandos IPC | 25 |
+| Funciones del cliente IPC (`engine.ts`) | 15 (+ `aether.ts` 551 líneas · `visual.ts` 198) |
+| Componentes React | 6 + `App`/`SummaryPanel` |
+| Módulos de IA | 6 (1 418 líneas) |
+| Pruebas | kernel **110** (59 unitarias + 51 de integración) · motor del IDE **34** · autodiagnóstico IA **11** |
 | Dependencias externas del kernel | **0** (`std` puro) |
 | `unsafe` en el kernel | **0** |
-| Líneas de Rust del IDE | ≈ 1 888 (motor 1 509 + backend 189 + `build.rs` 190) |
-| Líneas del kernel | ≈ 7 900 de código + ≈ 2 000 de pruebas |
+| Líneas de Rust del IDE | **4 343** (motor 3 831 + backend 322 + `build.rs` 190) |
+| Líneas del kernel | **18 794** de código (`src/` + `src/bin/`) + **2 611** de pruebas (`tests/`) |
 | Idiomas del oráculo | entrada/salida en español, inglés y hebreo (alias plegados sin acentos) |
 
 ---
 
 *Documento generado por reconocimiento de solo lectura sobre el árbol real; todos los nombres, rutas y recuentos
-proceden de los ficheros citados. Las únicas discrepancias detectadas con la documentación previa son: el README del
-IDE anuncia **11** pruebas del motor cuando `src/lib.rs` contiene **18**, y la sección de verificación de este
-documento añade el recuento real de cada suite.*
+proceden de los ficheros citados. **Actualizado el 14/10/2026** con la capa AETHER‑Ω, el constructor visual y los
+recuentos que devuelve `cargo test` en esta máquina (`bara` 110 = 59 + 51 · `bara-ide` 34 · workspace 144). Las
+discrepancias con la documentación anterior quedan corregidas aquí: el README del IDE anunciaba **11** pruebas del
+motor (hoy **34**) y el kernel ha pasado de 11 a **17** módulos, con **25** comandos IPC.*

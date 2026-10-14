@@ -25,8 +25,11 @@ web/  (React + TS)  --IPC-->  src-tauri/  -->  bara-ide (lib)  -->  bara (kernel
 bara-ide/
 ├── Cargo.toml              paquete `bara-ide`: biblioteca + CLI
 ├── docs/INVENTARIO.md      inventario funcional del workspace completo (kernel + IDE)
+├── docs/VISUAL_BUILDER.md  contrato del constructor visual (lienzo → Shoresh firmado)
 ├── src/
 │   ├── lib.rs              modelo (tokens, resumen, inventario), informes y pruebas
+│   ├── aether.rs           paneles AETHER‑Ω: autopoiesis, registro cuántico, malla, Metal‑IR, fractales, diario Δ⁻¹
+│   ├── visual.rs           constructor visual: lienzo del IDE → `bara::visual_builder`, con sello
 │   └── main.rs             CLI histórica: `--tokens` / `--summary` / `--help` / `--version`
 ├── samples/genesis.bara    documento Shoresh de ejemplo (embebido en el binario)
 ├── package.json            front-end (React, Vite, TS) + CLI de Tauri
@@ -36,9 +39,9 @@ bara-ide/
 │   ├── index.html
 │   ├── scripts/ai-check.mjs    autodiagnóstico del panel de IA, en Node
 │   └── src/
-│       ├── {main,App}.tsx, engine.ts, styles.css, vite-env.d.ts
+│       ├── {main,App}.tsx, engine.ts, aether.ts, visual.ts, styles.css, vite-env.d.ts
 │       ├── ai/             cliente de IA: tipos, ajustes, proveedores, prompt, imágenes, autodiagnóstico
-│       └── components/     ChatPanel, AiSettings, AssistantText
+│       └── components/     ChatPanel, AiSettings, AssistantText, KernelPanel, KernelCards, VisualBuilder
 └── src-tauri/              backend Tauri v2 (crate miembro del workspace)
     ├── Cargo.toml
     ├── build.rs
@@ -66,9 +69,21 @@ bara-ide/
 | `temporal_rollback` | `{ marker: number }` | **control temporal**: rebobina `Δ⁻¹` hasta un marcador (`TurnResult`) |
 | `belnap_lattice` | — | tablas `∧`, `∨` y negación de la **biláttice de Belnap** |
 | `belnap_evaluate` | `{ truth: number, falsity: number }` | clasifica un par `(⊤, ⊥)` con el umbral de designación del kernel |
+| `autopoiesis` | `{ source: string }` | `AutopoiesisReport`: mutador autopoiético, valencia por axioma y puerta ZK (`ZkGateView`) |
+| `quantum_native` | `{ source: string }` | `QuantumView`: banco de qubits, amplitudes, entrelazamiento y par de Bell |
+| `mesh_sync` | `{ source, peers, rounds, threaded }` | `MeshView`: malla holográfica con relojes vectoriales y digest |
+| `metal_ir` | `{ source, device? }` | `MetalView`: programa Metal‑IR (operaciones, registros y bypass del driver) |
+| `temporal_timeline` | `{ source: string }` | `TimelineView`: diario `Δ⁻¹`, pila de estados y paradojas |
+| `fractal_memory` | `{ source: string }` | `FractalMemoryView`: reparto áureo/Fibonacci de la memoria del documento |
+| `fractal_plan` | `{ widths: number[] }` | `FractalMemoryView`: reparto áureo de una lista de anchos |
+| `visual_catalogue` | — | `VisualCatalogueView`: clases de bloque, tipos y cotas del lienzo, servidos por el kernel |
+| `visual_sample` | — | lienzo de ejemplo embebido en el kernel (`SAMPLE_BLUEPRINT`) |
+| `visual_build` | `{ blueprint: string }` | `VisualBuildView` o error legible: contrato estricto de todo o nada |
+| `visual_compose` | `{ blueprints: string[] }` | `VisualBuildView` del ADN compuesto (el orden de los lienzos importa) |
 
-El contrato está tipado **a ambos lados**: `web/src/engine.ts` replica el modelo
-Rust (nombres `camelCase` de `serde`), de modo que `tsc` verifica el IPC.
+El contrato está tipado **a ambos lados**: `web/src/engine.ts`, `web/src/aether.ts`
+y `web/src/visual.ts` replican el modelo Rust (nombres `camelCase` de `serde`), de
+modo que `tsc` verifica el IPC.
 
 ### Sesión del oráculo, Belnap y control temporal
 
@@ -91,6 +106,28 @@ duplicar ni un literal ni un tipo**:
 * El panel «Oráculo del kernel» de la interfaz usa estos comandos: conversa,
   captura un marcador, rebobina con `Δ⁻¹` y pinta la biláttice de Belnap que
   calcula el núcleo.
+
+## Capa AETHER‑Ω y constructor visual
+
+Dos paneles más de la barra superior, ambos servidos por el **mismo kernel**:
+
+| Botón | Panel | Pieza de la interfaz | Qué publica el núcleo |
+| --- | --- | --- | --- |
+| «AETHER‑Ω» | `KernelPanel` + `KernelCards` | `web/src/aether.ts` → `src/aether.rs` | autopoiesis y puerta ZK, registro cuántico, malla holográfica, Metal‑IR, diario `Δ⁻¹` y memoria fractal |
+| «lienzo visual» | `VisualBuilder` | `web/src/visual.ts` → `src/visual.rs` | el lienzo JSON traducido a *Shoresh*, **firmado** y auditado (retícula áurea, riesgo, cotas) |
+
+* Todo lo que se pinta —clases de bloque, tipos, cotas, valencia, grafo, informe—
+  lo decide el kernel: la interfaz edita texto, pide y formatea, y no repite un
+  solo literal del contrato.
+* El **constructor visual** pide primero el contrato del lienzo
+  (`visual_catalogue`) y el ejemplo del núcleo (`visual_sample`), traduce con un
+  retardo de 300 ms (una llamada por pausa, no por tecla) y compone hasta
+  `MAX_COMPOSED_CANVASES` (8) lienzos en un único ADN `:compuesto`.
+* El ADN se firma con la semilla **fija** del IDE (`VISUAL_KEY_SEED`): el sello
+  prueba **integridad y reproducibilidad**, no identidad de usuario — es una
+  limitación declarada, no una custodia de clave.
+* Contrato completo del lienzo (claves, clases, tipos, cotas, informe y
+  limitaciones): `docs/VISUAL_BUILDER.md`.
 
 ## Puesta en marcha
 
@@ -150,8 +187,9 @@ desde el kernel por IPC.
 
 ```powershell
 cargo check  --workspace                                    # aval del workspace completo
-cargo test   -p bara -p bara-ide --features bara-ide/serde   # kernel (40 pruebas) + motor del IDE (11)
-cargo clippy --workspace --all-targets                      # sólo verifica: clippy no enlaza
+cargo test   -p bara -p bara-ide --features bara-ide/serde   # kernel (110 pruebas) + motor del IDE (34)
+cargo clippy --workspace --all-targets -- -D warnings        # política del CI: salida 0 y 0 avisos de rustc (solo el
+                                                            # aviso esperado del build.rs de Tauri), sin enlazar
 npm run typecheck                                           # tsc --noEmit
 npm run test:ai                                             # 11 comprobaciones del panel de IA, sin red
 npm run build                                               # tsc --noEmit && vite build -> web/dist
@@ -164,6 +202,11 @@ como lo consume el backend (si no, la prueba que fija el contrato IPC con
 enlazador MinGW/MSVC completo — aquí `ld` aborta con `export ordinal too large`
 y el disco está al límite —, así que las pruebas se ejecutan sobre el kernel y
 el motor, y el backend se cubre con `cargo check` y `cargo clippy`.
+
+Estado medido en esta máquina: `bara` **110 / 110** (59 unitarias + 51 de
+integración), `bara-ide` **34 / 34**, workspace **144 / 144**, `npm run build`
+con 45 módulos y 0 avisos de `tsc`, `cargo clippy --workspace --all-targets
+-- -D warnings` con salida 0.
 
 ## Notas
 

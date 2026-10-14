@@ -22,6 +22,7 @@ import {
 } from "./engine";
 import ChatPanel from "./components/ChatPanel";
 import KernelPanel from "./components/KernelPanel";
+import VisualBuilder from "./components/VisualBuilder";
 
 /** Máximo de filas de tokens que se pintan (rendimiento del WebView). */
 const MAX_ROWS = 1200;
@@ -41,6 +42,8 @@ export default function App() {
   const [aiOpen, setAiOpen] = useState(false);
   /** Visibilidad del panel de proyecciones del kernel AETHER-Ω. */
   const [kernelOpen, setKernelOpen] = useState(false);
+  /** Visibilidad del panel del constructor visual (lienzo → Shoresh firmado). */
+  const [visualOpen, setVisualOpen] = useState(false);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
   const [lastTurn, setLastTurn] = useState<TurnView | null>(null);
@@ -228,6 +231,9 @@ export default function App() {
         <span className="status">{busy ? "analizando…" : origin}</span>
         <button type="button" onClick={() => setKernelOpen(!kernelOpen)}>
           {kernelOpen ? "ocultar núcleo" : "núcleo AETHER-Ω"}
+        </button>
+        <button type="button" onClick={() => setVisualOpen(!visualOpen)}>
+          {visualOpen ? "ocultar lienzo" : "lienzo visual"}
         </button>
         <button type="button" onClick={() => setAiOpen(!aiOpen)}>
           {aiOpen ? "ocultar asistente" : "asistente"}
@@ -490,6 +496,8 @@ export default function App() {
       </main>
 
       <KernelPanel open={kernelOpen} source={source} />
+
+      <VisualBuilder open={visualOpen} onUseCode={applyCode} />
 
       <ChatPanel
         open={aiOpen}

@@ -647,3 +647,122 @@ td {
   font-size: 0.7rem;
 }
 
+/* ---------- Panel del constructor visual: lienzo, retícula y sello ---------- */
+
+.vb {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  align-content: start;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  max-height: 46vh;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.vb > .row,
+.vb > p,
+.vb > .vb-split,
+.vb > .vb-cards {
+  grid-column: 1 / -1;
+}
+
+.vb h2 {
+  margin: 0;
+}
+
+.vb-split {
+  display: grid;
+  grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 1fr);
+  gap: 0.5rem;
+}
+
+.vb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.vb-field .code {
+  min-height: 16rem;
+  font-size: 0.78rem;
+}
+
+/* Disco del lienzo: las coordenadas son las de la espiral áurea del kernel. */
+.vb-canvas {
+  position: relative;
+  min-height: 16rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 50% 50%, rgb(255 255 255 / 3%), transparent 70%),
+    var(--bg);
+}
+
+.vb-canvas > .muted {
+  margin: 0.5rem;
+}
+
+/* Centro de la celda: `left`/`top` son el centro que publica el kernel. */
+.vb-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--pane);
+  transform: translate(-50%, -50%);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.vb-node small {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.vb-node em {
+  color: var(--root);
+  font-style: normal;
+}
+
+.vb-source {
+  border-color: var(--accent);
+}
+
+.vb-transform {
+  border-color: var(--root);
+}
+
+.vb-guard {
+  border-color: var(--unknown);
+}
+
+.vb-sink {
+  border-color: var(--muted);
+}
+
+.vb-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.vb-cards pre.kx-mono {
+  margin: 0;
+  max-height: 12rem;
+  overflow: auto;
+  font-size: 0.72rem;
+}
+
+.vb-cards table button {
+  font-size: 0.7rem;
+}
+

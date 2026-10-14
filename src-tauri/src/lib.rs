@@ -47,13 +47,25 @@
 //!   nodos de la memoria holográfica del documento.
 //! * `fractal_plan(widths)` — **Fase 3**: reparto áureo de una lista de anchos
 //!   arbitraria (lo que el panel use como *presupuesto* de retícula).
+//!
+//! ## Comandos del constructor visual (*Visual Builder*)
+//! Proyectan el motor `bara::visual_builder` del kernel: el lienzo JSON
+//! **estricto** se valida, se traduce a *Shoresh* y **se firma** (ADN) antes de
+//! llegar al lienzo del editor. Ninguno guarda estado.
+//!
+//! * `visual_catalogue()` — clases de bloque, tipos y cotas del contrato.
+//! * `visual_sample()` — lienzo de ejemplo del kernel (embebido en Rust).
+//! * `visual_build(blueprint)` — traduce y firma un lienzo; `Err` legible si
+//!   incumple el contrato.
+//! * `visual_compose(blueprints)` — compone varios lienzos en un solo módulo
+//!   firmado (el orden de la lista es significativo).
 
 #![forbid(unsafe_code)]
 
 use bara_ide::{
     Analysis, AutopoiesisReport, BelnapEvaluation, BelnapLattice, DeltaView, FractalMemoryView,
     MeshView, MetalView, QuantumView, RootEntry, Session, SessionStatus, TimelineView, Translation,
-    TurnResult, TurnView,
+    TurnResult, TurnView, VisualBuildView, VisualCatalogueView,
 };
 use std::sync::Mutex;
 
@@ -223,12 +235,46 @@ fn fractal_plan(widths: Vec<usize>) -> FractalMemoryView {
     bara_ide::fractal_plan(&widths)
 }
 
-/// Arranca la ventana del IDE con los veintiún comandos registrados.
+/// Contrato del *Visual Builder*: clases, tipos y cotas del lienzo.
+///
+/// Total: el vocabulario lo sirve el kernel, de modo que el panel no repite ni
+/// un literal del contrato.
+#[tauri::command]
+fn visual_catalogue() -> VisualCatalogueView {
+    bara_ide::visual_catalogue()
+}
+
+/// Lienzo de ejemplo del kernel, para el editor del panel.
+#[tauri::command]
+fn visual_sample() -> String {
+    bara_ide::visual_sample()
+}
+
+/// Traduce, valida y **firma** un lienzo JSON estricto.
+///
+/// `Err` legible (nunca un aborto) cuando el lienzo incumple el contrato: una
+/// clave desconocida, un tipo fuera del catálogo o una referencia hacia delante
+/// invalidan el lienzo entero en vez de compilarse a medias.
+#[tauri::command]
+fn visual_build(blueprint: String) -> Result<VisualBuildView, String> {
+    bara_ide::visual_build(&blueprint)
+}
+
+/// Compone varios lienzos en un único ADN firmado.
+///
+/// El orden de `blueprints` es significativo: fija la etiqueta firmada (la del
+/// primero, con sufijo `:compuesto`) y la raíz de Merkle del conjunto.
+#[tauri::command]
+fn visual_compose(blueprints: Vec<String>) -> Result<VisualBuildView, String> {
+    bara_ide::visual_compose(&blueprints)
+}
+
+/// Arranca la ventana del IDE con los veinticinco comandos registrados.
 ///
 /// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
 /// instancia por ventana, detrás del cerrojo que guarda [`with_session`].
-/// Los comandos de la fase AETHER‑Ω son funciones puras sobre el texto del
-/// editor: no tocan la sesión ni comparten estado.
+/// Los comandos de la fase AETHER‑Ω y los del constructor visual son funciones
+/// puras sobre el texto del editor: no tocan la sesión ni comparten estado.
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(Session::new()))
@@ -253,7 +299,11 @@ pub fn run() {
             metal_ir,
             temporal_timeline,
             fractal_memory,
-            fractal_plan
+            fractal_plan,
+            visual_catalogue,
+            visual_sample,
+            visual_build,
+            visual_compose
         ])
         .run(tauri::generate_context!())
         .expect("Bara IDE: no se pudo iniciar la ventana (Tauri)");
