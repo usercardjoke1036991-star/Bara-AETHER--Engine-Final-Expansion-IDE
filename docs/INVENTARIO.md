@@ -686,8 +686,19 @@ Todo este trabajo está **commiteado y empujado** a `origin/main`
 Aquel día el árbol quedó **limpio** (`git status --short` sin salida) y `main` al día con `origin/main`, con el
 kernel **`BAR` sin cambios**.
 
-**Actualización (14/10/2026):** hay trabajo **sin commitear** en ambos repos —el constructor visual del IDE y las
-correcciones de documentación de esta sesión—. Estado real medido hoy:
+**Actualización (14/10/2026, 22:08 UTC): release publicado.** Aquel *staging* (7 ficheros en el kernel y 10 en el
+IDE) se convirtió en dos commits, empujados a `origin`:
+
+| Repo | Rama | Commit | Contenido | Push |
+|---|---|---|---|---|
+| `BAR` | `dev` | `1e3d3f6` | `feat(aether-omega): consolidacion final del constructor visual, paridad TLS y documentacion de inventario (110/144)` — 7 ficheros, +3344/−49 (incluye `src/visual_builder.rs`) | `d6b4f56..1e3d3f6  dev -> dev` |
+| `bara-ide` | `main` | `7925298` | `feat(ide): integracion del motor visual AETHER-Omega y actualizacion de inventario` — 10 ficheros, +2102/−75 (incluye `src/visual.rs`, `web/src/visual.ts`, `VisualBuilder.tsx`, `docs/VISUAL_BUILDER.md`) | `4f03fd5..7925298  main -> main` |
+
+- Ambos árboles quedan **limpios**: `## dev...origin/dev` y `## main...origin/main`, sin entradas de cambios.
+- **CI remota del kernel**: [`run 38645547477`](https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion/actions/runs/38645547477) → **success** en los cinco trabajos (lints 20 s · Windows `release` 2 m 55 s · Ubuntu `debug` 24 s · Windows `debug` 1 m 5 s · Ubuntu `release` 1 m 18 s). El repositorio del IDE **no tiene workflows**.
+- **PR de promoción**: [`#2 dev → main`](https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion/pull/2), abierto. GitHub lo marca **`CONFLICTING`**: `main` conserva el *squash* del PR #1 (`4c8289a`, ausente en `dev`) y la sonda `git merge-tree` localiza tres conflictos — `.github/workflows/ci.yml` (*add/add*), `README.md` y `tests/integration_suite.rs`—, mientras que `src/lib.rs`, `src/runtime.rs`, `src/repl.rs`, `src/main.rs` y `src/ffi_ingest.rs` fusionan solos. Como `dev` es la línea autoritativa, se resuelve conservando la versión de `dev` en esos tres ficheros antes de fusionar.
+
+Estado **previo al commit** (medido hoy, `git status --short`):
 
 ```
 bara-ide>  M README.md  M docs/INVENTARIO.md  M src-tauri/src/lib.rs  M src/lib.rs  M web/src/App.tsx  M web/src/styles.css
@@ -697,7 +708,7 @@ BAR>       ?? src/visual_builder.rs
 ```
 
 Ramas: `bara-ide` en **`main`** y `BAR` en **`dev`**. La capa AETHER‑Ω del IDE (`src/aether.rs`, `web/src/aether.ts`,
-`KernelPanel.tsx`, `KernelCards.tsx`) ya estaba commiteada y no aparece en la lista.
+`KernelPanel.tsx`, `KernelCards.tsx`) ya estaba commiteada y no aparecía en la lista.
 
 Antes del commit el reconocimiento dejó este estado (`git status --porcelain`, 12/10/2026):
 
