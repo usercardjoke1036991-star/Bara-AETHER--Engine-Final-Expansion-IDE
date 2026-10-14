@@ -507,3 +507,143 @@ td {
   font-size: 0.75rem;
 }
 
+/* ---------- Panel AETHER-Ω: proyecciones del kernel ---------- */
+
+.kernel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  align-content: start;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  max-height: 46vh;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.kernel > .row,
+.kernel > p {
+  grid-column: 1 / -1;
+}
+
+.kernel h2 {
+  margin: 0;
+}
+
+.kx-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.kx-card h3,
+.kx-sub h4 {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.kx-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-left: 0.4rem;
+  border-left: 2px solid var(--line);
+}
+
+.kx-sub h4 {
+  color: var(--root);
+}
+
+.kx-controls {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.kx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.kx-field input,
+.kx-field select {
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+}
+
+.kx-check {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.kx-ok {
+  color: var(--root);
+}
+
+.kx-warn {
+  color: var(--unknown);
+}
+
+.kx-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kx-chip {
+  padding: 0 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--pane);
+  font-size: 0.75rem;
+}
+
+.kx-list,
+.kx-checks {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.78rem;
+}
+
+.kx-checks {
+  font-size: 0.75rem;
+}
+
+.kx-detail summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.kx-mono {
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+  unicode-bidi: plaintext;
+}
+
+.kx-tag {
+  display: inline-block;
+  padding: 0 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--accent);
+  font-size: 0.7rem;
+}
+

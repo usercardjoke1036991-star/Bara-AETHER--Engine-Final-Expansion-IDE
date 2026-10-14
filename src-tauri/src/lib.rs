@@ -27,12 +27,33 @@
 //!   **Belnap**, calculadas por el núcleo.
 //! * `belnap_evaluate(truth, falsity)` — clasifica un par `(⊤, ⊥)` con el
 //!   umbral de designación del kernel.
+//!
+//! ## Comandos de la fase AETHER‑Ω (paneles del núcleo)
+//! Todos **proyectan** el kernel sobre el texto vivo del editor y son totales
+//! (salvo los de disco): el front-end no reimplementa ninguna semántica.
+//!
+//! * `autopoiesis(source)` — **Fase 1**: axiogénesis del AST (mutador
+//!   autopoiético), valencia de Belnap por axioma y puerta ZK certificada.
+//! * `quantum_native(source)` — **Fase 2**: banco de qubits, amplitudes con
+//!   fase, entrelazamiento y fase de Bell del documento.
+//! * `mesh_sync(source, peers, rounds, threaded)` — **Fase 2**: malla
+//!   holográfica sincronizada por relojes vectoriales, con digest del estado.
+//! * `metal_ir(source, device)` — **Fase 2**: baja el documento a Metal‑IR
+//!   (ISA de 32 bits), asigna registros y resume el bypass del driver.
+//! * `temporal_timeline(source)` — **Fase 2**: diario `Δ⁻¹` y pila de estados
+//!   del documento (el rollback de la *sesión* sigue siendo
+//!   `temporal_rollback(marker)`).
+//! * `fractal_memory(source)` — **Fase 3**: reparto áureo/Fibonacci de los
+//!   nodos de la memoria holográfica del documento.
+//! * `fractal_plan(widths)` — **Fase 3**: reparto áureo de una lista de anchos
+//!   arbitraria (lo que el panel use como *presupuesto* de retícula).
 
 #![forbid(unsafe_code)]
 
 use bara_ide::{
-    Analysis, BelnapEvaluation, BelnapLattice, DeltaView, RootEntry, Session, SessionStatus,
-    Translation, TurnResult, TurnView,
+    Analysis, AutopoiesisReport, BelnapEvaluation, BelnapLattice, DeltaView, FractalMemoryView,
+    MeshView, MetalView, QuantumView, RootEntry, Session, SessionStatus, TimelineView, Translation,
+    TurnResult, TurnView,
 };
 use std::sync::Mutex;
 
@@ -148,10 +169,66 @@ fn belnap_evaluate(truth: f64, falsity: f64) -> BelnapEvaluation {
     bara_ide::belnap_evaluate(truth, falsity)
 }
 
-/// Arranca la ventana del IDE con los catorce comandos registrados.
+/// **Fase 1** — autopoiesis del AST, valencia de Belnap y puerta ZK.
+///
+/// Total: cualquier texto produce un informe (sin raíces desconocidas el
+/// mutador queda en generación 0 y la puerta certifica los invariantes).
+#[tauri::command]
+fn autopoiesis(source: String) -> AutopoiesisReport {
+    bara_ide::autopoiesis(&source)
+}
+
+/// **Fase 2** — banco cuántico nativo del documento.
+#[tauri::command]
+fn quantum_native(source: String) -> QuantumView {
+    bara_ide::quantum_register(&source)
+}
+
+/// **Fase 2** — sincroniza la malla holográfica y proyecta sus nudos.
+///
+/// `peers` y `rounds` los acota el propio panel de `bara-ide`: la interfaz no
+/// puede provocar una sincronización desmedida.
+#[tauri::command]
+fn mesh_sync(source: String, peers: usize, rounds: usize, threaded: bool) -> MeshView {
+    bara_ide::mesh_status(&source, peers, rounds, threaded)
+}
+
+/// **Fase 2** — baja el documento a Metal‑IR para el dispositivo pedido.
+///
+/// `device` es opcional (`"cpu"` por defecto): cualquier otro valor que no
+/// nombre la GPU se resuelve como CPU, sin fallar.
+#[tauri::command]
+fn metal_ir(source: String, device: Option<String>) -> MetalView {
+    bara_ide::metal_program(&source, device.as_deref().unwrap_or("cpu"))
+}
+
+/// **Fase 2** — diario `Δ⁻¹` del documento y cumbre de su pila de estados.
+#[tauri::command]
+fn temporal_timeline(source: String) -> TimelineView {
+    bara_ide::timeline(&source)
+}
+
+/// **Fase 3** — reparto áureo/Fibonacci de la memoria del documento.
+#[tauri::command]
+fn fractal_memory(source: String) -> FractalMemoryView {
+    bara_ide::fractal_memory(&source)
+}
+
+/// **Fase 3** — reparto áureo de una lista de anchos arbitraria.
+///
+/// Total: una lista vacía o desmedida se acota dentro del panel (el reparto
+/// siempre respeta su cota superior de Fibonacci).
+#[tauri::command]
+fn fractal_plan(widths: Vec<usize>) -> FractalMemoryView {
+    bara_ide::fractal_plan(&widths)
+}
+
+/// Arranca la ventana del IDE con los veintiún comandos registrados.
 ///
 /// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
 /// instancia por ventana, detrás del cerrojo que guarda [`with_session`].
+/// Los comandos de la fase AETHER‑Ω son funciones puras sobre el texto del
+/// editor: no tocan la sesión ni comparten estado.
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(Session::new()))
@@ -169,7 +246,14 @@ pub fn run() {
             temporal_deltas,
             temporal_rollback,
             belnap_lattice,
-            belnap_evaluate
+            belnap_evaluate,
+            autopoiesis,
+            quantum_native,
+            mesh_sync,
+            metal_ir,
+            temporal_timeline,
+            fractal_memory,
+            fractal_plan
         ])
         .run(tauri::generate_context!())
         .expect("Bara IDE: no se pudo iniciar la ventana (Tauri)");

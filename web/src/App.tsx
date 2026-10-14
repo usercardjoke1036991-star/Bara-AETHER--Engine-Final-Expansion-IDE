@@ -21,6 +21,7 @@ import {
   type TurnView,
 } from "./engine";
 import ChatPanel from "./components/ChatPanel";
+import KernelPanel from "./components/KernelPanel";
 
 /** Máximo de filas de tokens que se pintan (rendimiento del WebView). */
 const MAX_ROWS = 1200;
@@ -38,6 +39,8 @@ export default function App() {
   const [sample, setSample] = useState("");
   /** Visibilidad del panel lateral del asistente. */
   const [aiOpen, setAiOpen] = useState(false);
+  /** Visibilidad del panel de proyecciones del kernel AETHER-Ω. */
+  const [kernelOpen, setKernelOpen] = useState(false);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
   const [lastTurn, setLastTurn] = useState<TurnView | null>(null);
@@ -217,12 +220,15 @@ export default function App() {
   );
 
   return (
-    <div className={aiOpen ? "app ai-open" : "app"}>
+    <div className={`app${aiOpen ? " ai-open" : ""}${kernelOpen ? " kernel-open" : ""}`}>
       <header className="bar">
         <h1>Bara IDE</h1>
         <span className="tag">kernel v0.1.0-kernel · Shoresh</span>
         <span className="grow" />
         <span className="status">{busy ? "analizando…" : origin}</span>
+        <button type="button" onClick={() => setKernelOpen(!kernelOpen)}>
+          {kernelOpen ? "ocultar núcleo" : "núcleo AETHER-Ω"}
+        </button>
         <button type="button" onClick={() => setAiOpen(!aiOpen)}>
           {aiOpen ? "ocultar asistente" : "asistente"}
         </button>
@@ -482,6 +488,8 @@ export default function App() {
           ) : null}
         </section>
       </main>
+
+      <KernelPanel open={kernelOpen} source={source} />
 
       <ChatPanel
         open={aiOpen}

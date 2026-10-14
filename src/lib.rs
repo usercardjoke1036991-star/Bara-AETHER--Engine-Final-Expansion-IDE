@@ -33,6 +33,17 @@ use bara::temporal_rollback::Marker;
 // nunca sobre una copia de sus tipos.
 pub use bara::lexer::{Keyword, Lexer, Token, TokenKind};
 
+// Paneles de la fase AETHER‑Ω: proyecciones del kernel (autopoiesis + ZK,
+// banco cuántico, malla, Metal‑IR y geometría áurea de la memoria).
+pub mod aether;
+
+pub use aether::{
+    autopoiesis, fractal_memory, fractal_plan, mesh_status, metal_program, quantum_register,
+    timeline, AmplitudeView, AutopoiesisReport, AxiomView, BellView, BindingView, FractalCellView,
+    FractalMemoryView, MeshNodeView, MeshView, MetalOpView, MetalView, ParadoxView, QuantumView,
+    QubitView, RegisterView, TimelineDeltaView, TimelineView, ZkCheckView, ZkGateView,
+};
+
 /// Versión de este *front-end* (la del paquete `bara-ide`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
