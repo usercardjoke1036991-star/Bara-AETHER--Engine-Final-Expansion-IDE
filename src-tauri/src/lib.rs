@@ -59,6 +59,19 @@
 //!   incumple el contrato.
 //! * `visual_compose(blueprints)` — compone varios lienzos en un solo módulo
 //!   firmado (el orden de la lista es significativo).
+//!
+//! ## Comandos del puente kernel → IDE (FASE 5)
+//! Proyectan `bara::ide_bridge` a través de `bara_ide::bridge`. El kernel
+//! escribe esos documentos con claves fijas en *snake_case* y sin `serde`; el
+//! backend los reenvía **byte a byte** (`String`) para que el panel lea
+//! exactamente el documento que el núcleo firma.
+//!
+//! * `bridge_manifest()` — contrato canónico: esquema, versión, secciones,
+//!   cotas y huella (función pura, sin estado leído).
+//! * `bridge_snapshot(source)` — instantánea de sólo lectura sobre el
+//!   documento: identidad, inmunidad, pasarela y runtime. El texto entra por la
+//!   pasarela de burbujas y el sistema adaptativo lo escanea; `Err` legible si
+//!   el puente rechaza una sección (nunca una instantánea a medias).
 
 #![forbid(unsafe_code)]
 
@@ -68,6 +81,10 @@ use bara_ide::{
     TurnResult, TurnView, VisualBuildView, VisualCatalogueView,
 };
 use std::sync::Mutex;
+
+// Cockpit de telemetría: comandos de sólo lectura sobre `bara` + transmutador
+// con estado cognitivo local a la ventana. Ver `src/telemetry.rs`.
+mod telemetry;
 
 /// Analiza una fuente *Shoresh* con el kernel. Total: no puede fallar.
 #[tauri::command]
@@ -269,15 +286,77 @@ fn visual_compose(blueprints: Vec<String>) -> Result<VisualBuildView, String> {
     bara_ide::visual_compose(&blueprints)
 }
 
-/// Arranca la ventana del IDE con los veinticinco comandos registrados.
+/// **Fase 5** — contrato canónico del puente kernel → IDE.
+///
+/// Devuelve el JSON de `bara::ide_bridge::Manifest::canon` sin recomillar: el
+/// panel lo guarda al conectar y compara después la huella de cada instantánea
+/// para detectar cualquier deriva de esquema sin leer estado del núcleo.
+#[tauri::command]
+fn bridge_manifest() -> String {
+    bara_ide::bridge_manifest()
+}
+
+/// **Fase 5** — instantánea de sólo lectura del kernel sobre el documento.
+///
+/// El texto del editor entra por la pasarela de burbujas y el sistema
+/// inmunitario adaptativo lo escanea; el JSON devuelto es exactamente el que
+/// publica `bara::ide_bridge::Snapshot::capture` (claves fijas en *snake_case*).
+/// `Err` legible si el puente rechaza una sección: el panel nunca pinta una
+/// instantánea a medias.
+#[tauri::command]
+fn bridge_snapshot(source: String) -> Result<String, String> {
+    bara_ide::bridge_snapshot(&source)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cockpit de telemetría (FASE 6) — `src/telemetry.rs`
+// ─────────────────────────────────────────────────────────────────────────
+// Todos los comandos devuelven `Result<String, String>` y pasan por
+// `telemetry::guarded`: un pánico inesperado del backend se convierte en un
+// error IPC, nunca en la caída de la ventana.
+
+/// Manifiesto ontológico canónico + huella de identidad del puente.
+#[tauri::command]
+fn get_system_manifest() -> Result<String, String> {
+    telemetry::guarded(telemetry::system_manifest)
+}
+
+/// Marco cognitivo completo (`NeuralFrame::json`): inferencia, censo de Belnap,
+/// memoria a largo plazo y vista semántica *Shoresh* (`NeuralIT`).
+#[tauri::command]
+fn get_neural_frame(
+    state: tauri::State<'_, Mutex<telemetry::CognitiveState>>,
+) -> Result<String, String> {
+    telemetry::guarded(|| telemetry::neural_frame(&state))
+}
+
+/// Volcado de sólo lectura de la caja negra (Flight Recorder).
+#[tauri::command]
+fn get_flight_recorder_logs() -> Result<String, String> {
+    telemetry::guarded(telemetry::flight_recorder_logs)
+}
+
+/// Transmuta código/texto externo, lo audita y lo indexa si es admisible.
+#[tauri::command(rename_all = "snake_case")]
+fn transmute_input(
+    source_code: String,
+    state: tauri::State<'_, Mutex<telemetry::CognitiveState>>,
+) -> Result<String, String> {
+    telemetry::guarded(|| telemetry::transmute_input(&state, &source_code))
+}
+
+/// Arranca la ventana del IDE con los treinta y un comandos registrados.
 ///
 /// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
 /// instancia por ventana, detrás del cerrojo que guarda [`with_session`].
-/// Los comandos de la fase AETHER‑Ω y los del constructor visual son funciones
-/// puras sobre el texto del editor: no tocan la sesión ni comparten estado.
+/// Los comandos de la fase AETHER‑Ω, los del constructor visual y los del
+/// puente son funciones puras sobre el texto del editor: no tocan la sesión ni
+/// comparten estado.
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(Session::new()))
+        .manage(Mutex::new(telemetry::CognitiveState::new()))
         .invoke_handler(tauri::generate_handler![
             analyze_source,
             analyze_file,
@@ -303,7 +382,13 @@ pub fn run() {
             visual_catalogue,
             visual_sample,
             visual_build,
-            visual_compose
+            visual_compose,
+            bridge_manifest,
+            bridge_snapshot,
+            get_system_manifest,
+            get_neural_frame,
+            get_flight_recorder_logs,
+            transmute_input
         ])
         .run(tauri::generate_context!())
         .expect("Bara IDE: no se pudo iniciar la ventana (Tauri)");

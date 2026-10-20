@@ -1,3 +1,11 @@
-# Artefactos generados por la CLI de Tauri (esquemas ACL) y por el empaquetado.
-/gen
+# Esquemas ACL generados por `tauri-build` y artefactos de empaquetado.
+/gen/schemas
 /target
+
+# Contenedor Android: el proyecto Gradle se versiona; sus artefactos no.
+/gen/android/.gradle
+/gen/android/build
+/gen/android/app/build
+/gen/android/local.properties
+/gen/android/keystore.properties
+/gen/android/app/src/main/jniLibs

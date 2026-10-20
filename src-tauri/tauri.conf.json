@@ -7,6 +7,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
+    "beforeBundleCommand": "npm run patch:resources",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../web/dist"
   },
@@ -29,7 +30,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "msi",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

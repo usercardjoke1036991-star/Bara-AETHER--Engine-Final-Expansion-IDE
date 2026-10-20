@@ -5,7 +5,15 @@
 
 # Rust (el target real es el del workspace: ../../target)
 /target
-/src-tauri/gen
+/src-tauri/gen/schemas
+
+# Contenedor Android (Gradle): se versiona el proyecto, no sus artefactos.
+/src-tauri/gen/android/.gradle
+/src-tauri/gen/android/build
+/src-tauri/gen/android/app/build
+/src-tauri/gen/android/local.properties
+/src-tauri/gen/android/keystore.properties
+/src-tauri/gen/android/app/src/main/jniLibs
 
 # Secretos locales del panel de IA (nunca versionar una clave)
 .env

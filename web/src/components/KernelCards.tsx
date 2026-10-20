@@ -15,6 +15,11 @@ import {
   type QuantumView,
   type TimelineView,
 } from "../aether";
+import {
+  bridgeWarnings,
+  type BridgeManifest,
+  type BridgeSnapshot,
+} from "../bridge";
 
 /** Máximo de filas que se pintan por vector del kernel (rendimiento del WebView). */
 export const MAX_ROWS = 24;
@@ -735,6 +740,207 @@ export function FractalCard({
       </div>
       <FractalReport title="memoria del documento" view={memory} />
       {plan ? <FractalReport title="plan áureo puro del panel" view={plan} /> : null}
+    </article>
+  );
+}
+
+/** Huella abreviada para tablas: 16 dígitos bastan (la completa va en el chip). */
+function short(hash: string): string {
+  return hash.length > 16 ? `${hash.slice(0, 16)}…` : hash;
+}
+
+/**
+ * Fase 5 — puente kernel → IDE: contrato, instantánea y catálogo del sobre.
+ *
+ * Todo lo que se pinta lo decidió el núcleo (`bara::ide_bridge`): el veredicto
+ * de la puerta, el peligro en milésimas, las marcas y el acta de la inmunidad.
+ * La tarjeta sólo añade **alertas pasivas de contrato** (`bridgeWarnings`):
+ * deriva de esquema, huella de manifiesto distinta o sección ausente. Nunca
+ * bloquea el panel ni reinterpreta un veredicto.
+ */
+export function BridgeCard({
+  document,
+  contract,
+}: {
+  /** Instantánea que capturó el núcleo sobre el documento del editor. */
+  document: BridgeSnapshot;
+  /** Manifiesto cargado al conectar; `null` mientras no llegue. */
+  contract: BridgeManifest | null;
+}) {
+  const warnings = bridgeWarnings(document, contract);
+  const { identidad, inmunidad, pasarela, nucleo } = document.secciones;
+  const presente = document.catalogo.filter((entry) => entry.presente).length;
+  const burbuja = pasarela.rabo[0];
+
+  return (
+    <article className="kx-card">
+      <h3>Fase 5 · puente kernel → IDE</h3>
+      <p className="muted">
+        {identidad.dominio} · {identidad.solo_lectura ? "sólo lectura" : "identidad no declarada"} ·{" "}
+        {identidad.muta_nucleo ? "mutaría el núcleo" : "no muta el núcleo"} ·{" "}
+        {identidad.rechaza ? "rechaza cargas" : "puerta sin rechazos"}
+      </p>
+      <ul className="kx-chips">
+        <li className="kx-chip kx-mono">{document.esquema}</li>
+        <li className="kx-chip kx-mono">v{document.version}</li>
+        <li className="kx-chip kx-mono">huella {document.huella}</li>
+      </ul>
+      <table className="summary">
+        <tbody>
+          <Row label="manifiesto del sobre" value={short(document.manifiesto)} />
+          <Row label="manifiesto cargado" value={contract ? short(contract.huella) : "—"} />
+          <Row label="secciones presentes" value={`${presente}/${document.catalogo.length}`} />
+          <Row label="bytes del sobre" value={bytes(document.bytes)} />
+          <Row label="completa" value={mark(document.completa)} />
+        </tbody>
+      </table>
+
+      {warnings.length > 0 ? (
+        <ul className="kx-checks">
+          {warnings.map((warning) => (
+            <li key={warning} className="kx-warn">
+              ⚠ {warning}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="kx-ok">✓ contrato respetado: el panel lee las cuatro secciones canónicas.</p>
+      )}
+
+      <p className="muted">catálogo del sobre · orden canónico del manifiesto</p>
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>sección</th>
+              <th>orden</th>
+              <th>bytes</th>
+              <th>huella</th>
+              <th>origen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {document.catalogo.map((entry) => (
+              <tr key={entry.nombre}>
+                <td className="glyph">
+                  {entry.glifo} {entry.nombre}
+                </td>
+                <td className="num">{entry.orden}</td>
+                <td className="num">{bytes(entry.bytes)}</td>
+                <td className="kx-mono">{entry.presente ? short(entry.huella) : "ausente"}</td>
+                <td className="muted">
+                  {identidad.manifiesto.secciones.find((spec) => spec.nombre === entry.nombre)
+                    ?.origen ?? "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="muted">inmunidad adaptativa · respuesta al documento</p>
+      <table className="summary">
+        <tbody>
+          <Row label="huella del sistema" value={short(inmunidad.huella)} />
+          <Row label="tolerancia" value={fixed(inmunidad.tolerancia)} />
+          <Row label="afinidad media" value={fixed(inmunidad.afinidad_media)} />
+          <Row
+            label="repertorio"
+            value={`${inmunidad.repertorio.estirpes}/${inmunidad.capacidad} estirpes`}
+          />
+          <Row label="repertorio lleno" value={mark(inmunidad.repertorio_lleno)} />
+          <Row
+            label="respuestas"
+            value={`${inmunidad.contadores.total} · toleradas ${inmunidad.contadores.tolerados} · neutralizadas ${inmunidad.contadores.neutralizados}`}
+          />
+        </tbody>
+      </table>
+      <p className="muted">{inmunidad.acta}</p>
+
+      <p className="muted">pasarela · veredicto del documento</p>
+      <table className="summary">
+        <tbody>
+          <Row label="burbujas registradas" value={pasarela.burbujas} />
+          <Row
+            label="censo"
+            value={`inocuas ${pasarela.censo.inocuas} · absorbidas ${pasarela.censo.absorbidas} · neutralizadas ${pasarela.censo.neutralizadas} · cuarentena ${pasarela.censo.cuarentena}`}
+          />
+          <Row label="bytes inertes" value={bytes(pasarela.bytes_inertes)} />
+          <Row label="nodos sellados" value={pasarela.nodos_sellados} />
+          <Row label="marcas" value={pasarela.marcas} />
+          <Row label="regiones · memoria" value={`${pasarela.regiones} · ${pasarela.memoria}`} />
+          <Row label="rabo publicado" value={`${pasarela.rabo.length}/${pasarela.cota_rabo}`} />
+        </tbody>
+      </table>
+      {burbuja ? (
+        <>
+          <p className={burbuja.marcas.length > 0 ? "kx-warn" : "kx-ok"}>
+            {burbuja.glifo} {burbuja.veredicto} · peligro {burbuja.peligro} ‰ ·{" "}
+            {bytes(burbuja.bytes)} · {burbuja.origen}
+          </p>
+          {burbuja.marcas.length > 0 ? (
+            <ul className="kx-chips">
+              {burbuja.marcas.map((marca) => (
+                <li key={marca} className="kx-chip">
+                  {marca}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">Sin marcas: la carga entró sin disparar patrones.</p>
+          )}
+          <p className="muted">{burbuja.acta}</p>
+        </>
+      ) : (
+        <p className="muted">Sin burbujas en el rabo.</p>
+      )}
+
+      <p className="muted">núcleo · estado soberano leído</p>
+      <table className="summary">
+        <tbody>
+          <Row
+            label="pila"
+            value={`${nucleo.pila.profundidad} · ${nucleo.pila.cumbre ?? "vacía"}`}
+          />
+          <Row label="memoria · regiones" value={`${nucleo.memoria} · ${nucleo.regiones}`} />
+          <Row
+            label="axiomas"
+            value={`${nucleo.axiomas.total} (generación ${nucleo.axiomas.generacion})`}
+          />
+          <Row
+            label="tiempo"
+            value={`${nucleo.tiempo.instantaneas} instantáneas · ${nucleo.tiempo.deltas} deltas`}
+          />
+          <Row
+            label="qubits"
+            value={`${nucleo.qubits.vivos} vivos · ${nucleo.qubits.colapsos} colapsos`}
+          />
+          <Row
+            label="malla"
+            value={`${nucleo.malla.nodos} nodos · época ${nucleo.malla.epoca}`}
+          />
+          <Row
+            label="certificado ZK"
+            value={
+              nucleo.certificado
+                ? `${nucleo.certificado.etiqueta} · ${nucleo.certificado.restricciones} restricciones · ${mark(nucleo.certificado.verificado)}`
+                : "no capturado"
+            }
+          />
+          <Row
+            label="Metal‑IR"
+            value={
+              nucleo.metal
+                ? `${nucleo.metal.etiqueta} · ${nucleo.metal.instrucciones} ops · ${nucleo.metal.palabras} palabras`
+                : "no compilado"
+            }
+          />
+          <Row
+            label="log ontológico"
+            value={`${nucleo.log.eventos} eventos · ${nucleo.log.tolerados} tolerados · último ${nucleo.log.ultimo ?? "—"}`}
+          />
+        </tbody>
+      </table>
     </article>
   );
 }

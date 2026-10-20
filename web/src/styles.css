@@ -766,3 +766,211 @@ td {
   font-size: 0.7rem;
 }
 
+/* ---------- Cockpit de telemetría ---------- */
+
+.cockpit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  max-height: 54vh;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.ck-head {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ck-head h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.ck-status {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.ck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.ck-card {
+  min-width: 0;
+}
+
+/* La consola del transmutador ocupa la fila completa: el editor respira. */
+.ck-wide {
+  grid-column: 1 / -1;
+}
+
+.ck-code {
+  width: 100%;
+  min-height: 10rem;
+  max-height: 22rem;
+  padding: 0.45rem;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  tab-size: 2;
+}
+
+.ck-code:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ck-actions {
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.ck-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Censo tetravalente: ⊤ ⊥ ⊤∧⊥ ∅, con barra proporcional al total. */
+.ck-census {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.ck-cell {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "glyph count"
+    "label label"
+    "bar bar"
+    "pct pct";
+  gap: 0.15rem 0.3rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid currentColor;
+  border-radius: 4px;
+  background: var(--pane);
+}
+
+.ck-cell .ck-glyph {
+  grid-area: glyph;
+  color: inherit;
+  font-size: 1rem;
+}
+
+.ck-cell .ck-count {
+  grid-area: count;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.ck-cell .ck-label {
+  grid-area: label;
+  color: var(--muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ck-cell .ck-bar {
+  grid-area: bar;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.ck-cell .ck-bar > span {
+  display: block;
+  height: 100%;
+  background: currentColor;
+}
+
+.ck-cell .ck-pct {
+  grid-area: pct;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.ck-true {
+  color: var(--root);
+}
+
+.ck-false {
+  color: var(--error);
+}
+
+.ck-both {
+  color: var(--accent);
+}
+
+.ck-none {
+  color: var(--unknown);
+}
+
+.ck-glyph {
+  color: var(--root);
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+}
+
+.ck-mono {
+  font-family: "Consolas", "Segoe UI Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.ck-break {
+  overflow-wrap: anywhere;
+}
+
+.ck-divider {
+  height: 1px;
+  margin: 0.1rem 0;
+  background: var(--line);
+}
+
+.ck-subhead {
+  margin: 0;
+  color: var(--root);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ck-scroll {
+  flex: 0 1 auto;
+  max-height: 14rem;
+}
+
+.ck-card pre.ck-scroll {
+  margin: 0.25rem 0 0;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ck-card details summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+

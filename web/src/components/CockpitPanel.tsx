@@ -1,0 +1,142 @@
+// Panel del **Cockpit de telemetría** del kernel congelado.
+//
+// Carga las tres proyecciones de sólo lectura (`get_system_manifest`,
+// `get_neural_frame`, `get_flight_recorder_logs`) y ejecuta la única operación
+// mutante (`transmute_input`). Todo el juicio —censo, auditoría, indexación y
+// sellado— ocurre en Rust; el panel sólo pinta y refresca.
+
+import { useCallback, useEffect, useState } from "react";
+
+import { describeError } from "../engine";
+import {
+  flightRecorderLogs,
+  neuralFrame,
+  systemManifest,
+  transmuteInput,
+  type FlightLog,
+  type NeuralFrame,
+  type SystemManifest,
+  type TransmutationResult,
+} from "../telemetry";
+import { CensoCard, RecorderCard, ShoreshCard, TransmuterCard } from "./CockpitCards";
+
+export default function CockpitPanel({
+  open,
+  source,
+}: {
+  /** Visibilidad del panel (lo gobierna el encabezado del IDE). */
+  open: boolean;
+  /** Documento actual del editor, disponible para el transmutador. */
+  source: string;
+}) {
+  /** Manifiesto canónico y demo servidos por el puente. */
+  const [manifest, setManifest] = useState<SystemManifest | null>(null);
+  /** Último marco cognitivo de la ventana. */
+  const [frame, setFrame] = useState<NeuralFrame | null>(null);
+  /** Volcado de la caja negra. */
+  const [logs, setLogs] = useState<FlightLog | null>(null);
+  /** Fuente en edición dentro de la consola del transmutador. */
+  const [entry, setEntry] = useState("");
+  /** Dictamen de la última transmutación. */
+  const [outcome, setOutcome] = useState<TransmutationResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  /** Relee las tres proyecciones y siembra el editor si está vacío. */
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      const [nextManifest, nextFrame, nextLogs] = await Promise.all([
+        systemManifest(),
+        neuralFrame(),
+        flightRecorderLogs(),
+      ]);
+      setManifest(nextManifest);
+      setFrame(nextFrame);
+      setLogs(nextLogs);
+      // El demo lo dicta el kernel: TypeScript no duplica ni un literal.
+      setEntry((previous) => (previous.trim().length === 0 ? nextManifest.demo : previous));
+      setError(null);
+      setReady(true);
+    } catch (failure) {
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  // Arranque perezoso: no se invoca nada hasta que el panel se abre. El panel
+  // sigue montado cuando se oculta, así que una carga en vuelo puede publicar
+  // su resultado sin riesgo de actualizar un componente desmontado.
+  useEffect(() => {
+    if (open && !ready) {
+      void load();
+    }
+  }, [open, ready, load]);
+
+  /** Transmuta la fuente y refresca el marco y la caja negra. */
+  const run = useCallback(async () => {
+    setBusy(true);
+    try {
+      const result = await transmuteInput(entry);
+      setOutcome(result);
+      const [nextFrame, nextLogs] = await Promise.all([neuralFrame(), flightRecorderLogs()]);
+      setFrame(nextFrame);
+      setLogs(nextLogs);
+      setError(null);
+    } catch (failure) {
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  }, [entry]);
+
+  /** Editar la fuente invalida el dictamen anterior (evita leerlo fuera de contexto). */
+  const edit = useCallback((value: string) => {
+    setEntry(value);
+    setOutcome(null);
+  }, []);
+
+  if (!open) {
+    return null;
+  }
+
+  const status = busy ? "sincronizando…" : ready ? "proyecciones al día" : "sin conexión";
+
+  return (
+    <section className="pane cockpit" aria-label="cockpit de telemetría">
+      <div className="row ck-head">
+        <h2>Cockpit de telemetría</h2>
+        <span className={`ck-status ${busy ? "" : ready ? "kx-ok" : "kx-warn"}`}>{status}</span>
+        <span className="grow" />
+        <button type="button" disabled={busy} onClick={() => void load()}>
+          actualizar
+        </button>
+      </div>
+
+      {error ? <p className="ai-error">{error}</p> : null}
+
+      {manifest && frame && logs ? (
+        <div className="ck-grid">
+          <CensoCard frame={frame} />
+          <TransmuterCard
+            entry={entry}
+            outcome={outcome}
+            busy={busy}
+            onEntry={edit}
+            onRun={() => void run()}
+            onDocument={() => edit(source)}
+            onDemo={() => edit(manifest.demo)}
+          />
+          <ShoreshCard frame={frame} manifest={manifest} />
+          <RecorderCard logs={logs} />
+        </div>
+      ) : (
+        <p className="muted">
+          {busy ? "Consultando al kernel…" : "Sin proyecciones del kernel."}
+        </p>
+      )}
+    </section>
+  );
+}

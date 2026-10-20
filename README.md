@@ -26,10 +26,13 @@ bara-ide/
 ├── Cargo.toml              paquete `bara-ide`: biblioteca + CLI
 ├── docs/INVENTARIO.md      inventario funcional del workspace completo (kernel + IDE)
 ├── docs/VISUAL_BUILDER.md  contrato del constructor visual (lienzo → Shoresh firmado)
+├── scripts/
+│   └── build_android.ps1   APK/AAB: resuelve SDK/NDK/JDK y ejecuta Gradle + Cargo
 ├── src/
 │   ├── lib.rs              modelo (tokens, resumen, inventario), informes y pruebas
 │   ├── aether.rs           paneles AETHER‑Ω: autopoiesis, registro cuántico, malla, Metal‑IR, fractales, diario Δ⁻¹
 │   ├── visual.rs           constructor visual: lienzo del IDE → `bara::visual_builder`, con sello
+│   ├── bridge.rs           puente FASE 5: manifiesto e instantánea de `bara::ide_bridge`
 │   └── main.rs             CLI histórica: `--tokens` / `--summary` / `--help` / `--version`
 ├── samples/genesis.bara    documento Shoresh de ejemplo (embebido en el binario)
 ├── package.json            front-end (React, Vite, TS) + CLI de Tauri
@@ -39,7 +42,7 @@ bara-ide/
 │   ├── index.html
 │   ├── scripts/ai-check.mjs    autodiagnóstico del panel de IA, en Node
 │   └── src/
-│       ├── {main,App}.tsx, engine.ts, aether.ts, visual.ts, styles.css, vite-env.d.ts
+│       ├── {main,App}.tsx, engine.ts, aether.ts, visual.ts, bridge.ts, styles.css, vite-env.d.ts
 │       ├── ai/             cliente de IA: tipos, ajustes, proveedores, prompt, imágenes, autodiagnóstico
 │       └── components/     ChatPanel, AiSettings, AssistantText, KernelPanel, KernelCards, VisualBuilder
 └── src-tauri/              backend Tauri v2 (crate miembro del workspace)
@@ -47,6 +50,7 @@ bara-ide/
     ├── build.rs
     ├── tauri.conf.json
     ├── capabilities/default.json
+    ├── scripts/win-gnu-recursos.py  manifiesto + iconos + WebView2Loader (GNU)
     ├── icons/ (png + ico + icns)
     └── src/{lib,main}.rs
 ```
@@ -80,10 +84,13 @@ bara-ide/
 | `visual_sample` | — | lienzo de ejemplo embebido en el kernel (`SAMPLE_BLUEPRINT`) |
 | `visual_build` | `{ blueprint: string }` | `VisualBuildView` o error legible: contrato estricto de todo o nada |
 | `visual_compose` | `{ blueprints: string[] }` | `VisualBuildView` del ADN compuesto (el orden de los lienzos importa) |
+| `bridge_manifest` | — | contrato del puente (`bara::ide_bridge::Manifest::canon`): esquema, versión, secciones, cotas y huella |
+| `bridge_snapshot` | `{ source: string }` | instantánea de sólo lectura: identidad, inmunidad, pasarela y núcleo, con el veredicto del documento |
 
-El contrato está tipado **a ambos lados**: `web/src/engine.ts`, `web/src/aether.ts`
-y `web/src/visual.ts` replican el modelo Rust (nombres `camelCase` de `serde`), de
-modo que `tsc` verifica el IPC.
+El contrato está tipado **a ambos lados**: `web/src/engine.ts`, `web/src/aether.ts`,
+`web/src/visual.ts` y `web/src/bridge.ts` replican el modelo Rust (nombres
+`camelCase` de `serde`, salvo el puente, que el núcleo escribe en `snake_case`
+sin `serde`), de modo que `tsc` verifica el IPC.
 
 ### Sesión del oráculo, Belnap y control temporal
 
@@ -126,6 +133,14 @@ Dos paneles más de la barra superior, ambos servidos por el **mismo kernel**:
 * El ADN se firma con la semilla **fija** del IDE (`VISUAL_KEY_SEED`): el sello
   prueba **integridad y reproducibilidad**, no identidad de usuario — es una
   limitación declarada, no una custodia de clave.
+* El **puente de la FASE 5** (`bridge_manifest` / `bridge_snapshot`) reenvía los
+  documentos de `bara::ide_bridge` **byte a byte** (claves fijas en
+  `snake_case`). La instantánea se captura sobre un kernel vivo en el que el
+  documento del editor ha entrado por la pasarela de burbujas y el sistema
+  inmunitario adaptativo lo ha escaneado: la tarjeta pinta el veredicto, el
+  peligro y las marcas que calculó el **núcleo**. Sus únicas alertas son de
+  **contrato** (deriva de esquema o de huella, sección ausente): nunca
+  reinterpreta un veredicto ni aplica umbrales propios.
 * Contrato completo del lienzo (claves, clases, tipos, cotas, informe y
   limitaciones): `docs/VISUAL_BUILDER.md`.
 
@@ -135,8 +150,57 @@ Dos paneles más de la barra superior, ambos servidos por el **mismo kernel**:
 cd C:\Users\Vexor\Downloads\bara-ide
 npm install
 npm run tauri dev      # ventana del IDE con recarga en caliente
-npm run tauri build    # instalador (en Windows requiere el toolchain MSVC)
+npm run tauri build    # instaladores MSI + NSIS en ..\target\release\bundle
 ```
+
+En esta máquina el único toolchain con `std` es `x86_64-pc-windows-gnu`.
+`tauri-build` no encuentra `windres`, así que el enlazado produce un `.exe`
+sin recursos y `src-tauri/scripts/win-gnu-recursos.py` los embebe después:
+manifiesto Common Controls 6.0, iconos y `WebView2Loader.dll`. Es idempotente
+y `--probar` arranca el binario para comprobar que sobrevive:
+
+```powershell
+python src-tauri/scripts/win-gnu-recursos.py --exe ..\target\release\bara-ide-desktop.exe
+python src-tauri/scripts/win-gnu-recursos.py --exe ..\target\release\bara-ide-desktop.exe --probar 20
+```
+
+`npm run tauri build` aplica ese parche automáticamente mediante
+`beforeBundleCommand` (`npm run patch:resources`), que se ejecuta **de forma
+síncrona entre el enlazado y el empaquetado**. No dependas del parche de
+`build.rs`: éste espera al enlazador en segundo plano y el bundler puede copiar
+el `.exe` antes de que termine; el hook elimina esa carrera. Si empaquetas con
+otra herramienta, ejecuta el comando a mano antes de copiar el binario.
+
+### Android (APK / AAB)
+
+El contenedor Gradle vive en `src-tauri/gen/android`; sus artefactos
+(`build/`, `.gradle/`, `local.properties`, `keystore.properties`, `jniLibs/`)
+están ignorados. Hacen falta JDK 17+ (`JAVA_HOME`), Android SDK
+(`ANDROID_HOME`), NDK r27 (`NDK_HOME` o `%ANDROID_HOME%\ndk\<versión>`), los
+targets Rust de Android y `cargo` en el `PATH`.
+
+```powershell
+.\scripts\build_android.ps1                                   # APK debug, arm64
+.\scripts\build_android.ps1 -Profile release -Format apk      # APK release
+.\scripts\build_android.ps1 -Profile release -Format aab `
+    -Targets aarch64,armv7,i686,x86_64                        # AAB universal
+```
+
+El guion resuelve SDK/NDK/JDK, instala los targets Rust que falten, compila el
+frontend con `npm run build` y ejecuta directamente la tarea Gradle
+(`assembleArm64Debug`, `bundleUniversalRelease`, etc.). **No invoca la CLI de
+Tauri**: en Windows ésta usa `cargo-mobile2`, que crea un enlace simbólico para
+`jniLibs` y falla sin Developer Mode (`CreateProcess error=2`). En su lugar,
+`scripts/android/BuildTask.kt` (que el guion copia a
+`src-tauri/gen/android/buildSrc/.../BuildTask.kt`) compila la biblioteca con
+`cargo build --lib --target <triple>`, configura el enlazador del NDK y copia
+`libbara_ide_desktop_lib.so` a `app/src/main/jniLibs/<abi>`. Los artefactos
+quedan en `src-tauri/gen/android/app/build/outputs/{apk,bundle}`.
+
+Para publicar en Google Play, crea `src-tauri/gen/android/keystore.properties`
+con el keystore real (el archivo está ignorado por git) y añade la
+`signingConfig` correspondiente en `app/build.gradle.kts`; Gradle genera el AAB
+release sin firmar si no hay configuración de firma.
 
 CLI clásica (sin interfaz gráfica), desde el raíz del workspace:
 
@@ -187,7 +251,7 @@ desde el kernel por IPC.
 
 ```powershell
 cargo check  --workspace                                    # aval del workspace completo
-cargo test   -p bara -p bara-ide --features bara-ide/serde   # kernel (110 pruebas) + motor del IDE (34)
+cargo test   -p bara -p bara-ide --features bara-ide/serde   # kernel (245 pruebas) + motor del IDE (40, con el contrato IPC)
 cargo clippy --workspace --all-targets -- -D warnings        # política del CI: salida 0 y 0 avisos de rustc (solo el
                                                             # aviso esperado del build.rs de Tauri), sin enlazar
 npm run typecheck                                           # tsc --noEmit
@@ -203,31 +267,23 @@ enlazador MinGW/MSVC completo — aquí `ld` aborta con `export ordinal too larg
 y el disco está al límite —, así que las pruebas se ejecutan sobre el kernel y
 el motor, y el backend se cubre con `cargo check` y `cargo clippy`.
 
-Estado medido en esta máquina: `bara` **110 / 110** (59 unitarias + 51 de
-integración), `bara-ide` **34 / 34**, workspace **144 / 144**, `npm run build`
-con 45 módulos y 0 avisos de `tsc`, `cargo clippy --workspace --all-targets
+Estado medido en esta máquina: `bara` **245 / 245** (175 unitarias + 70 de
+integración), `bara-ide` **40 / 40**, workspace **285 / 285**, `npm run build`
+con 46 módulos y 0 avisos de `tsc`, `cargo clippy --workspace --all-targets
 -- -D warnings` con salida 0.
 
 ## Notas
 
-* **Toolchain de Windows**: el árbol completo de Tauri v2 **verifica**
-  (`cargo check`) con el toolchain `x86_64-pc-windows-gnu` (MinGW/`rust-lld`),
-  que es el único instalado con `std` en esta máquina. Para *enlazar* el
-  instalador se recomienda MSVC (`rustup default stable-x86_64-pc-windows-msvc`),
-  que es el soportado oficialmente por Tauri.
-* **Recurso de Windows (icono/manifiesto)**: `tauri-build` lo embebe con
-  `windres` (GNU) o `rc.exe` (MSVC). El toolchain GNU de rustup **no** trae
-  MinGW, y en esta máquina no hay `windres`/`llvm-windres`/`rc.exe`, así que
-  `src-tauri/build.rs`:
-  1. respeta `RC`/`RC_<TARGET>`/`RC_<TARGET_CON_GUIONES>` si están definidos;
-  2. si no, autodetecta `windres` en el `PATH` y en las raíces usuales de
-     MinGW/MSYS2 y lo publica en `RC`;
-  3. si no encuentra ninguno, degrada ese único paso a un `cargo:warning`
-     (sin pánico) porque el recurso sólo afecta al **enlazado** del `.exe`,
-     no a `cargo check`.
-
-  Es decir: `cargo check` es válido aquí tal cual; para obtener un `.exe`
-  completo, aporte el compilador de recursos (MSVC o `windres`).
+* **Toolchain de Windows**: el árbol completo de Tauri v2 **verifica** y
+  **enlaza** con `x86_64-pc-windows-gnu` (MinGW/`rust-lld`), el único con `std`
+  en esta máquina. `build.rs` busca `windres`/`llvm-windres`; si no existe,
+  deja un proceso suelto que espera al enlazador y llama a
+  `src-tauri/scripts/win-gnu-recursos.py`, que embebe el manifiesto Common
+  Controls 6.0 y los iconos, y copia `WebView2Loader.dll`. `cargo run` y
+  `tauri dev` aplican el parche de forma determinista antes de lanzar la app
+  mediante el runner de `src-tauri/.cargo/config.toml`. Con MSVC o `windres`
+  disponible se usa el compilador de recursos normal y el parcheador es
+  idempotente.
 * **CSP**: `tauri.conf.json` usa `"csp": null` (igual que la plantilla oficial)
   para no romper el HMR de Vite en desarrollo. Endurecerla es un cambio de una
   línea antes de publicar.

@@ -17,6 +17,12 @@
 //! AST *Shoresh* validado → ADN firmado) para que el IDE pinte el lienzo, su
 //! retícula áurea y su sello.
 //!
+//! El **puente kernel → IDE** ([`bridge`], FASE 5) es la cuarta: reenvía byte a
+//! byte el manifiesto y la instantánea que el núcleo publica en
+//! `bara::ide_bridge` (identidad, inmunidad, pasarela y estado del runtime),
+//! tomados sobre un kernel vivo en el que el documento del editor ha entrado
+//! por la pasarela de burbujas.
+//!
 //! ## Invariantes
 //! 1. **Cero dependencias por defecto** — igual que el kernel, compilar esta
 //!    biblioteca (y por tanto la CLI) no arrastra *crates* externos. `serde` es
@@ -59,6 +65,12 @@ pub use visual::{
     VisualBuildView, VisualCatalogueView, VisualCellView, VisualCheckView, VisualKindView,
     VisualLimitsView, VisualNodeView, VisualReportView, VisualSlotView, VisualTypeView,
 };
+
+// Puente kernel → IDE (FASE 5): manifiesto canónico e instantánea de sólo
+// lectura publicados por `bara::ide_bridge`, sin recomillar una sola clave.
+pub mod bridge;
+
+pub use bridge::{bridge_manifest, bridge_snapshot, BRIDGE_ORIGIN};
 
 /// Versión de este *front-end* (la del paquete `bara-ide`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

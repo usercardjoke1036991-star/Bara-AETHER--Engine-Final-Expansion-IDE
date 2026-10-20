@@ -21,6 +21,7 @@ import {
   type TurnView,
 } from "./engine";
 import ChatPanel from "./components/ChatPanel";
+import CockpitPanel from "./components/CockpitPanel";
 import KernelPanel from "./components/KernelPanel";
 import VisualBuilder from "./components/VisualBuilder";
 
@@ -44,6 +45,8 @@ export default function App() {
   const [kernelOpen, setKernelOpen] = useState(false);
   /** Visibilidad del panel del constructor visual (lienzo → Shoresh firmado). */
   const [visualOpen, setVisualOpen] = useState(false);
+  /** Visibilidad del Cockpit de telemetría (censo, transmutador, Shoresh, caja negra). */
+  const [cockpitOpen, setCockpitOpen] = useState(false);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
   const [lastTurn, setLastTurn] = useState<TurnView | null>(null);
@@ -223,7 +226,7 @@ export default function App() {
   );
 
   return (
-    <div className={`app${aiOpen ? " ai-open" : ""}${kernelOpen ? " kernel-open" : ""}`}>
+    <div className={`app${aiOpen ? " ai-open" : ""}${kernelOpen ? " kernel-open" : ""}${cockpitOpen ? " cockpit-open" : ""}`}>
       <header className="bar">
         <h1>Bara IDE</h1>
         <span className="tag">kernel v0.1.0-kernel · Shoresh</span>
@@ -231,6 +234,9 @@ export default function App() {
         <span className="status">{busy ? "analizando…" : origin}</span>
         <button type="button" onClick={() => setKernelOpen(!kernelOpen)}>
           {kernelOpen ? "ocultar núcleo" : "núcleo AETHER-Ω"}
+        </button>
+        <button type="button" onClick={() => setCockpitOpen(!cockpitOpen)}>
+          {cockpitOpen ? "ocultar cockpit" : "telemetría"}
         </button>
         <button type="button" onClick={() => setVisualOpen(!visualOpen)}>
           {visualOpen ? "ocultar lienzo" : "lienzo visual"}
@@ -496,6 +502,8 @@ export default function App() {
       </main>
 
       <KernelPanel open={kernelOpen} source={source} />
+
+      <CockpitPanel open={cockpitOpen} source={source} />
 
       <VisualBuilder open={visualOpen} onUseCode={applyCode} />
 

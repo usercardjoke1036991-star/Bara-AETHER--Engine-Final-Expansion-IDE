@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:ai": "node scripts/ai-check.mjs",
+    "patch:resources": "python src-tauri/scripts/win-gnu-recursos.py --exe ../target/release/bara-ide-desktop.exe",
     "tauri": "tauri"
   },
   "dependencies": {

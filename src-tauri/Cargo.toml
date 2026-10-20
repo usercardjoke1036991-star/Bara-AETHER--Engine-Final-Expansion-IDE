@@ -38,3 +38,9 @@ serde_json = "1"
 # Motor del IDE: la biblioteca `bara-ide` con la feature `serde` activada
 # (modelo serializable a JSON) y, tras ella, el kernel `bara` por ruta.
 bara-ide = { path = "..", features = ["serde"] }
+
+# Enlace directo al kernel para el Cockpit de telemetría: los comandos
+# `get_system_manifest`, `get_neural_frame`, `get_flight_recorder_logs` y
+# `transmute_input` consumen `bara::ide_bridge`, `bara::neural_bridge`,
+# `bara::flight_recorder` y `bara::transmuter` sin intermediarios.
+bara = { path = "../../BAR" }

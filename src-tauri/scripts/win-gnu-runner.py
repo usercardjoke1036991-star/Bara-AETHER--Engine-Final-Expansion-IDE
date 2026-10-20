@@ -29,13 +29,29 @@ RECURSOS = os.path.join(AQUI, "win-gnu-recursos.py")
 NOMBRE_APP = "bara-ide-desktop.exe"
 
 
+def necesita_recursos(binario):
+    """¿El binario enlaza Tauri y necesita manifiesto/icono embebidos?
+
+    No sólo la aplicación: los binarios de prueba de `bara-ide-desktop`
+    (`bara_ide_desktop_lib-<hash>.exe`, `bara_ide_desktop-<hash>.exe`) también
+    enlazan WebView2/muda y mueren con 0xC0000139 si el manifiesto no está
+    dentro del `.exe`. El runner los parchea igual que la app.
+    """
+    nombre = os.path.basename(binario).lower()
+    return (
+        nombre == NOMBRE_APP
+        or nombre.startswith("bara_ide_desktop")
+        or nombre.startswith("bara-ide-desktop")
+    )
+
+
 def main(argv):
     if len(argv) < 2:
         print("uso: win-gnu-runner.py RUTA_BINARIO [ARGUMENTOS...]", file=sys.stderr)
         return 2
 
     binario, argumentos = argv[1], argv[2:]
-    if os.path.basename(binario).lower() == NOMBRE_APP:
+    if necesita_recursos(binario):
         try:
             subprocess.run([sys.executable, RECURSOS, "--exe", binario], check=False)
         except OSError as error:

@@ -1232,7 +1232,11 @@ pub fn timeline(source: &str) -> TimelineView {
 /// Devuelve también los tokens para que cada panel elija su sondeo (registro
 /// cuántico, Metal‑IR…) sin volver a lexear. La ejecución es **total**: el
 /// runtime del núcleo registra eventos y degrada lo incomprensible.
-fn runtime_of(source: &str) -> (BaraRuntime, Vec<Token>) {
+///
+/// Es `pub(crate)` porque el puente de la FASE 5 ([`crate::bridge`]) toma su
+/// instantánea sobre **este mismo** runtime: un documento no puede verse
+/// distinto según qué panel lo pida.
+pub(crate) fn runtime_of(source: &str) -> (BaraRuntime, Vec<Token>) {
     let tokens = Lexer::new(source).tokenize();
     let mut runtime = BaraRuntime::new();
     let _ = runtime.execute(&tokens);

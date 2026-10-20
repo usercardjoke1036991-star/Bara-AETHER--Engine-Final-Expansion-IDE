@@ -1,10 +1,11 @@
-// Panel AETHER-Ω: las cuatro fases del kernel proyectadas sobre el documento.
+// Panel AETHER-Ω: las cinco fases del kernel proyectadas sobre el documento.
 //
 // Todo lo que se pinta aquí lo decidió el núcleo (`aether` del backend): la
 // autopoiesis y la puerta ZK (fase 1), el banco cuántico, la malla holográfica,
-// el Metal-IR y el control temporal `Δ⁻¹` (fase 2) y la geometría áurea de la
-// memoria (fase 3). La interfaz sólo pide, acota los parámetros y formatea: no
-// reimplementa física, lógica ni reparto.
+// el Metal-IR y el control temporal `Δ⁻¹` (fase 2), la geometría áurea de la
+// memoria (fase 3) y el puente de sólo lectura `bara::ide_bridge` (fase 5). La
+// interfaz sólo pide, acota los parámetros y formatea: no reimplementa física,
+// lógica ni reparto.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -24,9 +25,16 @@ import {
   type QuantumView,
   type TimelineView,
 } from "../aether";
+import {
+  bridgeManifest,
+  bridgeSnapshot,
+  type BridgeManifest,
+  type BridgeSnapshot,
+} from "../bridge";
 import { describeError } from "../engine";
 import {
   AutopoiesisCard,
+  BridgeCard,
   FractalCard,
   MeshCard,
   MetalCard,
@@ -65,7 +73,7 @@ export interface KernelPanelProps {
   source: string;
 }
 
-/** Las seis proyecciones que el panel pide al núcleo por cada documento. */
+/** Las siete proyecciones que el panel pide al núcleo por cada documento. */
 interface Projections {
   autopoiesis: AutopoiesisReport;
   quantum: QuantumView;
@@ -73,12 +81,15 @@ interface Projections {
   metal: MetalView;
   timeline: TimelineView;
   fractal: FractalMemoryView;
+  bridge: BridgeSnapshot;
 }
 
 export default function KernelPanel({ open, source }: KernelPanelProps) {
   const [projections, setProjections] = useState<Projections | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Contrato del puente (`bridge_manifest`): se carga una vez al abrir. */
+  const [contract, setContract] = useState<BridgeManifest | null>(null);
   /** Parámetros del panel de malla (el núcleo los vuelve a acotar). */
   const [peers, setPeers] = useState(3);
   const [rounds, setRounds] = useState(2);
@@ -89,19 +100,20 @@ export default function KernelPanel({ open, source }: KernelPanelProps) {
   const [planText, setPlanText] = useState(DEFAULT_PLAN_WIDTHS.join(", "));
   const [plan, setPlan] = useState<FractalMemoryView | null>(null);
 
-  /** Pide las seis proyecciones del núcleo y las publica. */
+  /** Pide las siete proyecciones del núcleo y las publica. */
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const [autopoiesis, quantum, mesh, metal, timeline, fractal] = await Promise.all([
+      const [autopoiesis, quantum, mesh, metal, timeline, fractal, bridge] = await Promise.all([
         kernelAutopoiesis(source),
         quantumNative(source),
         meshSync(source, peers, rounds, threaded),
         metalIr(source, device),
         temporalTimeline(source),
         fractalMemory(source),
+        bridgeSnapshot(source),
       ]);
-      setProjections({ autopoiesis, quantum, mesh, metal, timeline, fractal });
+      setProjections({ autopoiesis, quantum, mesh, metal, timeline, fractal, bridge });
       setError(null);
     } catch (failure) {
       setError(describeError(failure));
@@ -109,6 +121,29 @@ export default function KernelPanel({ open, source }: KernelPanelProps) {
       setBusy(false);
     }
   }, [source, peers, rounds, threaded, device]);
+
+  // El contrato del puente no depende del documento: se pide una sola vez.
+  useEffect(() => {
+    if (!open || contract !== null) {
+      return undefined;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const manifest = await bridgeManifest();
+        if (alive) {
+          setContract(manifest);
+        }
+      } catch (failure) {
+        if (alive) {
+          setError(describeError(failure));
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, contract]);
 
   // Proyección en vivo con retardo: no se invoca al kernel en cada tecla.
   useEffect(() => {
@@ -189,6 +224,7 @@ export default function KernelPanel({ open, source }: KernelPanelProps) {
               void runPlan();
             }}
           />
+          <BridgeCard document={projections.bridge} contract={contract} />
         </>
       ) : (
         <p className="muted">Sin proyecciones todavía: el núcleo aún no respondió.</p>
