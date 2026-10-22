@@ -111,9 +111,9 @@ fn ruta_del_ejecutable() -> Option<PathBuf> {
 /// Deja un proceso suelto que embebe manifiesto e icono en cuanto el enlazador
 /// escriba el `.exe` (ver `scripts/win-gnu-recursos.py`).
 ///
-/// Se lanza con `cmd /C start` para que no muera con este script de
-/// compilación. `cargo check` no enlaza, así que ese proceso se limita a agotar
-/// su espera sin tocar nada.
+/// En Windows se desacopla del job de Cargo con `CreateProcess` (sin `cmd`).
+/// `cargo check` no enlaza, así que ese proceso se limita a agotar su espera
+/// sin tocar nada.
 fn lanzar_parcheador(exe: &Path) {
     let guion = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
         .join("scripts")
@@ -121,20 +121,26 @@ fn lanzar_parcheador(exe: &Path) {
     if !guion.is_file() {
         return;
     }
-    let _ = Command::new("cmd")
-        .arg("/C")
-        .arg("start")
-        .arg("")
-        .arg("/B")
-        .arg("python")
+    let mut command = Command::new("python");
+    command
         .arg(&guion)
         .arg("--exe")
         .arg(exe)
         .arg("--wait")
         .arg("900")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+        command.creation_flags(
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
+        );
+    }
+    let _ = command.spawn();
 }
 
 fn main() {

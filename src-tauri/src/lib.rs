@@ -707,9 +707,7 @@ fn desk_spec(vista: &str) -> Option<(&'static str, f64, f64)> {
 }
 
 fn cognitive_scope(workspace: &workspace::ActiveWorkspace) -> String {
-    workspace
-        .get()
-        .unwrap_or_else(|_| "bootstrap".to_string())
+    workspace.get().unwrap_or_else(|_| "bootstrap".to_string())
 }
 
 fn folder_of(workspace: &workspace::ActiveWorkspace) -> (String, String) {
@@ -892,7 +890,7 @@ fn pick_folder(app: &tauri::AppHandle, title: &str) -> Result<std::path::PathBuf
 /// comparten estado.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(telemetry::OracleShelf::new()))
         .manage(Mutex::new(telemetry::CognitiveShelf::new()))
@@ -963,7 +961,10 @@ pub fn run() {
             idle_dismiss
         ])
         .run(tauri::generate_context!())
-        .expect("Bara IDE: no se pudo iniciar la ventana (Tauri)");
+    {
+        eprintln!("Bara IDE: no se pudo iniciar la ventana (Tauri): {error}");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
@@ -1044,10 +1045,8 @@ mod ipc_boundary {
         let sessions = Mutex::new(super::telemetry::OracleShelf::new());
         let mut paths = Vec::new();
         for index in 0..super::workspace::ROOT_CAP {
-            let dir = std::env::temp_dir().join(format!(
-                "bara-olvido-{index}-{}",
-                std::process::id()
-            ));
+            let dir =
+                std::env::temp_dir().join(format!("bara-olvido-{index}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).expect("directorio");
             let path = super::workspace::resolve_root(dir.to_str().expect("utf-8"))
@@ -1068,7 +1067,8 @@ mod ipc_boundary {
             assert!(!oracle.session(&paths[1].1).turns().is_empty());
         }
         super::adopt_root(&workspace, &cognition, &sessions, paths[0].1.clone());
-        let extra_dir = std::env::temp_dir().join(format!("bara-olvido-extra-{}", std::process::id()));
+        let extra_dir =
+            std::env::temp_dir().join(format!("bara-olvido-extra-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&extra_dir);
         std::fs::create_dir_all(&extra_dir).expect("extra");
         let extra = super::workspace::resolve_root(extra_dir.to_str().expect("utf-8"))
@@ -1077,10 +1077,18 @@ mod ipc_boundary {
             .to_string();
         super::adopt_root(&workspace, &cognition, &sessions, extra);
         assert!(
-            cognition.lock().expect("malla").spans_of(&paths[1].1).is_empty(),
+            cognition
+                .lock()
+                .expect("malla")
+                .spans_of(&paths[1].1)
+                .is_empty(),
             "la carpeta expulsada debe perder la malla"
         );
-        assert!(!cognition.lock().expect("malla").spans_of(&paths[0].1).is_empty());
+        assert!(!cognition
+            .lock()
+            .expect("malla")
+            .spans_of(&paths[0].1)
+            .is_empty());
         assert!(sessions
             .lock()
             .expect("oráculo")
