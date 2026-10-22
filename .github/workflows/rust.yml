@@ -16,20 +16,26 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    # El crate `bara` vive en otro repositorio. `actions/checkout` no deja
-    # escribir fuera del workspace, y Cargo lo busca en el hermano `../BAR`
-    # (`bara-ide/Cargo.toml` y `src-tauri/Cargo.toml`). La rama `dev` del
-    # núcleo es la que lleva la 0.5.0; `main` todavía no.
+    # `actions/checkout` rechaza `path: ../BAR` porque queda fuera de
+    # `$GITHUB_WORKSPACE`. El núcleo entra en `./BAR-local` y un enlace lo
+    # publica en el hermano `../BAR`, que es lo que leen
+    # `Cargo.toml` (`../BAR`) y `src-tauri/Cargo.toml` (`../../BAR`).
+    # Esta tarea corre en `ubuntu-latest`; no hace falta una unión de Windows.
     - name: Clone Bara Core Repository
       uses: actions/checkout@v4
       with:
         repository: usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion
         ref: dev
         token: ${{ secrets.GITHUB_TOKEN }}
-        path: kernel
-    - name: Enlazar el núcleo en la ruta hermana
+        path: BAR-local
+    - name: Enlazar el núcleo en ../BAR
       shell: bash
-      run: ln -sfn "${GITHUB_WORKSPACE}/kernel" "${GITHUB_WORKSPACE}/../BAR"
+      working-directory: ${{ github.workspace }}
+      run: |
+        ln -sfn "$PWD/BAR-local" ../BAR
+        test -f ../BAR/Cargo.toml
+        test "$(readlink -f ../BAR)" = "$(readlink -f "$PWD/BAR-local")"
+        echo "bara queda en $(readlink -f ../BAR)"
     - name: Build
       run: cargo build --verbose
     - name: Run tests
