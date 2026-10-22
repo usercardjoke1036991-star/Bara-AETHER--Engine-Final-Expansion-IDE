@@ -37,6 +37,6 @@ jobs:
         test "$(readlink -f ../BAR)" = "$(readlink -f "$PWD/BAR-local")"
         echo "bara queda en $(readlink -f ../BAR)"
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --locked --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --locked --verbose

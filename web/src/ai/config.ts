@@ -212,6 +212,15 @@ export function maskSecret(secret: string): string {
   return `${value.slice(0, 4)}${"•".repeat(8)}${value.slice(-4)}`;
 }
 
+/** Quita las barras finales sin una expresión cuantificada. */
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 /** Problemas de configuración que impiden enviar (lista vacía = todo listo). */
 export function configProblems(config: AiConfig): string[] {
   const problems: string[] = [];
@@ -221,8 +230,8 @@ export function configProblems(config: AiConfig): string[] {
   if (!config.apiKey.trim()) {
     problems.push("Falta la clave de API del proveedor activo.");
   }
-  const official = PROVIDER_ENDPOINTS[config.provider].replace(/\/+$/, "");
-  const actual = config.baseUrl.trim().replace(/\/+$/, "");
+  const official = stripTrailingSlashes(PROVIDER_ENDPOINTS[config.provider]);
+  const actual = stripTrailingSlashes(config.baseUrl.trim());
   if (actual !== official) {
     problems.push(`La raíz de la API tiene que ser ${official}.`);
   }

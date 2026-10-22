@@ -39,10 +39,12 @@ android {
             }
         }
         getByName("release") {
+            isMinifyEnabled = true
             optimization {
                enable = true
             }
             proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
                 *fileTree(".") {
                   include("**/*.pro")
                   exclude("build/**")

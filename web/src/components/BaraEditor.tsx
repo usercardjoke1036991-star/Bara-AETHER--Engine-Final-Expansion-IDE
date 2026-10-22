@@ -107,8 +107,23 @@ const ghostField = StateField.define<Ghost | null>({
   },
 });
 
-const TOKEN = /[\p{L}\p{N}_]+$/u;
-const TOKEN_START = /^[\p{L}\p{N}_]/u;
+function isTokenChar(char: string): boolean {
+  return char === "_" || /^[\p{L}\p{N}]$/u.test(char);
+}
+
+function trailingToken(before: string): string {
+  const chars = Array.from(before);
+  let start = chars.length;
+  while (start > 0 && isTokenChar(chars[start - 1])) {
+    start -= 1;
+  }
+  return chars.slice(start).join("");
+}
+
+function continuesToken(after: string): boolean {
+  const first = Array.from(after)[0];
+  return first !== undefined && isTokenChar(first);
+}
 
 function remainder(prefix: string, suggestion: string): string {
   return suggestion.startsWith(prefix) ? suggestion.slice(prefix.length) : suggestion;
@@ -122,12 +137,11 @@ function tokenAtCursor(view: EditorView): { prefix: string; line: number; pos: n
   const pos = range.head;
   const line = view.state.doc.lineAt(pos);
   const after = line.text.slice(pos - line.from);
-  if (TOKEN_START.test(after)) {
+  if (continuesToken(after)) {
     return null;
   }
   const before = line.text.slice(0, pos - line.from);
-  const match = TOKEN.exec(before);
-  return { prefix: match?.[0] ?? "", line: line.number, pos };
+  return { prefix: trailingToken(before), line: line.number, pos };
 }
 
 function acceptGhost(view: EditorView, mode: "full" | "partial"): boolean {

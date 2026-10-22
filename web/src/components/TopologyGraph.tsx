@@ -95,7 +95,9 @@ export default function TopologyGraph() {
     workspaceTopologyGraph()
       .then((next) => {
         setGraph(next);
-        const present = [...new Set(next.nodes.map((node) => node.language))].sort();
+        const present = [...new Set(next.nodes.map((node) => node.language))].sort((left, right) =>
+          left.localeCompare(right),
+        );
         setLanguages(present);
         alpha.current = 1;
       })
@@ -450,7 +452,12 @@ export default function TopologyGraph() {
     };
   }, []);
 
-  const allLanguages = graph === null ? [] : [...new Set(graph.nodes.map((node) => node.language))].sort();
+  const allLanguages =
+    graph === null
+      ? []
+      : [...new Set(graph.nodes.map((node) => node.language))].sort((left, right) =>
+          left.localeCompare(right),
+        );
   const bothCount = visible.filter((node) => node.conflictStatus === BOTH).length;
 
   return (

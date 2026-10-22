@@ -28,7 +28,7 @@ import AssistantText, { codeBlocks } from "./AssistantText";
 
 /** Identificador local de un mensaje (clave de React y de las traducciones). */
 function newId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return crypto.randomUUID();
 }
 
 /** Detalle legible de cualquier fallo. */

@@ -13,7 +13,12 @@
 //    `{type:"image_url", image_url:{url}}`, donde `url` admite una data URL
 //    base64; por eso también funciona con servidores compatibles locales.
 
-import { ANTHROPIC_BROWSER_HEADER, ANTHROPIC_VERSION, PROVIDER_ENDPOINTS } from "./config";
+import {
+  ANTHROPIC_BROWSER_HEADER,
+  ANTHROPIC_VERSION,
+  PROVIDER_ENDPOINTS,
+  stripTrailingSlashes,
+} from "./config";
 import type {
   AiConfig,
   ChatMessage,
@@ -45,7 +50,7 @@ export function wireMessages(messages: ChatMessage[], limit = MAX_WIRE_MESSAGES)
 /** Raíz de la API normalizada (sin barra final); vacía ⇒ la del proveedor. */
 export function normalizeBaseUrl(baseUrl: string, fallback: string): string {
   const value = baseUrl.trim() || fallback;
-  return value.replace(/\/+$/, "");
+  return stripTrailingSlashes(value);
 }
 
 /** Petición HTTP completa, lista para `fetch`. */

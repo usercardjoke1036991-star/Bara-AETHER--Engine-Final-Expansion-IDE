@@ -74,7 +74,7 @@ LOAD_LIBRARY_AS_DATAFILE = 0x00000002
 # Common-Controls 6.0.0.0 (la que aporta `comctl32!TaskDialogIndirect`).
 MANIFIESTO = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="com.aetheromega.bara.ide" version="0.1.0.0" processorArchitecture="amd64"/>
+  <assemblyIdentity type="win32" name="com.aetheromega.bara.ide" version="0.5.0.0" processorArchitecture="amd64"/>
   <dependency>
     <dependentAssembly>
       <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
@@ -122,8 +122,56 @@ def _rid(valor):
     return ctypes.c_void_p(valor)
 
 
+def _ruta_real(ruta, etiqueta):
+    """Normaliza una ruta de este proceso: sin nulos y sin enlaces sin resolver."""
+    if not isinstance(ruta, str) or ruta == "" or "\x00" in ruta:
+        raise ValueError(etiqueta + " rechazada")
+    return os.path.realpath(os.path.abspath(ruta))
+
+
+def exe_existente(ruta):
+    """Un `.exe` que ya está en disco. No abre el archivo."""
+    absoluta = _ruta_real(ruta, "ruta del ejecutable")
+    if not os.path.basename(absoluta).lower().endswith(".exe"):
+        raise ValueError("se esperaba un archivo .exe")
+    if not os.path.isfile(absoluta):
+        raise ValueError("el .exe no existe")
+    return absoluta
+
+
+def ico_del_proyecto(ruta, raiz):
+    """`.ico` dentro de `src-tauri`, o `None` si todavía no está."""
+    absoluta = _ruta_real(ruta, "ruta del icono")
+    base = os.path.normcase(os.path.realpath(raiz))
+    destino = os.path.normcase(absoluta)
+    try:
+        comun = os.path.commonpath([base, destino])
+    except ValueError:
+        raise ValueError("el icono queda fuera de src-tauri") from None
+    if comun != base:
+        raise ValueError("el icono queda fuera de src-tauri")
+    if not destino.endswith(".ico"):
+        raise ValueError("se esperaba un .ico del proyecto")
+    if not os.path.isfile(absoluta):
+        return None
+    return absoluta
+
+
+def dll_webview(ruta):
+    """`WebView2Loader.dll` explícita, o `None` para buscarla en el registro."""
+    if ruta is None:
+        return None
+    absoluta = _ruta_real(ruta, "ruta de WebView2")
+    if os.path.basename(absoluta).lower() != "webview2loader.dll" or not os.path.isfile(absoluta):
+        raise ValueError("se esperaba WebView2Loader.dll")
+    return absoluta
+
+
 def leer_ico(ruta):
     """Imagenes de un `.ico`: [(ancho, alto, colores, planos, bits, bytes)]."""
+    ruta = _ruta_real(ruta, "ruta del icono")
+    if not os.path.basename(ruta).lower().endswith(".ico") or not os.path.isfile(ruta):
+        raise ValueError("se esperaba un .ico")
     with open(ruta, "rb") as f:
         datos = f.read()
     reservado, tipo, cuenta = struct.unpack_from("<HHH", datos, 0)
@@ -207,10 +255,11 @@ def ya_tiene_recursos(exe):
     de saber si el icono esta con el id `ID_ICONO_APP`.
     """
     try:
+        exe = exe_existente(exe)
         with open(exe, "rb") as f:
             if b"Microsoft.Windows.Common-Controls" not in f.read():
                 return False
-    except OSError:
+    except (OSError, ValueError):
         return False
     return _existe_recurso(exe, RT_GROUP_ICON, ID_ICONO_APP)
 
@@ -336,6 +385,9 @@ def esperar_exe(exe, segundos):
 
 def probar(exe, segundos):
     """Lanza el `.exe` con `CreateProcess` y mide cuanto sobrevive."""
+    exe = exe_existente(exe)
+    if not isinstance(segundos, int) or isinstance(segundos, bool) or segundos < 1 or segundos > 120:
+        raise ValueError("la observacion tiene que durar entre 1 y 120 s")
     proceso = subprocess.Popen([exe], cwd=os.path.dirname(exe))
     inicio = time.time()
     while time.time() - inicio < segundos:
@@ -362,24 +414,28 @@ def main(argv=None):
     args = analizador.parse_args(argv)
 
     if args.wait and not esperar_exe(args.exe, args.wait):
-        print("aviso: el .exe no aparecio en %d s: %s" % (args.wait, args.exe))
+        print("aviso: el .exe no aparecio en %d s" % args.wait)
         return 1
-    if not os.path.isfile(args.exe):
-        print("error: no existe " + args.exe)
+    try:
+        exe = exe_existente(args.exe)
+        icono = ico_del_proyecto(args.icon, raiz)
+        webview = dll_webview(args.webview2)
+    except ValueError as error:
+        print("error: %s" % error)
         return 1
 
-    candado, descriptor = _tomar_candado(args.exe)
+    candado, descriptor = _tomar_candado(exe)
     try:
-        print(copiar_webview2(args.exe, args.webview2))
-        if ya_tiene_recursos(args.exe) and not args.forzar:
+        print(copiar_webview2(exe, webview))
+        if ya_tiene_recursos(exe) and not args.forzar:
             print("el .exe ya lleva el manifiesto y el icono embebidos; nada que rehacer")
         else:
-            imagenes = embebe_recursos(args.exe, args.icon)
+            imagenes = embebe_recursos(exe, icono)
             print("manifiesto embebido (Common-Controls 6.0.0.0) e icono con %d imagenes" % imagenes)
     finally:
         _soltar_candado(candado, descriptor)
     if args.probar:
-        return probar(args.exe, args.probar)
+        return probar(exe, args.probar)
     return 0
 
 

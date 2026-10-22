@@ -650,7 +650,7 @@ export default function App() {
       updateActiveSource((previous) =>
         previous.trim().length === 0
           ? code
-          : `${previous.replace(/\s+$/, "")}\n\n${code}`,
+          : `${previous.trimEnd()}\n\n${code}`,
       );
     },
     [updateActiveSource],

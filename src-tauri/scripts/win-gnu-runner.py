@@ -45,19 +45,45 @@ def necesita_recursos(binario):
     )
 
 
+def ruta_exe(valor):
+    """El binario que acaba de enlazar cargo: un `.exe` que ya existe."""
+    if not isinstance(valor, str) or valor == "" or "\x00" in valor:
+        raise ValueError("ruta de ejecutable rechazada")
+    absoluta = os.path.realpath(os.path.abspath(valor))
+    if not os.path.basename(absoluta).lower().endswith(".exe") or not os.path.isfile(absoluta):
+        raise ValueError("el binario tiene que ser un .exe existente")
+    return absoluta
+
+
+def textos(valores):
+    """Argumentos del programa, como lista nueva y sin nulos."""
+    limpios = []
+    for valor in valores:
+        if not isinstance(valor, str) or "\x00" in valor:
+            raise ValueError("argumento rechazado")
+        limpios.append(valor)
+    return limpios
+
+
 def main(argv):
     if len(argv) < 2:
         print("uso: win-gnu-runner.py RUTA_BINARIO [ARGUMENTOS...]", file=sys.stderr)
         return 2
 
-    binario, argumentos = argv[1], argv[2:]
+    try:
+        binario = ruta_exe(argv[1])
+        argumentos = textos(argv[2:])
+    except ValueError as error:
+        print("error: %s" % error, file=sys.stderr)
+        return 2
+
     if necesita_recursos(binario):
         try:
             subprocess.run([sys.executable, RECURSOS, "--exe", binario], check=False)
         except OSError as error:
             print("aviso: no pude parchear el .exe (%s)" % error, file=sys.stderr)
 
-    return subprocess.call([binario] + argumentos)
+    return subprocess.call([binario, *argumentos])
 
 
 if __name__ == "__main__":
