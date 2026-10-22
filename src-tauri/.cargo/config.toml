@@ -16,13 +16,9 @@
 # el `rust-lld` autocontenido y las bibliotecas MinGW que incluye rustup. Con
 # esto, `npm run tauri dev` (o `cargo run`) funciona sin variables de entorno.
 #
-# OJO con la ruta del `runner`: Cargo NO la resuelve contra este fichero, sino
-# contra el directorio de trabajo desde el que se invoca `cargo`. Por eso va
-# ABSOLUTA (única forma que funciona desde cualquier CWD). Para portarla a otra
-# máquina hay dos caminos:
-#   * editar la ruta de abajo y poner la de tu clone, o
-#   * poner "scripts/win-gnu-runner.py" y ejecutar siempre `cargo` desde la
-#     carpeta `src-tauri/` (con ese CWD sí resuelve; desde una subcarpeta no).
+# La ruta del `runner` es relativa al directorio padre de este `.cargo/`
+# (`src-tauri/`). Cargo la resuelve ahí, con barras `/`, sin anclar el clone
+# a un usuario ni a una letra de unidad.
 [target.x86_64-pc-windows-gnu]
-runner = ["python", "C:/Users/Vexor/Downloads/bara-ide/src-tauri/scripts/win-gnu-runner.py"]
+runner = ["python", "scripts/win-gnu-runner.py"]
 rustflags = ["-C", "link-self-contained=yes"]

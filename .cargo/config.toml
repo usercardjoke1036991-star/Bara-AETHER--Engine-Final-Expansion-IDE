@@ -19,11 +19,10 @@
 #  completo. Sólo `src-tauri/.cargo/config.toml` lo necesita para `cargo run`
 #  desde `src-tauri/`, donde sí comparte target con el resto del workspace.
 #
-#  La ruta del runner va ABSOLUTA: Cargo lo lanza con el CWD del paquete que
-#  ejecuta (`BAR/` para el kernel, `src-tauri/` para el backend), no con el
-#  CWD desde el que invocaste `cargo`. Una ruta relativa única no sirve para
-#  todos los paquetes del workspace. Para portar el repo a otra máquina,
-#  sustituye esta ruta por la de tu clone (o define un runner global).
+#  La ruta del runner es relativa al directorio padre de este `.cargo/`
+#  (la raíz `bara-ide/`). Cargo resuelve las rutas de configuración contra
+#  ese directorio, no contra el usuario ni contra el CWD del paquete que
+#  ejecuta, así que el clone se porta sin editar letras de unidad.
 # ══════════════════════════════════════════════════════════════════════════
 [target.x86_64-pc-windows-gnu]
-runner = ["python", "C:/Users/Vexor/Downloads/bara-ide/src-tauri/scripts/win-gnu-runner.py"]
+runner = ["python", "src-tauri/scripts/win-gnu-runner.py"]

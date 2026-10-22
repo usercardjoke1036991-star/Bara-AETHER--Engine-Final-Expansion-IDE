@@ -90,7 +90,10 @@ export function analyzeSource(source: string): Promise<Analysis> {
   return invoke<Analysis>("analyze_source", { source });
 }
 
-/** Analiza un documento `.bara` del disco. */
+/**
+ * Analiza un `.bara` ya confinado por el backend a la raíz activa.
+ * La ruta no elige el workspace: un absoluto fuera de esa raíz se rechaza.
+ */
 export function analyzeFile(path: string): Promise<Analysis> {
   return invoke<Analysis>("analyze_file", { path });
 }
@@ -116,7 +119,7 @@ export function shoreshTranslate(text: string): Promise<Translation> {
   return invoke<Translation>("shoresh_translate", { text });
 }
 
-/** Texto de un documento `.bara` del disco (lectura hecha en Rust). */
+/** Texto de un `.bara` leído dentro de la raíz activa (la jaula vive en Rust). */
 export function readDocument(path: string): Promise<string> {
   return invoke<string>("read_document", { path });
 }

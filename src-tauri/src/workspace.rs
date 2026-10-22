@@ -16,6 +16,7 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 /// Directorios que nunca se enumeran (artefactos y metadatos del repositorio).
 const EXCLUDED_DIRS: [&str; 3] = ["target", "node_modules", ".git"];
@@ -147,6 +148,71 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
         files,
         truncated,
     })
+}
+
+/// Raíz canónica que los comandos de disco —nuevos y heredados— comparten.
+///
+/// La fija el explorador (`tree` / lectura / escritura) y, al arrancar, el
+/// directorio de lanzamiento. `read_document` y `analyze_file` no eligen otra:
+/// sólo abren un `.bara` que, ya canonizado, queda dentro de esta raíz.
+pub struct ActiveWorkspace {
+    root: Mutex<Option<String>>,
+}
+
+impl ActiveWorkspace {
+    /// Raíz inicial: el workspace del repositorio, ya canonizado.
+    pub fn bootstrap() -> Self {
+        let root = default_root()
+            .ok()
+            .and_then(|raw| resolve_root(&raw).ok())
+            .map(|path| path.display().to_string());
+        Self {
+            root: Mutex::new(root),
+        }
+    }
+
+    /// Sustituye la raíz activa por una ya canonizada por el explorador.
+    pub fn set(&self, root: String) {
+        if let Ok(mut guard) = self.root.lock() {
+            *guard = Some(root);
+        }
+    }
+
+    /// Raíz activa, o error si el cerrojo está envenenado o aún no hay ninguna.
+    pub fn get(&self) -> Result<String, String> {
+        match self.root.lock() {
+            Ok(guard) => guard
+                .clone()
+                .ok_or_else(|| "no hay un workspace activo".to_string()),
+            Err(_) => Err("workspace no disponible (cerrojo envenenado)".to_string()),
+        }
+    }
+
+    /// Lee un `.bara` confinándolo a la raíz activa.
+    pub fn read_path(&self, path: &str) -> Result<WorkspaceDocument, String> {
+        open_document(&self.get()?, path)
+    }
+}
+
+/// Abre un `.bara` dentro de `root`, sea la ruta relativa o absoluta.
+///
+/// Rechaza `..`, cualquier componente que no sea un nombre normal en rutas
+/// relativas, extensiones que no sean `.bara` y todo lo que, una vez
+/// canonizado (enlaces incluidos), quede fuera de la raíz.
+pub fn open_document(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
+    if path.trim().is_empty() {
+        return Err("la ruta del documento está vacía".to_string());
+    }
+    if has_parent_component(path) {
+        return Err(format!(
+            "la ruta «{path}» contiene componentes no permitidos"
+        ));
+    }
+    if Path::new(path).is_absolute() {
+        open_absolute(root, path)
+    } else {
+        read(root, path)
+    }
 }
 
 /// Lee un `.bara` del workspace, validando que la ruta pertenezca a la raíz.
@@ -303,6 +369,36 @@ fn is_excluded(name: &str) -> bool {
 // ─────────────────────────────────────────────────────────────────────────
 // Validación de rutas
 // ─────────────────────────────────────────────────────────────────────────
+
+/// Abre un `.bara` absoluto sólo si su forma canónica sigue dentro de la raíz.
+fn open_absolute(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
+    let canonical_root = resolve_root(root)?;
+    let canonical = fs::canonicalize(Path::new(path))
+        .map_err(|err| format!("no se pudo abrir «{path}»: {err}"))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(format!("«{path}» queda fuera del workspace"));
+    }
+    ensure_bara(&canonical)?;
+    ensure_file_size(&canonical)?;
+    let relative = canonical
+        .strip_prefix(&canonical_root)
+        .map_err(|_| format!("«{path}» queda fuera del workspace"))?;
+    let source = fs::read_to_string(&canonical)
+        .map_err(|err| format!("no se pudo leer «{path}»: {err}"))?;
+    Ok(WorkspaceDocument {
+        root: canonical_root.display().to_string(),
+        path: normalize_relative(&relative.to_string_lossy()),
+        name: file_name(&canonical),
+        source,
+    })
+}
+
+/// `..` no se normaliza: se rechaza antes de tocar el disco.
+fn has_parent_component(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+}
 
 /// Resuelve una ruta existente dentro de la raíz y rechaza cualquier escape.
 fn resolve_member(root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -481,5 +577,34 @@ mod tests {
     fn el_arbol_no_sigue_una_raiz_que_no_existe() {
         let missing = std::env::temp_dir().join("bara-workspace-no-existe-xyz");
         assert!(tree(missing.to_str().expect("utf-8")).is_err());
+    }
+
+    #[test]
+    fn open_document_confina_absolutos_y_rechaza_escapes() {
+        let root = scratch("jaula");
+        let outside = scratch("fuera");
+        fs::write(root.join("ok.bara"), "ברא").expect("dentro");
+        fs::write(root.join("nota.txt"), "no").expect("txt");
+        fs::write(outside.join("secreto.bara"), "x").expect("fuera");
+
+        let root_s = root.to_str().expect("utf-8");
+        let inside = root.join("ok.bara");
+        let opened = open_document(root_s, inside.to_str().expect("utf-8")).expect("absoluto dentro");
+        assert_eq!(opened.source, "ברא");
+        assert_eq!(opened.path.replace('\\', "/"), "ok.bara");
+
+        assert!(open_document(root_s, outside.join("secreto.bara").to_str().expect("utf-8")).is_err());
+        assert!(open_document(root_s, root.join("nota.txt").to_str().expect("utf-8")).is_err());
+        assert!(open_document(root_s, "../secreto.bara").is_err());
+        let dotted = root.join("..").join(outside.file_name().expect("nombre")).join("secreto.bara");
+        assert!(open_document(root_s, dotted.to_str().expect("utf-8")).is_err());
+
+        let active = ActiveWorkspace::bootstrap();
+        active.set(root_s.to_string());
+        assert_eq!(active.read_path("ok.bara").expect("relativa").source, "ברא");
+        assert!(active.read_path(outside.join("secreto.bara").to_str().expect("utf-8")).is_err());
+
+        fs::remove_dir_all(&root).expect("limpiar raíz");
+        fs::remove_dir_all(&outside).expect("limpiar fuera");
     }
 }

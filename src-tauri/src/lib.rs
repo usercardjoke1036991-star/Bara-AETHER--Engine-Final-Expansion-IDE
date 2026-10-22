@@ -8,10 +8,10 @@
 //! ## Comandos expuestos al front-end
 //! * `analyze_source(source)` — analiza el texto del editor (siempre `Ok`:
 //!   el lexer del kernel es total).
-//! * `analyze_file(path)` — analiza un `.bara` del disco (`Err` legible).
+//! * `analyze_file(path)` — analiza un `.bara` confinado a la raíz activa.
 //! * `kernel_catalogue()` — las seis raíces semánticas del kernel.
 //! * `sample_genesis()` — documento *Shoresh* de ejemplo embebido.
-//! * `read_document(path)` — texto de un `.bara` del disco, para el editor.
+//! * `read_document(path)` — texto de un `.bara` confinado a la raíz activa.
 //! * `shoresh_translate(text)` — el léxico del kernel convierte lengua natural
 //!   en raíces *Shoresh* (mismo traductor que el oráculo del REPL).
 //! * `oracle_converse(input)` — conversa un turno con el **oráculo** del kernel
@@ -108,10 +108,15 @@ fn analyze_source(source: String) -> Analysis {
     bara_ide::analyze(&source)
 }
 
-/// Analiza un documento `.bara` del disco.
+/// Analiza un `.bara` de la raíz activa. Fuera de esa jaula no hay lectura.
 #[tauri::command]
-fn analyze_file(path: String) -> Result<Analysis, String> {
-    bara_ide::read_source_file(&path).map(|source| bara_ide::analyze(&source))
+fn analyze_file(
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<Analysis, String> {
+    state
+        .read_path(&path)
+        .map(|document| bara_ide::analyze(&document.source))
 }
 
 /// Catálogo de raíces semánticas conocidas por el kernel.
@@ -135,10 +140,13 @@ fn shoresh_translate(text: String) -> Translation {
     bara_ide::translate(&text)
 }
 
-/// Devuelve el texto de un `.bara` del disco para cargarlo en el editor.
+/// Texto de un `.bara` confinado a la raíz activa del workspace.
 #[tauri::command]
-fn read_document(path: String) -> Result<String, String> {
-    bara_ide::read_source_file(&path)
+fn read_document(
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<String, String> {
+    state.read_path(&path).map(|document| document.source)
 }
 
 /// Raíz inicial del explorador (el workspace del repositorio, no `src-tauri/`).
@@ -149,8 +157,13 @@ fn workspace_default_root() -> Result<String, String> {
 
 /// Árbol recursivo del workspace, sin `target/`, `node_modules/` ni `.git/`.
 #[tauri::command]
-fn workspace_tree(root: String) -> Result<workspace::WorkspaceTree, String> {
-    workspace::tree(&root)
+fn workspace_tree(
+    root: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceTree, String> {
+    let tree = workspace::tree(&root)?;
+    state.set(tree.root.clone());
+    Ok(tree)
 }
 
 /// Texto de un `.bara` confinado a la raíz canónica del workspace.
@@ -158,8 +171,11 @@ fn workspace_tree(root: String) -> Result<workspace::WorkspaceTree, String> {
 fn workspace_read_document(
     root: String,
     path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    workspace::read(&root, &path)
+    let document = workspace::open_document(&root, &path)?;
+    state.set(document.root.clone());
+    Ok(document)
 }
 
 /// Guarda un `.bara` del workspace y devuelve el documento persistido.
@@ -168,8 +184,11 @@ fn workspace_write_document(
     root: String,
     path: String,
     source: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    workspace::write(&root, &path, &source)
+    let document = workspace::write(&root, &path, &source)?;
+    state.set(document.root.clone());
+    Ok(document)
 }
 
 /// Ejecuta una operación sobre la sesión sin `unwrap()`: si el cerrojo
@@ -404,6 +423,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(Session::new()))
         .manage(Mutex::new(telemetry::CognitiveState::new()))
+        .manage(workspace::ActiveWorkspace::bootstrap())
         .invoke_handler(tauri::generate_handler![
             analyze_source,
             analyze_file,
