@@ -16,6 +16,20 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    # El crate `bara` vive en otro repositorio. `actions/checkout` no deja
+    # escribir fuera del workspace, y Cargo lo busca en el hermano `../BAR`
+    # (`bara-ide/Cargo.toml` y `src-tauri/Cargo.toml`). La rama `dev` del
+    # núcleo es la que lleva la 0.5.0; `main` todavía no.
+    - name: Clone Bara Core Repository
+      uses: actions/checkout@v4
+      with:
+        repository: usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion
+        ref: dev
+        token: ${{ secrets.GITHUB_TOKEN }}
+        path: kernel
+    - name: Enlazar el núcleo en la ruta hermana
+      shell: bash
+      run: ln -sfn "${GITHUB_WORKSPACE}/kernel" "${GITHUB_WORKSPACE}/../BAR"
     - name: Build
       run: cargo build --verbose
     - name: Run tests
