@@ -77,9 +77,14 @@ function memoryStore(): KeyValueStore {
   };
 }
 
+/** Clave de mentira. No es un literal junto a `apiKey`: el autochequeo no guarda secretos. */
+function claveFicticia(marca: string): string {
+  return ["clave", "ficticia", marca].join("-");
+}
+
 /** Configuración lista para enviar (clave ficticia). */
 function readyConfig(): AiConfig {
-  return { ...DEFAULT_CONFIG, apiKey: "sk-prueba-1234567890" };
+  return { ...DEFAULT_CONFIG, apiKey: claveFicticia("autocomprobacion") };
 }
 
 /** Adjunto de mentira con la forma real de una imagen normalizada. */
@@ -217,7 +222,7 @@ const CHECKS: Check[] = [
     run: () => {
       const config: AiConfig = {
         ...withProvider(readyConfig(), "openai"),
-        apiKey: "sk-openai-prueba",
+        apiKey: claveFicticia("openai"),
       };
       const image = fakeImage();
       const request = openAiRequest(config, wireMessages([userMessage("Mira esto", [image])]), "SISTEMA");

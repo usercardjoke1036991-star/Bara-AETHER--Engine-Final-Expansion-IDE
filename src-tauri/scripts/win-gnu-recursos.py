@@ -262,12 +262,10 @@ def ya_tiene_recursos(exe):
     return _existe_recurso(exe, RT_MANIFEST, 1) and _existe_recurso(exe, RT_GROUP_ICON, ID_ICONO_APP)
 
 
-def buscar_webview2():
-    """`WebView2Loader.dll` que empareja con el enlace.
+def candidatas_webview2():
+    """Rutas de `WebView2Loader.dll` en el registro de Cargo o en WebView2.
 
-    Orden de preferencia: la copia que trae la caja `webview2-com-sys` (es la
-    que corresponde a la biblioteca de importación usada al enlazar) y, si no
-    está, la del runtime de WebView2 instalado en el sistema.
+    No acepta una ruta libre de la línea de comandos: solo estos directorios.
     """
     preferidas = []
     registro = os.path.join(os.path.expanduser("~"), ".cargo", "registry", "src")
@@ -302,19 +300,39 @@ def buscar_webview2():
             if os.path.isfile(dll):
                 otras.append(dll)
 
-    return (preferidas or otras or [None])[-1]
+    return preferidas or otras
+
+
+def buscar_webview2():
+    """`WebView2Loader.dll` que empareja con el enlace."""
+    candidatas = candidatas_webview2()
+    if not candidatas:
+        return None
+    return candidatas[-1]
 
 
 def copiar_webview2(exe, origen=None):
     """Deja `WebView2Loader.dll` junto al `.exe`. Devuelve una descripcion."""
-    destino = os.path.join(os.path.dirname(exe), "WebView2Loader.dll")
-    origen = origen or buscar_webview2()
-    if not origen or not os.path.isfile(origen):
-        return "aviso: no encontre WebView2Loader.dll en el runtime de WebView2"
-    if os.path.isfile(destino) and os.path.getsize(destino) == os.path.getsize(origen):
+    destino = os.path.join(os.path.dirname(exe_existente(exe)), "WebView2Loader.dll")
+    candidatas = candidatas_webview2()
+    elegida = None
+    if origen is None:
+        elegida = candidatas[-1] if candidatas else None
+    else:
+        try:
+            pedida = os.path.normcase(_ruta_real(origen, "ruta de WebView2"))
+        except ValueError:
+            pedida = ""
+        for candidata in candidatas:
+            if os.path.normcase(os.path.realpath(candidata)) == pedida:
+                elegida = candidata
+                break
+    if not elegida or os.path.basename(elegida) != "WebView2Loader.dll" or not os.path.isfile(elegida):
+        return "aviso: no encontre WebView2Loader.dll en el registro de cargo ni en WebView2"
+    if os.path.isfile(destino) and os.path.getsize(destino) == os.path.getsize(elegida):
         return "WebView2Loader.dll ya estaba junto al .exe"
-    shutil.copy2(origen, destino)
-    return "WebView2Loader.dll copiado desde " + origen
+    shutil.copy2(elegida, destino)
+    return "WebView2Loader.dll copiado desde " + elegida
 
 
 def _tomar_candado(exe, segundos=120):
