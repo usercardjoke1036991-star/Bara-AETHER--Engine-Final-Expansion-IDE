@@ -26,7 +26,7 @@ jobs:
       with:
         repository: usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion
         ref: dev
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.KERNEL_READ_TOKEN }}
         path: BAR-local
     - name: Enlazar el núcleo en ../BAR
       shell: bash
