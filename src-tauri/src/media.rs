@@ -28,12 +28,8 @@ pub struct MediaInspection {
 /// Inspecciona un archivo local. Rechaza directorios, tipos ajenos y el exceso
 /// de tamaño antes de abrir el contenido.
 pub fn inspect_media_file(path: &Path) -> Result<MediaInspection, String> {
-    let meta = fs::metadata(path).map_err(|err| {
-        format!(
-            "no se pudo inspeccionar «{}»: {err}",
-            path.display()
-        )
-    })?;
+    let meta = fs::metadata(path)
+        .map_err(|err| format!("no se pudo inspeccionar «{}»: {err}", path.display()))?;
     if !meta.is_file() {
         return Err("la selección no es un archivo".to_string());
     }
@@ -73,10 +69,7 @@ mod tests {
     use std::fs::File;
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "bara-media-{name}-{}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("bara-media-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("directorio");
         path

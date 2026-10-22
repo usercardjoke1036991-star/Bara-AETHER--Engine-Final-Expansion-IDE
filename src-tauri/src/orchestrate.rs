@@ -112,7 +112,8 @@ fn ide_dir() -> Result<PathBuf, String> {
 /// Canonicaliza y exige el ancla. Así un enlace no recoloca el directorio
 /// de trabajo en silencio.
 fn anchored(dir: &Path, anchor: &str) -> Result<PathBuf, String> {
-    let canonical = std::fs::canonicalize(dir).map_err(|_| "el directorio de la receta no existe".to_string())?;
+    let canonical = std::fs::canonicalize(dir)
+        .map_err(|_| "el directorio de la receta no existe".to_string())?;
     if !canonical.join(anchor).is_file() {
         return Err("el directorio de la receta no es el workspace esperado".to_string());
     }

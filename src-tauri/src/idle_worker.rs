@@ -65,11 +65,7 @@ fn scan_once(handle: &tauri::AppHandle) {
         return;
     };
     let slot = handle.state::<std::sync::Mutex<IdleSlot>>();
-    let pending = slot
-        .lock()
-        .ok()
-        .and_then(|guard| guard.current())
-        .is_some();
+    let pending = slot.lock().ok().and_then(|guard| guard.current()).is_some();
     if pending {
         if seek(&root).is_none() {
             let locked = slot.lock();
@@ -95,7 +91,8 @@ pub fn seek(root: &str) -> Option<IdleNotice> {
             continue;
         };
         let ext = node.path.rsplit('.').next().unwrap_or("");
-        let Some(proposal) = idle_audit::propose(language_of_extension(ext), &document.source) else {
+        let Some(proposal) = idle_audit::propose(language_of_extension(ext), &document.source)
+        else {
             continue;
         };
         return Some(IdleNotice {

@@ -452,9 +452,7 @@ pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String
     let canonical_root = resolve_root(root)?;
     let canonical = resolve_member(&canonical_root, relative)?;
     if !is_project_source(&canonical) {
-        return Err(format!(
-            "«{relative}» no es una fuente del proyecto"
-        ));
+        return Err(format!("«{relative}» no es una fuente del proyecto"));
     }
     ensure_file_size(&canonical)?;
     let source = fs::read_to_string(&canonical)
@@ -665,8 +663,8 @@ fn open_absolute(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
     let relative = canonical
         .strip_prefix(&canonical_root)
         .map_err(|_| format!("«{path}» queda fuera del workspace"))?;
-    let source = fs::read_to_string(&canonical)
-        .map_err(|err| format!("no se pudo leer «{path}»: {err}"))?;
+    let source =
+        fs::read_to_string(&canonical).map_err(|err| format!("no se pudo leer «{path}»: {err}"))?;
     Ok(WorkspaceDocument {
         root: canonical_root.display().to_string(),
         path: normalize_relative(&relative.to_string_lossy()),
@@ -872,20 +870,30 @@ mod tests {
 
         let root_s = root.to_str().expect("utf-8");
         let inside = root.join("ok.bara");
-        let opened = open_document(root_s, inside.to_str().expect("utf-8")).expect("absoluto dentro");
+        let opened =
+            open_document(root_s, inside.to_str().expect("utf-8")).expect("absoluto dentro");
         assert_eq!(opened.source, "ברא");
         assert_eq!(opened.path.replace('\\', "/"), "ok.bara");
 
-        assert!(open_document(root_s, outside.join("secreto.bara").to_str().expect("utf-8")).is_err());
+        assert!(open_document(
+            root_s,
+            outside.join("secreto.bara").to_str().expect("utf-8")
+        )
+        .is_err());
         assert!(open_document(root_s, root.join("nota.txt").to_str().expect("utf-8")).is_err());
         assert!(open_document(root_s, "../secreto.bara").is_err());
-        let dotted = root.join("..").join(outside.file_name().expect("nombre")).join("secreto.bara");
+        let dotted = root
+            .join("..")
+            .join(outside.file_name().expect("nombre"))
+            .join("secreto.bara");
         assert!(open_document(root_s, dotted.to_str().expect("utf-8")).is_err());
 
         let active = ActiveWorkspace::bootstrap();
         let _ = active.set(root_s.to_string());
         assert_eq!(active.read_path("ok.bara").expect("relativa").source, "ברא");
-        assert!(active.read_path(outside.join("secreto.bara").to_str().expect("utf-8")).is_err());
+        assert!(active
+            .read_path(outside.join("secreto.bara").to_str().expect("utf-8"))
+            .is_err());
 
         fs::remove_dir_all(&root).expect("limpiar raíz");
         fs::remove_dir_all(&outside).expect("limpiar fuera");

@@ -124,13 +124,18 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
-        assert!(keys.iter().all(|key| !key.chars().any(|char| char.is_ascii_uppercase())));
+        assert!(keys
+            .iter()
+            .all(|key| !key.chars().any(|char| char.is_ascii_uppercase())));
         let nucleo = &document["secciones"]["nucleo"];
         assert!(nucleo["axiomas"]["generacion"].is_number());
         assert!(nucleo["evolucion"]["ledger"].is_number());
         assert!(nucleo["evolucion"]["avistamientos"].is_number());
         assert!(nucleo["atencion"]["total"].is_number());
-        assert_eq!(nucleo["simbolo"]["lanes"].as_array().map(Vec::len), Some(16));
+        assert_eq!(
+            nucleo["simbolo"]["lanes"].as_array().map(Vec::len),
+            Some(16)
+        );
         assert!(nucleo["correccion"]["rastros"].is_number());
         assert!(nucleo["malla"]["nodos"].is_number());
         let catalogo = document["catalogo"]

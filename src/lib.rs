@@ -61,10 +61,10 @@ pub use aether::{
 pub mod visual;
 
 pub use visual::{
-    visual_build, visual_catalogue, visual_compose, visual_emit, visual_emit_composed, visual_sample,
-    VisualBlockView, VisualEmission,
-    VisualBuildView, VisualCatalogueView, VisualCellView, VisualCheckView, VisualKindView,
-    VisualLimitsView, VisualNodeView, VisualReportView, VisualSlotView, VisualTypeView,
+    visual_build, visual_catalogue, visual_compose, visual_emit, visual_emit_composed,
+    visual_sample, VisualBlockView, VisualBuildView, VisualCatalogueView, VisualCellView,
+    VisualCheckView, VisualEmission, VisualKindView, VisualLimitsView, VisualNodeView,
+    VisualReportView, VisualSlotView, VisualTypeView,
 };
 
 // Puente kernel → IDE (FASE 5): manifiesto canónico e instantánea de sólo

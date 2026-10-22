@@ -846,16 +846,12 @@ mod tests {
         let own = parsed(&flight_recorder_logs(&shelf, "carpeta-a", "id-a").unwrap_or_default());
         let other = parsed(&flight_recorder_logs(&shelf, "carpeta-b", "id-b").unwrap_or_default());
         assert_eq!(own["carpeta"], "id-a");
-        let own_seqs = own["entradas"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let own_seqs = own["entradas"].as_array().cloned().unwrap_or_default();
         assert!(own_seqs.iter().any(|entry| entry["secuencia"] == sequence));
-        let other_seqs = other["entradas"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        assert!(other_seqs.iter().all(|entry| entry["secuencia"] != sequence));
+        let other_seqs = other["entradas"].as_array().cloned().unwrap_or_default();
+        assert!(other_seqs
+            .iter()
+            .all(|entry| entry["secuencia"] != sequence));
     }
 
     #[test]

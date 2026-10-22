@@ -138,13 +138,25 @@ mod tests {
         let file = root.join("src").join("lib.rs");
         fs::write(&file, "fn alpha() {}\n").expect("semilla");
         let root_text = root.display().to_string();
-        let clean = judge(&root_text, "src/lib.rs", 2, "fn alpha() {}\n", "fn beta() {}\n")
-            .expect("limpio");
+        let clean = judge(
+            &root_text,
+            "src/lib.rs",
+            2,
+            "fn alpha() {}\n",
+            "fn beta() {}\n",
+        )
+        .expect("limpio");
         assert!(clean.applied);
         assert_eq!(clean.glyph, "∅");
         assert!(clean.source.contains("fn beta()"));
-        let clash = judge(&root_text, "src/lib.rs", 2, "fn alpha() {}\n", "fn alpha() {}\n")
-            .expect("choque");
+        let clash = judge(
+            &root_text,
+            "src/lib.rs",
+            2,
+            "fn alpha() {}\n",
+            "fn alpha() {}\n",
+        )
+        .expect("choque");
         assert!(!clash.applied);
         assert_eq!(clash.glyph, "⊤∧⊥");
         let disk = fs::read_to_string(&file).expect("disco");

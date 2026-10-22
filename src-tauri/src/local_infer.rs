@@ -96,10 +96,7 @@ fn model_of(card: WeightCard) -> LocalModel {
 
 /// Abre un `.gguf` local y se queda con la cabecera.
 pub fn load_file(path: &Path) -> Result<LocalModel, String> {
-    let ext = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     if !ext.eq_ignore_ascii_case("gguf") {
         return Err("el archivo de pesos tiene que ser .gguf".to_string());
     }
@@ -132,9 +129,16 @@ fn fence(text: &str) -> Option<String> {
 }
 
 fn language_of_prompt(text: &str) -> bara::transmuter::SourceLanguage {
-    let head = text.lines().find(|line| line.trim_start().starts_with("```"));
+    let head = text
+        .lines()
+        .find(|line| line.trim_start().starts_with("```"));
     let lang = head
-        .and_then(|line| line.trim_start().trim_start_matches('`').split_whitespace().next())
+        .and_then(|line| {
+            line.trim_start()
+                .trim_start_matches('`')
+                .split_whitespace()
+                .next()
+        })
         .unwrap_or("");
     language_of_extension(lang)
 }
@@ -150,7 +154,11 @@ pub fn complete(model: &LocalModel, prompt: &str) -> LocalReply {
         syntax::judge_patch(language_of_prompt(&prompt), "", &code)
     };
     let focus = AstChart::from_roots(&[model.architecture.as_str()]);
-    let root = translation.roots.first().map(String::as_str).unwrap_or("ברא");
+    let root = translation
+        .roots
+        .first()
+        .map(String::as_str)
+        .unwrap_or("ברא");
     let other = AstChart::from_roots(&[root]);
     let distance = match (focus.points().first(), other.points().first()) {
         (Some(left), Some(right)) => topological_distance(left, right),

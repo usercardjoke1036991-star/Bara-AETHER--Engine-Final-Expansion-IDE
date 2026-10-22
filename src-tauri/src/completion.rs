@@ -182,9 +182,9 @@ pub fn answer(
         })?;
         shelf.indexed_labels(&root)
     };
-    let mut cache = cache.lock().map_err(|_| {
-        "autocompletado no disponible (cerrojo del índice envenenado)".to_string()
-    })?;
+    let mut cache = cache
+        .lock()
+        .map_err(|_| "autocompletado no disponible (cerrojo del índice envenenado)".to_string())?;
     complete(line, prefix, path, &root, &labels, &mut cache)
 }
 
@@ -457,9 +457,8 @@ fn guard_path(path: &str) -> Result<(), String> {
         return Ok(());
     }
     let normalized = normalize_slashes(path);
-    let absolute = path.chars().nth(1) == Some(':')
-        || normalized.starts_with('/')
-        || path.starts_with('\\');
+    let absolute =
+        path.chars().nth(1) == Some(':') || normalized.starts_with('/') || path.starts_with('\\');
     if absolute
         || normalized
             .split('/')
@@ -583,8 +582,20 @@ fn is_source(name: &str) -> bool {
     };
     matches!(
         ext.to_ascii_lowercase().as_str(),
-        "bara" | "rs" | "py" | "go" | "sol" | "c" | "h" | "cpp" | "cc" | "hpp" | "js" | "jsx"
-            | "ts" | "tsx"
+        "bara"
+            | "rs"
+            | "py"
+            | "go"
+            | "sol"
+            | "c"
+            | "h"
+            | "cpp"
+            | "cc"
+            | "hpp"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
     )
 }
 
@@ -715,7 +726,9 @@ fn read_capped(path: &Path) -> Option<String> {
             return None;
         }
     }
-    std::str::from_utf8(bytes.get(..end)?).ok().map(str::to_string)
+    std::str::from_utf8(bytes.get(..end)?)
+        .ok()
+        .map(str::to_string)
 }
 
 fn fnv(hash: u64, bytes: &[u8]) -> u64 {
@@ -809,7 +822,10 @@ mod tests {
         )
         .expect("fuente");
         fs::write(outside.join("lib.rs"), "fn zeta_secret() {}\n").expect("ajena");
-        let canonical = fs::canonicalize(&root).expect("canon").display().to_string();
+        let canonical = fs::canonicalize(&root)
+            .expect("canon")
+            .display()
+            .to_string();
         let mut cache = CompletionCache::new();
         let leaked = complete(1, "zeta", "lib.rs", &canonical, &[], &mut cache).expect("zeta");
         assert!(

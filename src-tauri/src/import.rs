@@ -54,7 +54,10 @@ pub fn github_remote(raw: &str) -> Result<GitRemote, String> {
     } else {
         format!("https://github.com/{owner}/{repo}.git")
     };
-    Ok(GitRemote { clone_url, dir_name })
+    Ok(GitRemote {
+        clone_url,
+        dir_name,
+    })
 }
 
 fn owner_and_repo(rest: &str) -> Result<(String, String), String> {
@@ -175,8 +178,8 @@ pub fn clone_repository(app: &AppHandle, parent: &Path, url: &str) -> Result<Pat
         return Err(format!("git clone falló: {detail}"));
     }
 
-    let canonical = fs::canonicalize(&dest)
-        .map_err(|err| format!("el clon no se pudo abrir: {err}"))?;
+    let canonical =
+        fs::canonicalize(&dest).map_err(|err| format!("el clon no se pudo abrir: {err}"))?;
     if !canonical.starts_with(parent) {
         return Err("el clon quedó fuera de la carpeta elegida".to_string());
     }

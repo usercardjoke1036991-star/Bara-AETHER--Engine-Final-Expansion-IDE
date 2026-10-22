@@ -45,8 +45,7 @@ fn ident(name: &str) -> bool {
         Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {}
         _ => return false,
     }
-    name.len() <= MAX_NAME
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    name.len() <= MAX_NAME && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn replace_ident(source: &str, from: &str, to: &str) -> String {
@@ -80,7 +79,9 @@ fn replace_ident(source: &str, from: &str, to: &str) -> String {
             continue;
         }
         if rest.starts_with("/*") {
-            let end = rest.find("*/").map_or(rest.len(), |at| at.saturating_add(2));
+            let end = rest
+                .find("*/")
+                .map_or(rest.len(), |at| at.saturating_add(2));
             out.push_str(&rest[..end]);
             rest = &rest[end..];
             continue;
@@ -247,7 +248,11 @@ mod tests {
     #[test]
     fn la_red_limpia_renombra_y_la_contradiccion_no_escribe() {
         let root = scratch();
-        fs::write(root.join("src/a.rs"), "fn alpha() {}\nfn main() { alpha(); }\n").expect("a");
+        fs::write(
+            root.join("src/a.rs"),
+            "fn alpha() {}\nfn main() { alpha(); }\n",
+        )
+        .expect("a");
         fs::write(root.join("src/b.rs"), "fn otro() { alpha(); }\n").expect("b");
         let root_text = root.display().to_string();
         let clean = propagate(&root_text, "src/a.rs", "alpha", "beta").expect("limpio");

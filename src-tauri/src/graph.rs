@@ -198,10 +198,7 @@ fn absorb(
         }
         let kind = node_kind(language, text, &symbol);
         let concept = Concept::Define;
-        let id = format!(
-            "sym:{relative}:{}:{}:{}",
-            kind, symbol.line, symbol.name
-        );
+        let id = format!("sym:{relative}:{}:{}:{}", kind, symbol.line, symbol.name);
         nodes.push(GraphNode {
             id: id.clone(),
             label: symbol.name.clone(),
@@ -292,7 +289,9 @@ fn link(nodes: &[GraphNode], decls: &[Decl], calls: &[CallSite]) -> Vec<GraphEdg
         } else {
             call.parent.clone()
         };
-        push_edge(&mut edges, &mut seen, &source, &target.id, &left, &call.name);
+        push_edge(
+            &mut edges, &mut seen, &source, &target.id, &left, &call.name,
+        );
     }
     tension_edges(nodes, &mut edges, &mut seen);
     edges
@@ -308,7 +307,11 @@ fn find_decl<'a>(decls: &'a [Decl], label: &str, path: &str) -> Option<&'a Decl>
         .or_else(|| decls.iter().find(|decl| decl.label == label))
 }
 
-fn tension_edges(nodes: &[GraphNode], edges: &mut Vec<GraphEdge>, seen: &mut BTreeSet<(String, String)>) {
+fn tension_edges(
+    nodes: &[GraphNode],
+    edges: &mut Vec<GraphEdge>,
+    seen: &mut BTreeSet<(String, String)>,
+) {
     let mut groups: BTreeMap<&str, Vec<&GraphNode>> = BTreeMap::new();
     for node in nodes {
         if matches!(node.kind.as_str(), "function" | "type" | "contract") {
@@ -468,7 +471,9 @@ fn read_capped(path: &Path) -> Option<String> {
             return None;
         }
     }
-    std::str::from_utf8(bytes.get(..end)?).ok().map(str::to_string)
+    std::str::from_utf8(bytes.get(..end)?)
+        .ok()
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -476,10 +481,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "bara-grafo-{name}-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("bara-grafo-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("directorio");
         dir
@@ -500,13 +502,25 @@ mod tests {
         )
         .expect("sol");
         fs::write(outside.join("lib.rs"), "fn zeta_secret() {}\n").expect("ajena");
-        let canonical = fs::canonicalize(&root).expect("canon").display().to_string();
+        let canonical = fs::canonicalize(&root)
+            .expect("canon")
+            .display()
+            .to_string();
         let graph = build(&canonical).expect("grafo");
         let again = build(&canonical).expect("otro");
         assert_eq!(graph, again);
-        assert!(graph.nodes.iter().any(|node| node.label == "alpha" && node.line == 1));
-        assert!(graph.nodes.iter().any(|node| node.label == "beta" && node.kind == "function"));
-        assert!(graph.nodes.iter().any(|node| node.kind == "contract" && node.label == "Token"));
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "alpha" && node.line == 1));
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.label == "beta" && node.kind == "function"));
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == "contract" && node.label == "Token"));
         assert!(graph.nodes.iter().all(|node| !node.label.contains("zeta")));
         assert!(graph.edges.iter().all(|edge| edge.weight <= METRIC_CAP));
         assert!(graph.edges.iter().any(|edge| {
@@ -524,7 +538,10 @@ mod tests {
         let root = fixture("ambos");
         fs::write(root.join("a.rs"), "fn alpha() {}\n").expect("a");
         fs::write(root.join("b.rs"), "fn alpha() {}\n").expect("b");
-        let canonical = fs::canonicalize(&root).expect("canon").display().to_string();
+        let canonical = fs::canonicalize(&root)
+            .expect("canon")
+            .display()
+            .to_string();
         let graph = build(&canonical).expect("grafo");
         let alphas: Vec<_> = graph
             .nodes
@@ -540,7 +557,10 @@ mod tests {
     fn la_lectura_de_una_fuente_no_acepta_escapes() {
         let root = fixture("lectura");
         fs::write(root.join("lib.rs"), "fn alpha() {}\n").expect("rs");
-        let canonical = fs::canonicalize(&root).expect("canon").display().to_string();
+        let canonical = fs::canonicalize(&root)
+            .expect("canon")
+            .display()
+            .to_string();
         assert!(workspace::read_text(&canonical, "lib.rs").is_ok());
         assert!(workspace::read_text(&canonical, "../fuera.rs").is_err());
         assert!(workspace::read_text(&canonical, r"C:\Windows\system.ini").is_err());

@@ -246,11 +246,7 @@ pub fn autopoiesis(source: &str) -> AutopoiesisReport {
     let roots = roots_of(&tokens).len();
     let generation = runtime.mutator.generation();
     let attention_total = runtime.mutator.attention_total();
-    let priority_root = runtime
-        .mutator
-        .priority_root()
-        .unwrap_or("")
-        .to_string();
+    let priority_root = runtime.mutator.priority_root().unwrap_or("").to_string();
     let sequence: Vec<&str> = tokens
         .iter()
         .filter_map(|token| match &token.kind {
