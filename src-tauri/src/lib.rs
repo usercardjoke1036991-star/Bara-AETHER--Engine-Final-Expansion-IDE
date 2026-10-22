@@ -28,6 +28,18 @@
 //! * `belnap_evaluate(truth, falsity)` — clasifica un par `(⊤, ⊥)` con el
 //!   umbral de designación del kernel.
 //!
+//! ## Comandos del explorador de workspace
+//! El backend es la única autoridad sobre el disco: no se duplica ninguna
+//! validación de rutas en TypeScript.
+//!
+//! * `workspace_default_root()` — raíz inicial (workspace del repositorio).
+//! * `workspace_tree(root)` — árbol recursivo sin `target/`, `node_modules/`
+//!   ni `.git/`, con cotas de profundidad, entradas y tamaño.
+//! * `workspace_read_document(root, path)` — lee un `.bara` confinado a la
+//!   raíz canónica.
+//! * `workspace_write_document(root, path, source)` — guarda un `.bara` dentro
+//!   de la raíz canónica y devuelve el documento persistido.
+//!
 //! ## Comandos de la fase AETHER‑Ω (paneles del núcleo)
 //! Todos **proyectan** el kernel sobre el texto vivo del editor y son totales
 //! (salvo los de disco): el front-end no reimplementa ninguna semántica.
@@ -86,6 +98,10 @@ use std::sync::Mutex;
 // con estado cognitivo local a la ventana. Ver `src/telemetry.rs`.
 mod telemetry;
 
+// Explorador y almacén del workspace: enumeración recursiva y acceso a
+// documentos `.bara` confinados a una raíz canónica. Ver `src/workspace.rs`.
+mod workspace;
+
 /// Analiza una fuente *Shoresh* con el kernel. Total: no puede fallar.
 #[tauri::command]
 fn analyze_source(source: String) -> Analysis {
@@ -123,6 +139,37 @@ fn shoresh_translate(text: String) -> Translation {
 #[tauri::command]
 fn read_document(path: String) -> Result<String, String> {
     bara_ide::read_source_file(&path)
+}
+
+/// Raíz inicial del explorador (el workspace del repositorio, no `src-tauri/`).
+#[tauri::command]
+fn workspace_default_root() -> Result<String, String> {
+    workspace::default_root()
+}
+
+/// Árbol recursivo del workspace, sin `target/`, `node_modules/` ni `.git/`.
+#[tauri::command]
+fn workspace_tree(root: String) -> Result<workspace::WorkspaceTree, String> {
+    workspace::tree(&root)
+}
+
+/// Texto de un `.bara` confinado a la raíz canónica del workspace.
+#[tauri::command]
+fn workspace_read_document(
+    root: String,
+    path: String,
+) -> Result<workspace::WorkspaceDocument, String> {
+    workspace::read(&root, &path)
+}
+
+/// Guarda un `.bara` del workspace y devuelve el documento persistido.
+#[tauri::command]
+fn workspace_write_document(
+    root: String,
+    path: String,
+    source: String,
+) -> Result<workspace::WorkspaceDocument, String> {
+    workspace::write(&root, &path, &source)
 }
 
 /// Ejecuta una operación sobre la sesión sin `unwrap()`: si el cerrojo
@@ -345,7 +392,7 @@ fn transmute_input(
     telemetry::guarded(|| telemetry::transmute_input(&state, &source_code))
 }
 
-/// Arranca la ventana del IDE con los treinta y un comandos registrados.
+/// Arranca la ventana del IDE con los treinta y cinco comandos registrados.
 ///
 /// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
 /// instancia por ventana, detrás del cerrojo que guarda [`with_session`].
@@ -363,6 +410,10 @@ pub fn run() {
             kernel_catalogue,
             sample_genesis,
             read_document,
+            workspace_default_root,
+            workspace_tree,
+            workspace_read_document,
+            workspace_write_document,
             shoresh_translate,
             oracle_converse,
             oracle_status,

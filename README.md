@@ -38,6 +38,7 @@ bara-ide/
 ├── package.json            front-end (React, Vite, TS) + CLI de Tauri
 ├── vite.config.ts          Vite sirve `web/` (en `src/` vive Rust)
 ├── tsconfig.json
+├── .cargo/config.toml      runner GNU: manifiesto/iconos/WebView2 en pruebas (CWD = bara-ide/)
 ├── web/                    interfaz gráfica
 │   ├── index.html
 │   ├── scripts/ai-check.mjs    autodiagnóstico del panel de IA, en Node
@@ -50,6 +51,7 @@ bara-ide/
     ├── build.rs
     ├── tauri.conf.json
     ├── capabilities/default.json
+    ├── .cargo/config.toml   runner + rustflags GNU para `cargo run` desde src-tauri/
     ├── scripts/win-gnu-recursos.py  manifiesto + iconos + WebView2Loader (GNU)
     ├── icons/ (png + ico + icns)
     └── src/{lib,main}.rs
@@ -250,27 +252,27 @@ desde el kernel por IPC.
 ## Verificación
 
 ```powershell
-cargo check  --workspace                                    # aval del workspace completo
-cargo test   -p bara -p bara-ide --features bara-ide/serde   # kernel (245 pruebas) + motor del IDE (40, con el contrato IPC)
-cargo clippy --workspace --all-targets -- -D warnings        # política del CI: salida 0 y 0 avisos de rustc (solo el
-                                                            # aviso esperado del build.rs de Tauri), sin enlazar
+cargo check  --workspace --all-targets                       # aval del workspace completo
+cargo test   --workspace --locked                            # kernel + motor + backend de escritorio
+cargo clippy --workspace --all-targets --locked -- -D warnings  # política del CI: salida 0 y 0 avisos de rustc
+                                                                # (solo el aviso esperado del build.rs de Tauri)
 npm run typecheck                                           # tsc --noEmit
 npm run test:ai                                             # 11 comprobaciones del panel de IA, sin red
 npm run build                                               # tsc --noEmit && vite build -> web/dist
 ```
 
-La feature `serde` se pide a mano para que `cargo test` construya el motor tal y
-como lo consume el backend (si no, la prueba que fija el contrato IPC con
-`web/src/engine.ts` queda fuera). `cargo test --workspace` haría además los
-*harneses* del backend de escritorio: enlazar ese binario de Tauri exige un
-enlazador MinGW/MSVC completo — aquí `ld` aborta con `export ordinal too large`
-y el disco está al límite —, así que las pruebas se ejecutan sobre el kernel y
-el motor, y el backend se cubre con `cargo check` y `cargo clippy`.
+`cargo test --workspace` incluye también los *arneses* del backend de
+escritorio. En Windows GNU el `.exe` de prueba debe llevar embebido el
+manifiesto Common-Controls 6.0 (`TaskDialogIndirect`); de eso se encarga el
+runner de `.cargo/config.toml`, que además copia `WebView2Loader.dll` junto al
+binario. Por eso las pruebas del backend se ejecutan de verdad, no sólo se
+verifican con `cargo check`.
 
-Estado medido en esta máquina: `bara` **245 / 245** (175 unitarias + 70 de
-integración), `bara-ide` **40 / 40**, workspace **285 / 285**, `npm run build`
-con 46 módulos y 0 avisos de `tsc`, `cargo clippy --workspace --all-targets
--- -D warnings` con salida 0.
+Estado medido en esta máquina con `cargo test --workspace --locked`: `bara`
+**345 / 345** (249 unitarias + 96 de integración), **2 / 2** doctests,
+`bara-ide` **40 / 40**, `bara-ide-desktop` **6 / 6**, workspace **393 / 393** y
+0 fallos. `cargo clippy --workspace --all-targets --locked -- -D warnings`
+termina con salida 0.
 
 ## Notas
 
@@ -281,9 +283,13 @@ con 46 módulos y 0 avisos de `tsc`, `cargo clippy --workspace --all-targets
   `src-tauri/scripts/win-gnu-recursos.py`, que embebe el manifiesto Common
   Controls 6.0 y los iconos, y copia `WebView2Loader.dll`. `cargo run` y
   `tauri dev` aplican el parche de forma determinista antes de lanzar la app
-  mediante el runner de `src-tauri/.cargo/config.toml`. Con MSVC o `windres`
-  disponible se usa el compilador de recursos normal y el parcheador es
-  idempotente.
+  mediante el runner de `src-tauri/.cargo/config.toml`. Para que los comandos
+  documentados funcionen desde la raíz del repo, `.cargo/config.toml` declara
+  el mismo runner; y si `cargo` se invoca desde el workspace contenedor
+  (`../`), la configuración de esa raíz debe declararlo también (Cargo sólo
+  descubre `.cargo/config.toml` subiendo desde el CWD, nunca entrando en los
+  directorios de los miembros). Con MSVC o `windres` disponible se usa el
+  compilador de recursos normal y el parcheador es idempotente.
 * **CSP**: `tauri.conf.json` usa `"csp": null` (igual que la plantilla oficial)
   para no romper el HMR de Vite en desarrollo. Endurecerla es un cambio de una
   línea antes de publicar.

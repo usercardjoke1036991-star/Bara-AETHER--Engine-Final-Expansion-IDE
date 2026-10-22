@@ -1,0 +1,29 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Runner de Cargo para el toolchain GNU (MinGW) · CWD = raíz del repo IDE
+#
+#  Cargo descubre la configuración subiendo desde el directorio de trabajo.
+#  `src-tauri/.cargo/config.toml` sólo se aplica cuando `cargo` se invoca desde
+#  `src-tauri/`; este fichero cubre los comandos documentados en el README, que
+#  se ejecutan desde la raíz `bara-ide/`:
+#
+#      cargo test --workspace --locked
+#
+#  Sin runner, los binarios de prueba de Tauri se lanzan sin manifiesto:
+#  `comctl32` se resuelve contra la versión 5.82 de System32 (sin
+#  `TaskDialogIndirect`) y el proceso muere con 0xC0000139
+#  STATUS_ENTRYPOINT_NOT_FOUND. El runner embebe el manifiesto Common-Controls
+#  6.0.0.0 y los iconos, y copia `WebView2Loader.dll` antes de ejecutar.
+#
+#  No se declara `rustflags` aquí a propósito: al invocar desde la raíz del
+#  repo, ese ajuste se aplicaría a TODO el workspace y forzaría un recompilado
+#  completo. Sólo `src-tauri/.cargo/config.toml` lo necesita para `cargo run`
+#  desde `src-tauri/`, donde sí comparte target con el resto del workspace.
+#
+#  La ruta del runner va ABSOLUTA: Cargo lo lanza con el CWD del paquete que
+#  ejecuta (`BAR/` para el kernel, `src-tauri/` para el backend), no con el
+#  CWD desde el que invocaste `cargo`. Una ruta relativa única no sirve para
+#  todos los paquetes del workspace. Para portar el repo a otra máquina,
+#  sustituye esta ruta por la de tu clone (o define un runner global).
+# ══════════════════════════════════════════════════════════════════════════
+[target.x86_64-pc-windows-gnu]
+runner = ["python", "C:/Users/Vexor/Downloads/bara-ide/src-tauri/scripts/win-gnu-runner.py"]

@@ -123,6 +123,261 @@ body,
   line-height: 1.45;
 }
 
+/* ── Editor con explorador de workspace ─────────────────────────────── */
+
+.pane.editor-pane {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.editor-shell {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace {
+  display: flex;
+  flex: 0 0 232px;
+  flex-direction: column;
+  gap: 0.45rem;
+  width: 232px;
+  min-height: 0;
+  padding: 0.65rem;
+  background: var(--pane);
+  border-right: 1px solid var(--line);
+}
+
+.workspace-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.workspace-head h2 {
+  flex: 1;
+  margin: 0;
+}
+
+.icon-button {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1.2;
+}
+
+.workspace-root {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.workspace-root .path {
+  font-size: 0.72rem;
+}
+
+.workspace-root button {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+}
+
+.workspace-meta,
+.workspace-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.workspace-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-note code,
+.tab-empty code {
+  color: var(--root);
+}
+
+.workspace-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--line);
+}
+
+.file-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-tree .file-tree {
+  margin-left: 0.45rem;
+  padding-left: 0.4rem;
+  border-left: 1px dotted var(--line);
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  padding: 0.18rem 0.25rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.75rem;
+  text-align: left;
+}
+
+.tree-row:hover:not(:disabled) {
+  background: #172231;
+  color: var(--text);
+}
+
+.tree-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.tree-glyph {
+  flex: 0 0 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.tree-file .tree-glyph {
+  color: var(--root);
+}
+
+.tree-file.active {
+  background: #1b2a3b;
+  color: var(--accent);
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.tree-empty {
+  margin: 0;
+  padding: 0.25rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.editor-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0.65rem;
+}
+
+.tabs {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-bottom-color: transparent;
+  border-radius: 4px 4px 0 0;
+  background: var(--pane);
+}
+
+.tab.active {
+  border-color: var(--accent);
+  border-bottom-color: var(--bg);
+  background: var(--bg);
+}
+
+.tab-name {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 13rem;
+  overflow: hidden;
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  background: transparent;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-name:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.tab.active .tab-name {
+  color: var(--accent);
+}
+
+.tab-close {
+  padding: 0.1rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.tab-close:hover:not(:disabled) {
+  color: var(--error);
+}
+
+.dirty-dot {
+  display: inline-block;
+  flex: 0 0 0.4rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tab-empty {
+  padding: 0.3rem 0.4rem;
+  font-size: 0.72rem;
+}
+
+.editor-toolbar {
+  flex: 0 0 auto;
+  align-items: center;
+  min-width: 0;
+}
+
+.editor-toolbar .status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-main .code {
+  min-height: 0;
+}
+
+
 button {
   background: var(--pane);
   border: 1px solid var(--line);

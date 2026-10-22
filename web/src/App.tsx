@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   CLASS_LABEL,
-  analyzeFile,
   analyzeSource,
   belnapLattice,
   describeError,
@@ -10,7 +9,6 @@ import {
   oracleConverse,
   oracleReset,
   oracleStatus,
-  readDocument,
   sampleGenesis,
   temporalRollback,
   type Analysis,
@@ -20,23 +18,49 @@ import {
   type TokenInfo,
   type TurnView,
 } from "./engine";
+import {
+  workspaceDefaultRoot,
+  workspaceReadDocument,
+  workspaceTree,
+  workspaceWriteDocument,
+  type WorkspaceEntry,
+  type WorkspaceTree,
+} from "./workspace";
 import ChatPanel from "./components/ChatPanel";
 import CockpitPanel from "./components/CockpitPanel";
 import KernelPanel from "./components/KernelPanel";
 import VisualBuilder from "./components/VisualBuilder";
+import WorkspaceSidebar from "./components/WorkspaceSidebar";
 
 /** Máximo de filas de tokens que se pintan (rendimiento del WebView). */
 const MAX_ROWS = 1200;
 
+/** Documento abierto en el editor. */
+interface EditorTab {
+  /** Ruta relativa al workspace (contrato de `workspace.rs`). */
+  path: string;
+  /** Nombre visible en la pestaña. */
+  name: string;
+  /** Texto vivo del editor. */
+  source: string;
+  /** Último texto confirmado en disco. */
+  saved: string;
+}
+
 export default function App() {
-  const [source, setSource] = useState("");
+  /** Documentos abiertos; el activo se proyecta a `source`/`origin`. */
+  const [tabs, setTabs] = useState<EditorTab[]>([]);
+  const [activePath, setActivePath] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [catalogue, setCatalogue] = useState<RootEntry[]>([]);
-  const [path, setPath] = useState("samples/genesis.bara");
-  const [origin, setOrigin] = useState("<editor>");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
+  /** Raíz canónica del explorador y su última enumeración. */
+  const [workspaceRoot, setWorkspaceRoot] = useState("");
+  const [workspace, setWorkspace] = useState<WorkspaceTree | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   /** Documento de ejemplo del kernel (contexto del asistente). */
   const [sample, setSample] = useState("");
   /** Visibilidad del panel lateral del asistente. */
@@ -57,13 +81,20 @@ export default function App() {
   /** Consulta que se conversa con el oráculo (léxico del kernel). */
   const [query, setQuery] = useState("ברא");
 
+  const activeTab = useMemo(
+    () => tabs.find((tab) => tab.path === activePath) ?? null,
+    [tabs, activePath],
+  );
+  const source = activeTab?.source ?? "";
+  const origin = activeTab?.path ?? "<editor>";
+  const dirty = activeTab !== null && activeTab.source !== activeTab.saved;
+
   /** Invoca al backend del kernel y publica el resultado. */
-  const runAnalysis = useCallback(async (text: string, from: string) => {
+  const runAnalysis = useCallback(async (text: string) => {
     setBusy(true);
     try {
       const result = await analyzeSource(text);
       setAnalysis(result);
-      setOrigin(from);
       setError(null);
     } catch (failure) {
       setError(describeError(failure));
@@ -91,8 +122,15 @@ export default function App() {
         setSample(genesis);
         setLattice(belnap);
         setOracle(session);
-        setSource(genesis);
-        setOrigin("samples/genesis.bara");
+        setTabs([
+          {
+            path: "samples/genesis.bara",
+            name: "genesis.bara",
+            source: genesis,
+            saved: genesis,
+          },
+        ]);
+        setActivePath("samples/genesis.bara");
         setReady(true);
       } catch (failure) {
         if (alive) {
@@ -105,48 +143,153 @@ export default function App() {
     };
   }, []);
 
+  /**
+   * Enumera una raíz del workspace. Sin texto usa el directorio de
+   * lanzamiento; el backend devuelve siempre la raíz canónica resultante.
+   */
+  const loadWorkspace = useCallback(async (root: string) => {
+    setWorkspaceLoading(true);
+    try {
+      const requested = root.trim().length > 0 ? root : await workspaceDefaultRoot();
+      const next = await workspaceTree(requested);
+      setWorkspace(next);
+      setWorkspaceRoot(next.root);
+      setError(null);
+    } catch (failure) {
+      setError(describeError(failure));
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }, []);
+
+  // El explorador arranca en paralelo con el catálogo y el documento de
+  // ejemplo: un fallo del árbol no impide analizar el texto del editor.
+  useEffect(() => {
+    void loadWorkspace("");
+  }, [loadWorkspace]);
+
   // Análisis en vivo con retardo: no se invoca al kernel en cada tecla.
   useEffect(() => {
     if (!ready) {
       return undefined;
     }
     const timer = window.setTimeout(() => {
-      void runAnalysis(source, origin);
+      void runAnalysis(source);
     }, 200);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [ready, source, origin, runAnalysis]);
+  }, [ready, source, runAnalysis]);
 
-  /** Abre el documento indicado en el editor (lectura hecha en Rust). */
-  const openFile = useCallback(async () => {
-    setBusy(true);
+  /** Abre un `.bara` del árbol; si ya está en una pestaña, sólo la activa. */
+  const openWorkspaceFile = useCallback(
+    async (entry: WorkspaceEntry) => {
+      if (!entry.bara) {
+        return;
+      }
+      if (tabs.some((tab) => tab.path === entry.path)) {
+        setActivePath(entry.path);
+        return;
+      }
+      if (workspaceRoot.length === 0) {
+        setError("El workspace aún no tiene una raíz válida.");
+        return;
+      }
+
+      setBusy(true);
+      try {
+        const document = await workspaceReadDocument(workspaceRoot, entry.path);
+        setTabs((current) =>
+          current.some((tab) => tab.path === document.path)
+            ? current
+            : [
+                ...current,
+                {
+                  path: document.path,
+                  name: document.name,
+                  source: document.source,
+                  saved: document.source,
+                },
+              ],
+        );
+        setActivePath(document.path);
+        setError(null);
+      } catch (failure) {
+        setError(describeError(failure));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [tabs, workspaceRoot],
+  );
+
+  /** Cierra una pestaña; pide confirmación si hay cambios sin guardar. */
+  const closeTab = useCallback(
+    (path: string) => {
+      const tab = tabs.find((candidate) => candidate.path === path);
+      if (!tab) {
+        return;
+      }
+      if (
+        tab.source !== tab.saved &&
+        !window.confirm(`«${tab.name}» tiene cambios sin guardar. ¿Cerrar igualmente?`)
+      ) {
+        return;
+      }
+
+      setTabs((current) => current.filter((candidate) => candidate.path !== path));
+      if (activePath === path) {
+        const index = tabs.findIndex((candidate) => candidate.path === path);
+        const next = tabs[index + 1] ?? tabs[index - 1] ?? null;
+        setActivePath(next?.path ?? null);
+      }
+    },
+    [activePath, tabs],
+  );
+
+  /** Guarda el documento activo con `workspace_write_document`. */
+  const saveActive = useCallback(async () => {
+    if (!activeTab || activeTab.source === activeTab.saved) {
+      return;
+    }
+    if (workspaceRoot.length === 0) {
+      setError("No hay una raíz de workspace para guardar el documento.");
+      return;
+    }
+
+    setSaving(true);
     try {
-      const text = await readDocument(path);
-      setSource(text);
-      setOrigin(path);
+      const document = await workspaceWriteDocument(
+        workspaceRoot,
+        activeTab.path,
+        activeTab.source,
+      );
+      // Se actualiza sólo la marca de guardado: si el usuario escribió
+      // mientras se persistía, su texto vivo no se pisa.
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.path === document.path ? { ...tab, saved: document.source } : tab,
+        ),
+      );
       setError(null);
     } catch (failure) {
       setError(describeError(failure));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
-  }, [path]);
+  }, [activeTab, workspaceRoot]);
 
-  /** Analiza la ruta directamente en el backend, sin cargarla en el editor. */
-  const analyzePath = useCallback(async () => {
-    setBusy(true);
-    try {
-      const result = await analyzeFile(path);
-      setAnalysis(result);
-      setOrigin(path);
-      setError(null);
-    } catch (failure) {
-      setError(describeError(failure));
-    } finally {
-      setBusy(false);
+  // Ctrl/Cmd+S guarda el documento activo sin sacar el foco del editor.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveActive();
+      }
     }
-  }, [path]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [saveActive]);
 
   /** Conversa un turno con el oráculo del kernel (`oracle_converse`). */
   const askOracle = useCallback(async () => {
@@ -213,12 +356,36 @@ export default function App() {
    * destruye lo que el usuario tenga escrito. El kernel vuelve a analizarlo en
    * cuanto cambia la fuente (efecto con retardo de 200 ms).
    */
-  const applyCode = useCallback((code: string) => {
-    setSource((previous) =>
-      previous.trim().length === 0 ? code : `${previous.replace(/\s+$/, "")}\n\n${code}`,
-    );
-    setOrigin("<editor>");
-  }, []);
+  const updateActiveSource = useCallback(
+    (next: string | ((previous: string) => string)) => {
+      if (!activePath) {
+        return;
+      }
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.path === activePath
+            ? {
+                ...tab,
+                source:
+                  typeof next === "function" ? next(tab.source) : next,
+              }
+            : tab,
+        ),
+      );
+    },
+    [activePath],
+  );
+
+  const applyCode = useCallback(
+    (code: string) => {
+      updateActiveSource((previous) =>
+        previous.trim().length === 0
+          ? code
+          : `${previous.replace(/\s+$/, "")}\n\n${code}`,
+      );
+    },
+    [updateActiveSource],
+  );
 
   const rows = useMemo<TokenInfo[]>(
     () => (analysis ? analysis.tokens.slice(0, MAX_ROWS) : []),
@@ -231,7 +398,9 @@ export default function App() {
         <h1>Bara IDE</h1>
         <span className="tag">kernel v0.1.0-kernel · Shoresh</span>
         <span className="grow" />
-        <span className="status">{busy ? "analizando…" : origin}</span>
+        <span className="status">
+          {saving ? "guardando…" : busy ? "analizando…" : origin}
+        </span>
         <button type="button" onClick={() => setKernelOpen(!kernelOpen)}>
           {kernelOpen ? "ocultar núcleo" : "núcleo AETHER-Ω"}
         </button>
@@ -249,46 +418,90 @@ export default function App() {
       {error ? <div className="error">{error}</div> : null}
 
       <main className="grid">
-        <section className="pane">
-          <div className="row">
-            <input
-              className="path"
-              value={path}
-              spellCheck={false}
-              placeholder="ruta/al/documento.bara"
-              onChange={(event) => {
-                setPath(event.target.value);
+        <section className="pane editor-pane">
+          <div className="editor-shell">
+            <WorkspaceSidebar
+              root={workspaceRoot}
+              tree={workspace}
+              loading={workspaceLoading}
+              activePath={activePath}
+              onOpenRoot={(next) => {
+                void loadWorkspace(next);
+              }}
+              onRefresh={() => {
+                void loadWorkspace(workspaceRoot);
+              }}
+              onOpenFile={(entry) => {
+                void openWorkspaceFile(entry);
               }}
             />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                void openFile();
-              }}
-            >
-              Abrir
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                void analyzePath();
-              }}
-            >
-              Analizar ruta
-            </button>
+
+            <div className="editor-main">
+              <div className="tabs" role="tablist" aria-label="Documentos abiertos">
+                {tabs.map((tab) => {
+                  const active = tab.path === activePath;
+                  const unsaved = tab.source !== tab.saved;
+                  return (
+                    <div className={`tab${active ? " active" : ""}`} key={tab.path}>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        className="tab-name"
+                        title={tab.path}
+                        onClick={() => setActivePath(tab.path)}
+                      >
+                        {unsaved ? <span className="dirty-dot" aria-hidden="true" /> : null}
+                        {tab.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="tab-close"
+                        aria-label={`Cerrar ${tab.name}`}
+                        title="Cerrar pestaña"
+                        onClick={() => closeTab(tab.path)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+                {tabs.length === 0 ? (
+                  <span className="muted tab-empty">
+                    Abre un documento <code>.bara</code> del explorador.
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="row editor-toolbar">
+                <span className="status" title={origin}>
+                  {activeTab ? origin : "sin documento"}
+                  {dirty ? " · sin guardar" : ""}
+                </span>
+                <span className="grow" />
+                <button
+                  type="button"
+                  disabled={!dirty || saving}
+                  onClick={() => {
+                    void saveActive();
+                  }}
+                  title="Guardar el documento activo (Ctrl+S)"
+                >
+                  {saving ? "Guardando…" : "Guardar"}
+                </button>
+              </div>
+
+              <textarea
+                className="code"
+                dir="auto"
+                spellCheck={false}
+                aria-label="Editor del documento activo"
+                placeholder="Abre un documento .bara del workspace para editarlo."
+                value={source}
+                onChange={(event) => updateActiveSource(event.target.value)}
+              />
+            </div>
           </div>
-          <textarea
-            className="code"
-            dir="auto"
-            spellCheck={false}
-            value={source}
-            onChange={(event) => {
-              setSource(event.target.value);
-              setOrigin("<editor>");
-            }}
-          />
         </section>
 
         <section className="pane">

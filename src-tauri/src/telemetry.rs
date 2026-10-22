@@ -1,4 +1,4 @@
-﻿//! # Telemetría del kernel para el Cockpit de escritorio (AETHER‑Ω)
+//! # Telemetría del kernel para el Cockpit de escritorio (AETHER‑Ω)
 //!
 //! Capa **de sólo proyección** entre el kernel congelado `bara` y la ventana
 //! Tauri v2. No reimplementa lógica: llama a los módulos públicos del núcleo y
@@ -45,7 +45,8 @@ use serde_json::{json, Value};
 /// Fragmento canónico de demostración. Se usa para sembrar el Cockpit la
 /// primera vez que se pide un marco cognitivo; también lo publica el manifiesto
 /// para que el editor de la UI arranque con el mismo texto.
-pub const DEMO_SOURCE: &str = "fn main() {\n    let identidad = verdadero;\n    if identidad { return 0; }\n}\n";
+pub const DEMO_SOURCE: &str =
+    "fn main() {\n    let identidad = verdadero;\n    if identidad { return 0; }\n}\n";
 
 /// Estado cognitivo de la ventana: índice *Shoresh*, memoria y última foto.
 ///
@@ -305,13 +306,7 @@ fn infer(ast: &ShoreshAst) -> InferenceReport {
     }
     if let Ok(synthesis) = engine.assert(1, "סינתזה", BelnapValue::Neither) {
         for fact in facts {
-            let _ = engine.add_rule(
-                fact,
-                synthesis,
-                RuleKind::Transfer,
-                BelnapValue::True,
-                None,
-            );
+            let _ = engine.add_rule(fact, synthesis, RuleKind::Transfer, BelnapValue::True, None);
         }
     }
     engine.evaluate()
@@ -452,13 +447,16 @@ mod tests {
         assert_eq!(document["coherente"], true);
         assert!(document["inferencia"]["nodos"].as_u64().unwrap_or_default() > 0);
         assert!(document["memoria"]["entradas"].as_u64().unwrap_or_default() > 0);
-        assert!(document["semantica"]["ranuras"].as_u64().unwrap_or_default() > 0);
         assert!(
-            !document["semantica"]["huella"]
-                .as_str()
+            document["semantica"]["ranuras"]
+                .as_u64()
                 .unwrap_or_default()
-                .is_empty()
+                > 0
         );
+        assert!(!document["semantica"]["huella"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty());
         let total = document["censo"]["total"].as_u64().unwrap_or_default();
         assert_eq!(total, document["inferencia"]["nodos"].as_u64().unwrap_or(0));
     }
