@@ -93,7 +93,7 @@ export function anthropicRequest(
   messages: WireMessage[],
   system: string,
 ): HttpRequest {
-  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS.anthropic);
+  const base = PROVIDER_ENDPOINTS.anthropic;
   return {
     url: `${base}/messages`,
     init: {
@@ -150,7 +150,7 @@ export function openAiRequest(
   messages: WireMessage[],
   system: string,
 ): HttpRequest {
-  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS.openai);
+  const base = PROVIDER_ENDPOINTS.openai;
   return {
     url: `${base}/chat/completions`,
     init: {
@@ -303,7 +303,7 @@ export async function sendChat(
 
 /** Lista real de modelos de la cuenta (`GET {base}/models`). */
 export async function listModels(config: AiConfig, signal?: AbortSignal): Promise<ModelInfo[]> {
-  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS[config.provider]);
+  const base = PROVIDER_ENDPOINTS[config.provider];
   const anthropic = config.provider === "anthropic";
   const response = await fetch(`${base}/models`, {
     method: "GET",

@@ -82,11 +82,13 @@ pub struct AxiomView {
     pub valence: BelnapPoint,
     /// ¿La valencia es `⊤∧⊥` (contradicción retenida, jamás explosión)?
     pub tolerated: bool,
+    /// Peso de atención acumulado en las evaluaciones de esta raíz.
+    pub attention: u32,
 }
 
 impl AxiomView {
     /// Proyecta un axioma: **ninguna** decisión lógica se toma aquí.
-    fn project(axiom: &Axiom) -> Self {
+    fn project(axiom: &Axiom, attention: u32) -> Self {
         let valence = BelnapPoint::project(&axiom.valence);
         AxiomView {
             root: axiom.root.clone(),
@@ -94,6 +96,7 @@ impl AxiomView {
             rule: axiom.rule.clone(),
             tolerated: valence.contradiction,
             valence,
+            attention,
         }
     }
 }
@@ -177,6 +180,54 @@ pub struct AutopoiesisReport {
     pub certified: bool,
     /// Veredicto legible para la cabecera del panel.
     pub verdict: String,
+    /// Suma de los pesos de atención de la sesión de este documento.
+    pub attention_total: u32,
+    /// Raíz que el mutador prioriza. Vacía si nadie acumuló peso.
+    pub priority_root: String,
+    /// Carta métrica de las raíces del documento, en orden de aparición.
+    pub topology: TopologyView,
+}
+
+/// Malla topológica que el panel dibuja sin recalcular distancias.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct TopologyView {
+    /// Puntos medidos.
+    pub nodes: u16,
+    /// Trayectorias con el mismo residuo.
+    pub overlaps: u16,
+    /// Cohesión en milésimas.
+    pub cohesion_milli: u16,
+    /// Distancia del par más cercano. Ausente si no hay par.
+    pub distance: Option<u16>,
+    /// Raíces que no cupieron en la carta.
+    pub omitted: u16,
+    /// Un extremo del par más cercano.
+    pub focus: String,
+    /// El otro extremo.
+    pub neighbor: String,
+    /// El motor vio un solape y no debe colapsar la ejecución.
+    pub alert: bool,
+}
+
+impl TopologyView {
+    fn project(view: bara::neural_bridge::TopoView) -> Self {
+        Self {
+            nodes: view.nodes,
+            overlaps: view.overlaps,
+            cohesion_milli: view.cohesion_milli,
+            distance: if view.nearest == u16::MAX {
+                None
+            } else {
+                Some(view.nearest)
+            },
+            omitted: view.omitted,
+            focus: view.focus.as_str().to_string(),
+            neighbor: view.neighbor.as_str().to_string(),
+            alert: view.alert,
+        }
+    }
 }
 
 /// **Fase 1** — Autopoiesis + Belnap + puerta ZK sobre un documento *Shoresh*.
@@ -194,7 +245,35 @@ pub fn autopoiesis(source: &str) -> AutopoiesisReport {
     let unknown_roots = unknown_roots_of(&tokens);
     let roots = roots_of(&tokens).len();
     let generation = runtime.mutator.generation();
-    let axioms: Vec<AxiomView> = runtime.mutator.axioms().map(AxiomView::project).collect();
+    let attention_total = runtime.mutator.attention_total();
+    let priority_root = runtime
+        .mutator
+        .priority_root()
+        .unwrap_or("")
+        .to_string();
+    let sequence: Vec<&str> = tokens
+        .iter()
+        .filter_map(|token| match &token.kind {
+            TokenKind::Root { letters, .. } if !letters.is_empty() => Some(letters.as_str()),
+            _ => None,
+        })
+        .collect();
+    let topology = TopologyView::project(bara::neural_bridge::survey_roots(&sequence));
+    let roots_seen: Vec<String> = runtime
+        .mutator
+        .axioms()
+        .map(|axiom| axiom.root.clone())
+        .collect();
+    let axioms: Vec<AxiomView> = roots_seen
+        .iter()
+        .filter_map(|root| {
+            let attention = runtime.mutator.attention_of(root);
+            runtime
+                .mutator
+                .axiom(root)
+                .map(|axiom| AxiomView::project(axiom, attention))
+        })
+        .collect();
     let contradictions = axioms.iter().filter(|axiom| axiom.tolerated).count();
     // El préstamo del certificado vive sólo dentro de la expresión: el informe
     // es un valor propio, sin auto-referencias (y sin `unsafe`).
@@ -222,6 +301,9 @@ pub fn autopoiesis(source: &str) -> AutopoiesisReport {
         gate,
         certified,
         verdict,
+        attention_total,
+        priority_root,
+        topology,
     }
 }
 
@@ -1478,11 +1560,11 @@ mod tests {
         let informe = serde_json::to_value(autopoiesis(DOCUMENTO)).expect("autopoiesis serializa");
         assert_eq!(
             claves(&informe),
-            "axioms,certified,contradictions,gate,generation,roots,unknownRoots,verdict"
+            "attentionTotal,axioms,certified,contradictions,gate,generation,priorityRoot,roots,topology,unknownRoots,verdict"
         );
         assert_eq!(
             claves(&informe["axioms"][0]),
-            "generation,root,rule,tolerated,valence"
+            "attention,generation,root,rule,tolerated,valence"
         );
         assert_eq!(
             claves(&informe["gate"]),

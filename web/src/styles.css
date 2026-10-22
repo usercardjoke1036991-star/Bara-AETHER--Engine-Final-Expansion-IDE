@@ -37,6 +37,7 @@ body,
 
 .bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.6rem 1rem;
@@ -159,6 +160,88 @@ body,
 .workspace-head h2 {
   flex: 1;
   margin: 0;
+}
+
+.workspace-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.workspace-actions button {
+  flex: 1;
+}
+
+.welcome {
+  margin: 0.65rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.welcome h2,
+.welcome p {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.welcome-kicker {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.welcome-actions,
+.welcome-clone {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+  margin-top: 0.5rem;
+}
+
+.welcome-clone {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.welcome-clone label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.welcome-progress {
+  margin: 0.5rem 0 0;
+  color: var(--root);
+  font-family: Consolas, "Segoe UI Mono", monospace;
+  font-size: 0.75rem;
+}
+
+.welcome-dismiss {
+  margin-top: 0.65rem;
+  background: transparent;
+  color: var(--muted);
+}
+
+.fold {
+  margin: 0 0 0.45rem;
+}
+
+.fold summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.console-fold {
+  border-top: 1px solid var(--line);
+}
+
+.console-fold summary {
+  padding: 0.35rem 0.7rem 0;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
 .icon-button {
@@ -388,6 +471,13 @@ body,
 
 .bara-editor .cm-editor {
   height: 100%;
+}
+
+.cm-ghost {
+  color: var(--muted);
+  opacity: 0.72;
+  font-style: italic;
+  pointer-events: none;
 }
 
 .kernel-console {
@@ -1065,9 +1155,19 @@ td {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--pane);
-  transform: translate(-50%, -50%);
+  color: var(--text);
+  font: inherit;
   font-size: 0.72rem;
+  transform: translate(-50%, -50%);
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.vb-node.selected,
+tr.vb-selected td {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 }
 
 .vb-node small {
@@ -1320,5 +1420,255 @@ td {
 .ck-card details summary {
   cursor: pointer;
   font-size: 0.75rem;
+}
+
+.desk {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.desk-body,
+.desk-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.desk-body {
+  flex-direction: column;
+}
+
+.topo-desk {
+  flex: 1;
+  min-height: 0;
+}
+
+.topo {
+  display: flex;
+  flex: 1;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+.topo-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: 13.5rem;
+  min-width: 11rem;
+  overflow: auto;
+}
+
+.topo-filters fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.4rem 0.55rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.topo-filters label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.topo-card {
+  margin: 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.topo-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 16rem;
+}
+
+.topo-stage canvas {
+  width: 100%;
+  height: 100%;
+  background: #0b0f14;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: grab;
+}
+
+.desk-split > .workspace {
+  width: 18rem;
+  min-width: 14rem;
+}
+
+.desk-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.desk-chat .ai-panel {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: 100%;
+  height: auto;
+  flex: 1;
+  border-left: 0;
+}
+
+.desk-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.desk-facts div {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.desk-facts dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.desk-facts dd {
+  margin: 0.15rem 0 0;
+}
+
+.desk-source {
+  min-height: 8rem;
+  font-family: Consolas, "Segoe UI Mono", monospace;
+}
+
+.desk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.desk-table th,
+.desk-table td {
+  padding: 0.25rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.desk-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.desk-media label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.desk-video {
+  max-width: 100%;
+  max-height: 12rem;
+  background: #000;
+}
+
+.shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.4rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shelf li {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.shelf li button:first-child {
+  flex: 1;
+  text-align: left;
+}
+
+.shelf-active {
+  border-color: var(--root);
+}
+
+.ck-lanes {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 3.2rem;
+  margin: 0.6rem 0;
+}
+
+.ck-lane {
+  flex: 1;
+  min-height: 4px;
+  background: var(--root);
+}
+
+.ck-lane-neg {
+  background: #e07a5f;
+}
+
+.recipe-row {
+  gap: 0.4rem;
+  margin: 0.35rem 0;
+}
+
+.ai-auto-on {
+  border-color: #e07a5f;
+  color: #e07a5f;
+}
+
+.idle-note {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 12px;
+  background: #132028;
+  color: #d7e3f0;
+  border-bottom: 1px solid #4fd1c5;
+  font-size: 13px;
+}
+
+.idle-note span {
+  flex: 1;
+}
+
+.ai-offline-on {
+  border-color: #4fd1c5;
+  color: #4fd1c5;
+}
+
+.topo-propagate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.6rem 0;
+}
+
+.topo-propagate input {
+  width: 100%;
 }
 

@@ -13,6 +13,8 @@ import {
   visualBuild,
   visualCatalogue,
   visualCompose,
+  visualEmit,
+  visualEmitComposed,
   visualSample,
   type VisualBlockView,
   type VisualBuildView,
@@ -72,7 +74,10 @@ export default function VisualBuilder({
 }: {
   /** Visibilidad del panel (lo gobierna el encabezado del IDE). */
   open: boolean;
-  /** Lleva el programa *Shoresh* traducido al editor del IDE. */
+  /**
+   * Lleva al editor sólo el programa que `visual_emit` acaba de firmar.
+   * El texto cacheado del panel no basta: el kernel vuelve a verificar el sello.
+   */
   onUseCode: (code: string) => void;
 }) {
   /** Texto del lienzo en edición. */
@@ -88,6 +93,8 @@ export default function VisualBuilder({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  /** Bloque del lienzo cuya fila del AST está seleccionada. */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Arranque perezoso: el contrato y el ejemplo los sirve Rust, no TypeScript.
   useEffect(() => {
@@ -175,13 +182,28 @@ export default function VisualBuilder({
     setDrafts((previous) => previous.filter((_, position) => position !== index));
   }, []);
 
-  if (!open) {
-    return null;
-  }
-
-  const placed = view ? place(view.blocks) : [];
-
-
+  /**
+   * Emite el `.bara` sólo después de que Rust vuelva a verificar el sello.
+   * `compuesto` usa la cola; el lienzo suelto usa el texto en edición.
+   *
+   * Los hooks van antes del `return` de panel cerrado: si no, abrir el lienzo
+   * cambia el número de hooks y React desmonta toda la aplicación.
+   */
+  const emitToEditor = useCallback(async () => {
+    setBusy(true);
+    try {
+      const emission =
+        scope.startsWith("compuesto") && drafts.length > 0
+          ? await visualEmitComposed(drafts)
+          : await visualEmit(blueprint);
+      onUseCode(emission.source);
+      setError(null);
+    } catch (failure) {
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  }, [blueprint, drafts, onUseCode, scope]);
 
   /** Recupera el lienzo de ejemplo del kernel (el que el IDE ofrece al abrir). */
   const useExample = useCallback(() => {
@@ -193,6 +215,12 @@ export default function VisualBuilder({
         setError(describeError(failure));
       });
   }, []);
+
+  if (!open) {
+    return null;
+  }
+
+  const placed = view ? place(view.blocks) : [];
 
   return (
     <section className="pane vb">
@@ -255,18 +283,22 @@ export default function VisualBuilder({
             <p className="muted">Sin retícula: el kernel no publicó celdas para este lienzo.</p>
           ) : (
             placed.map((entry, index) => (
-              <span
+              <button
+                type="button"
                 key={`${index}:${entry.block.id}`}
-                className={`vb-node vb-${entry.block.kind}`}
+                className={`vb-node vb-${entry.block.kind}${
+                  selectedId === entry.block.id ? " selected" : ""
+                }`}
                 style={{ left: entry.left, top: entry.top }}
                 title={`${entry.block.name} · ${entry.block.root} · riesgo ${fixed(
                   entry.block.hazard,
                 )}`}
+                onClick={() => setSelectedId(entry.block.id)}
               >
                 <strong>{entry.block.id}</strong>
                 <small>{entry.block.kindLabel}</small>
                 {entry.block.sanitized ? <em title="nace sellado bajo guarda שמר">שמר</em> : null}
-              </span>
+              </button>
             ))
           )}
         </div>
@@ -275,8 +307,14 @@ export default function VisualBuilder({
       {view ? (
         <>
           <div className="row">
-            <button type="button" onClick={() => onUseCode(view.source)}>
-              Llevar el programa Shoresh al editor
+            <button
+              type="button"
+              disabled={busy || !view.report.verified}
+              onClick={() => {
+                void emitToEditor();
+              }}
+            >
+              Emitir .bara firmado
             </button>
             <span className={view.report.verified ? "kx-tag kx-ok" : "kx-tag kx-warn"}>
               ADN {mark(view.report.verified)} · clave 0x{view.report.keyId.toString(16)}
@@ -390,7 +428,14 @@ export default function VisualBuilder({
                   </thead>
                   <tbody>
                     {view.ast.map((node, index) => (
-                      <tr key={`${index}:${node.root}`}>
+                      <tr
+                        key={`${index}:${node.root}`}
+                        className={
+                          selectedId !== null && view.blocks[index]?.id === selectedId
+                            ? "vb-selected"
+                            : undefined
+                        }
+                      >
                         <td className="lexeme">{node.root}</td>
                         <td>{node.original}</td>
                         <td className="num">{node.arity}</td>

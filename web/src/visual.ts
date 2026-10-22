@@ -196,3 +196,24 @@ export function visualBuild(blueprint: string): Promise<VisualBuildView> {
 export function visualCompose(blueprints: string[]): Promise<VisualBuildView> {
   return invoke<VisualBuildView>("visual_compose", { blueprints });
 }
+
+/** Programa `.bara` que el kernel acepta emitir, con el sello que acaba de verificar. */
+export interface VisualEmission {
+  source: string;
+  label: string;
+  rootHex: string;
+  signatureHex: string;
+}
+
+/**
+ * Pide al kernel que vuelva a firmar el lienzo y entregue el `.bara`.
+ * Si el ADN no verifica, el comando falla y no hay documento.
+ */
+export function visualEmit(blueprint: string): Promise<VisualEmission> {
+  return invoke<VisualEmission>("visual_emit", { blueprint });
+}
+
+/** Emisión de varios lienzos ya compuestos, en el orden enviado. */
+export function visualEmitComposed(blueprints: string[]): Promise<VisualEmission> {
+  return invoke<VisualEmission>("visual_emit_composed", { blueprints });
+}

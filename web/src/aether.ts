@@ -27,6 +27,8 @@ export interface AxiomView {
   valence: BelnapPoint;
   /** ¿La valencia es `⊤∧⊥` (contradicción retenida, jamás explosión)? */
   tolerated: boolean;
+  /** Peso de atención acumulado al evaluar esta raíz. */
+  attention: number;
 }
 
 /** Una comprobación de la puerta ZK. */
@@ -71,6 +73,24 @@ export interface AutopoiesisReport {
   certified: boolean;
   /** Veredicto legible para la cabecera del panel. */
   verdict: string;
+  /** Suma de los pesos de atención de este documento. */
+  attentionTotal: number;
+  /** Raíz prioritaria. Cadena vacía si nadie acumuló peso. */
+  priorityRoot: string;
+  /** Carta métrica de las raíces, en orden de aparición. */
+  topology: TopologyView;
+}
+
+/** Malla topológica proyectada por el kernel (`camelCase`). */
+export interface TopologyView {
+  nodes: number;
+  overlaps: number;
+  cohesionMilli: number;
+  distance: number | null;
+  omitted: number;
+  focus: string;
+  neighbor: string;
+  alert: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

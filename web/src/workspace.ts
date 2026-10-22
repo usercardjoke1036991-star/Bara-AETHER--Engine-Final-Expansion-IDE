@@ -50,33 +50,75 @@ export interface WorkspaceDocument {
   source: string;
 }
 
-/** Directorio de lanzamiento de la ventana (punto de partida del explorador). */
+/** Directorio de lanzamiento. No cambia la jaula activa. */
 export function workspaceDefaultRoot(): Promise<string> {
   return invoke<string>("workspace_default_root");
 }
 
-/** Enumera recursivamente `root` sin los directorios de artefactos. */
-export function workspaceTree(root: string): Promise<WorkspaceTree> {
-  return invoke<WorkspaceTree>("workspace_tree", { root });
+/** Enumera la raíz activa. El WebView no envía la ruta. */
+export function workspaceTree(): Promise<WorkspaceTree> {
+  return invoke<WorkspaceTree>("workspace_tree");
 }
 
-/** Lee un `.bara` confinado a `root`. */
-export function workspaceReadDocument(
-  root: string,
-  path: string,
-): Promise<WorkspaceDocument> {
-  return invoke<WorkspaceDocument>("workspace_read_document", { root, path });
+/** Lee un `.bara` relativo a la raíz activa. */
+export function workspaceReadDocument(path: string): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_read_document", { path });
 }
 
-/** Guarda un `.bara` confinado a `root` y devuelve lo persistido. */
+/** Lee una fuente del proyecto (relativa) para abrirla desde el grafo. */
+export function workspaceReadSource(path: string): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_source_text", { path });
+}
+
+/**
+ * Diálogo nativo de carpetas. La ruta la elige el sistema operativo y el
+ * backend la canoniza antes de devolver el árbol.
+ */
+export function workspaceOpenDialog(): Promise<WorkspaceTree> {
+  return invoke<WorkspaceTree>("workspace_open_dialog");
+}
+
+/**
+ * Clona un repo de GitHub en la carpeta que elija el diálogo y lo abre.
+ * El progreso llega por el evento `github-clone-progress`.
+ */
+export function githubClone(url: string): Promise<WorkspaceTree> {
+  return invoke<WorkspaceTree>("github_clone", { url });
+}
+
+/** Carpeta abierta en el estante. El identificador lo emite el backend. */
+export interface WorkspaceRootView {
+  id: string;
+  path: string;
+  name: string;
+  active: boolean;
+}
+
+/** Estante de carpetas. Cada una conserva su propia jaula. */
+export interface WorkspaceShelf {
+  activeId: string;
+  roots: WorkspaceRootView[];
+}
+
+/** Carpetas abiertas y cuál está activa. */
+export function workspaceRoots(): Promise<WorkspaceShelf> {
+  return invoke<WorkspaceShelf>("workspace_roots");
+}
+
+/** Activa una carpeta por el identificador del backend. */
+export function workspaceActivate(id: string): Promise<WorkspaceShelf> {
+  return invoke<WorkspaceShelf>("workspace_activate", { id });
+}
+
+/** Cierra una carpeta. La última del estante permanece. */
+export function workspaceCloseRoot(id: string): Promise<WorkspaceShelf> {
+  return invoke<WorkspaceShelf>("workspace_close_root", { id });
+}
+
+/** Guarda un `.bara` relativo a la raíz activa y devuelve lo persistido. */
 export function workspaceWriteDocument(
-  root: string,
   path: string,
   source: string,
 ): Promise<WorkspaceDocument> {
-  return invoke<WorkspaceDocument>("workspace_write_document", {
-    root,
-    path,
-    source,
-  });
+  return invoke<WorkspaceDocument>("workspace_write_document", { path, source });
 }

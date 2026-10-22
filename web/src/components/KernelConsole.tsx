@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import type { BelnapLattice, ObservationView } from "../engine";
+import type { RecipeName } from "../recipes";
 import BelnapMeter from "./BelnapMeter";
 
 /** Una línea ya respondida por el oráculo del kernel. */
@@ -17,6 +18,8 @@ interface KernelConsoleProps {
   current: ObservationView | null;
   /** Envía la línea al oráculo en proceso (`oracle_converse`), no a un shell. */
   onSubmit: (line: string) => void;
+  /** Lanza una receta del catálogo cerrado. */
+  onRecipe: (recipe: RecipeName) => void;
 }
 
 /**
@@ -32,6 +35,7 @@ export default function KernelConsole({
   lattice,
   current,
   onSubmit,
+  onRecipe,
 }: KernelConsoleProps) {
   const [draft, setDraft] = useState("");
 
@@ -48,6 +52,18 @@ export default function KernelConsole({
   return (
     <section className="kernel-console" aria-label="Consola del kernel">
       <BelnapMeter lattice={lattice} current={current} />
+      <div className="row recipe-row">
+        <button type="button" disabled={busy} onClick={() => onRecipe("check")}>
+          comprobar
+        </button>
+        <button type="button" disabled={busy} onClick={() => onRecipe("test")}>
+          probar conflicto
+        </button>
+        <button type="button" disabled={busy} onClick={() => onRecipe("typecheck")}>
+          tipos
+        </button>
+        <span className="muted">Alt+1 · Alt+2 · Alt+3</span>
+      </div>
       <div className="console-log" aria-live="polite">
         {lines.length === 0 ? (
           <p className="muted">

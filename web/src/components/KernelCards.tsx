@@ -74,6 +74,20 @@ export function AutopoiesisCard({ report }: { report: AutopoiesisReport }) {
             <td className="num">{report.axioms.length}</td>
           </tr>
           <tr>
+            <th>atención acumulada</th>
+            <td className="num">
+              {report.attentionTotal}
+              {report.priorityRoot ? ` · ${report.priorityRoot}` : ""}
+            </td>
+          </tr>
+          <tr>
+            <th>malla topológica</th>
+            <td className="num">
+              {report.topology.nodes} nodos · cohesión {report.topology.cohesionMilli}
+              {report.topology.alert ? " · solape" : ""}
+            </td>
+          </tr>
+          <tr>
             <th>contradicciones toleradas</th>
             <td className="num">{report.contradictions}</td>
           </tr>
@@ -117,6 +131,7 @@ export function AutopoiesisCard({ report }: { report: AutopoiesisReport }) {
                 <th>Gen</th>
                 <th>Valencia</th>
                 <th>⊤∧⊥</th>
+                <th>Atención</th>
                 <th>Regla del mutador</th>
               </tr>
             </thead>
@@ -129,6 +144,7 @@ export function AutopoiesisCard({ report }: { report: AutopoiesisReport }) {
                     {axiom.valence.observation.glyph} {axiom.valence.key}
                   </td>
                   <td>{axiom.tolerated ? "retenida" : "—"}</td>
+                  <td className="num">{axiom.attention}</td>
                   <td className="muted">{axiom.rule}</td>
                 </tr>
               ))}
@@ -767,6 +783,14 @@ export function BridgeCard({
   /** Manifiesto cargado al conectar; `null` mientras no llegue. */
   contract: BridgeManifest | null;
 }) {
+  if (!document?.secciones || !document.catalogo) {
+    return (
+      <article className="kx-card">
+        <h3>Fase 5 · puente kernel → IDE</h3>
+        <p className="kx-warn">La instantánea no trae secciones. El resto del núcleo sigue visible.</p>
+      </article>
+    );
+  }
   const warnings = bridgeWarnings(document, contract);
   const { identidad, inmunidad, pasarela, nucleo } = document.secciones;
   const presente = document.catalogo.filter((entry) => entry.presente).length;
@@ -906,6 +930,14 @@ export function BridgeCard({
           <Row
             label="axiomas"
             value={`${nucleo.axiomas.total} (generación ${nucleo.axiomas.generacion})`}
+          />
+          <Row
+            label="atención"
+            value={`${nucleo.atencion.total} · cumbre ${nucleo.atencion.cumbre} · ${nucleo.atencion.prioridad ?? "sin prioridad"}`}
+          />
+          <Row
+            label="corrección"
+            value={`${nucleo.correccion.rastros} rastros · sello ${nucleo.correccion.sello} · separar ${nucleo.correccion.separacion}`}
           />
           <Row
             label="tiempo"

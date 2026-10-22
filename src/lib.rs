@@ -61,7 +61,8 @@ pub use aether::{
 pub mod visual;
 
 pub use visual::{
-    visual_build, visual_catalogue, visual_compose, visual_sample, VisualBlockView,
+    visual_build, visual_catalogue, visual_compose, visual_emit, visual_emit_composed, visual_sample,
+    VisualBlockView, VisualEmission,
     VisualBuildView, VisualCatalogueView, VisualCellView, VisualCheckView, VisualKindView,
     VisualLimitsView, VisualNodeView, VisualReportView, VisualSlotView, VisualTypeView,
 };
@@ -791,6 +792,8 @@ pub struct SessionStatus {
     pub mesh_peers: usize,
     /// Respuesta del último turno, para la consola del IDE.
     pub last_reply: Option<String>,
+    /// Identificador de la carpeta cuya sesión es ésta. Vacío fuera del IDE.
+    pub workspace_id: String,
 }
 
 /// Resultado de una operación de sesión (turno, rebobinados y estado).
@@ -970,6 +973,7 @@ impl Session {
             qubits: runtime.qubits.len(),
             mesh_peers: runtime.mesh.len(),
             last_reply: turns.last().map(|turn| turn.reply.clone()),
+            workspace_id: String::new(),
         };
 
         Replayed {

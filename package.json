@@ -1,7 +1,7 @@
 {
   "name": "bara-ide-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Interfaz grafica del IDE Bara (Tauri v2 + React + TypeScript)",
   "scripts": {
@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test:ai": "node web/scripts/ai-check.mjs",
     "patch:resources": "python src-tauri/scripts/win-gnu-recursos.py --exe ../target/release/bara-ide-desktop.exe",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dist:windows": "tauri build --bundles msi,nsis"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

@@ -7,6 +7,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { kernelAutopoiesis, type AutopoiesisReport } from "../aether";
+import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "../idle";
 import { describeError } from "../engine";
 import {
   flightRecorderLogs,
@@ -18,7 +20,7 @@ import {
   type SystemManifest,
   type TransmutationResult,
 } from "../telemetry";
-import { CensoCard, RecorderCard, ShoreshCard, TransmuterCard } from "./CockpitCards";
+import { AttentionCard, CensoCard, RecorderCard, ShoreshCard, TransmuterCard } from "./CockpitCards";
 
 export default function CockpitPanel({
   open,
@@ -37,11 +39,14 @@ export default function CockpitPanel({
   const [logs, setLogs] = useState<FlightLog | null>(null);
   /** Fuente en edición dentro de la consola del transmutador. */
   const [entry, setEntry] = useState("");
+  const [idle, setIdle] = useState<IdleNotice | null>(null);
   /** Dictamen de la última transmutación. */
   const [outcome, setOutcome] = useState<TransmutationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  /** Autopoiesis del documento abierto: pesos de los axiomas mutados. */
+  const [axioms, setAxioms] = useState<AutopoiesisReport | null>(null);
 
   /** Relee las tres proyecciones y siembra el editor si está vacío. */
   const load = useCallback(async () => {
@@ -74,6 +79,63 @@ export default function CockpitPanel({
       void load();
     }
   }, [open, ready, load]);
+
+  // El documento cambia más a menudo que el marco. Se espera un instante y se
+  // pide la autopoiesis del texto abierto, sin retener el temporizador al salir.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const text = source.trim();
+    if (text.length === 0) {
+      setAxioms(null);
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      void kernelAutopoiesis(text)
+        .then((report) => {
+          if (alive) {
+            setAxioms(report);
+          }
+        })
+        .catch(() => {
+          if (alive) {
+            setAxioms(null);
+          }
+        });
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [open, source]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    let alive = true;
+    const tick = () => {
+      void idleProposal()
+        .then((notice) => {
+          if (alive) {
+            setIdle(notice);
+          }
+        })
+        .catch(() => {
+          if (alive) {
+            setIdle(null);
+          }
+        });
+    };
+    tick();
+    const timer = window.setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [open]);
 
   /** Transmuta la fuente y refresca el marco y la caja negra. */
   const run = useCallback(async () => {
@@ -116,10 +178,32 @@ export default function CockpitPanel({
       </div>
 
       {error ? <p className="ai-error">{error}</p> : null}
+      {idle ? (
+        <div className="idle-note" role="status">
+          <span>{idle.message}</span>
+          <button
+            type="button"
+            onClick={() => {
+              void idleApply().finally(() => setIdle(null));
+            }}
+          >
+            transmutar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void idleDismiss().finally(() => setIdle(null));
+            }}
+          >
+            ahora no
+          </button>
+        </div>
+      ) : null}
 
       {manifest && frame && logs ? (
         <div className="ck-grid">
           <CensoCard frame={frame} />
+          <AttentionCard frame={frame} axioms={axioms} />
           <TransmuterCard
             entry={entry}
             outcome={outcome}

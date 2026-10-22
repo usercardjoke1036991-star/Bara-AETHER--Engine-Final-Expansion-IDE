@@ -33,12 +33,26 @@
 //! validación de rutas en TypeScript.
 //!
 //! * `workspace_default_root()` — raíz inicial (workspace del repositorio).
-//! * `workspace_tree(root)` — árbol recursivo sin `target/`, `node_modules/`
-//!   ni `.git/`, con cotas de profundidad, entradas y tamaño.
-//! * `workspace_read_document(root, path)` — lee un `.bara` confinado a la
-//!   raíz canónica.
-//! * `workspace_write_document(root, path, source)` — guarda un `.bara` dentro
-//!   de la raíz canónica y devuelve el documento persistido.
+//!   No cambia la jaula: el WebView no puede instalarla.
+//! * `workspace_tree()` — árbol de la raíz activa. No acepta ruta.
+//! * `workspace_read_document(path)` — lee un `.bara` relativo de esa raíz.
+//! * `workspace_write_document(path, source)` — guarda un `.bara` relativo.
+//! * `get_local_completions(line, prefix, path)` — sugerencias locales del
+//!   cursor. `path` es el documento relativo; no elige la carpeta.
+//! * `get_workspace_topology_graph()` — nodos y aristas de la carpeta activa.
+//! * `workspace_source_text(path)` — lee una fuente del proyecto (sólo
+//!   relativa) para saltar desde el grafo. No escribe.
+//! * `run_workspace_recipe(recipe)` — `check`, `test` o `typecheck`. El
+//!   proceso y los argumentos son literales; no hay shell. Cada receta
+//!   se corta a los 30 s.
+//! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque.
+//!   Sólo un `∅` se escribe, en la ruta relativa de la raíz activa.
+//! * `load_local_weights()` — diálogo del sistema para un `.gguf`. No recibe ruta.
+//! * `local_complete(prompt)` — responde con el núcleo y los pesos ya cargados.
+//! * `transmute_global(path, from, to)` — propaga un identificador por la red.
+//!   Escribe sólo si ningún archivo queda en `⊤∧⊥`.
+//! * `idle_proposal()` — aviso del hilo de reposo, si hay una redundancia `∅`.
+//! * `idle_apply()` / `idle_dismiss()` — confirman o descartan ese aviso.
 //!
 //! ## Comandos de la fase AETHER‑Ω (paneles del núcleo)
 //! Todos **proyectan** el kernel sobre el texto vivo del editor y son totales
@@ -90,9 +104,10 @@
 use bara_ide::{
     Analysis, AutopoiesisReport, BelnapEvaluation, BelnapLattice, DeltaView, FractalMemoryView,
     MeshView, MetalView, QuantumView, RootEntry, Session, SessionStatus, TimelineView, Translation,
-    TurnResult, TurnView, VisualBuildView, VisualCatalogueView,
+    TurnResult, TurnView, VisualBuildView, VisualCatalogueView, VisualEmission,
 };
 use std::sync::Mutex;
+use tauri::Manager;
 
 // Cockpit de telemetría: comandos de sólo lectura sobre `bara` + transmutador
 // con estado cognitivo local a la ventana. Ver `src/telemetry.rs`.
@@ -101,6 +116,33 @@ mod telemetry;
 // Explorador y almacén del workspace: enumeración recursiva y acceso a
 // documentos `.bara` confinados a una raíz canónica. Ver `src/workspace.rs`.
 mod workspace;
+
+// Clonado de GitHub: URL allowlist y `git clone` sin shell. Ver `src/import.rs`.
+mod import;
+
+// Cota de 32 MiB para archivos multimedia elegidos en el diálogo nativo.
+mod media;
+
+// Autocompletado local: catálogo Shoresh, carta de la carpeta y malla. Sin red.
+mod completion;
+
+// Grafo topológico de la carpeta activa. Sin red y sin raíz impuesta.
+mod graph;
+
+// Recetas de un clic. El proceso vive aquí, fuera del slice del handler.
+mod orchestrate;
+
+// Veto de Belnap del modo autónomo. Escribe sólo con veredicto ∅.
+mod auto_apply;
+
+// GGUF local y respuesta hermética. Sin red y sin FFI.
+mod local_infer;
+
+// Renombre trans-archivo. Escribe sólo si la red no contiene ⊤∧⊥.
+mod global_transmute;
+
+// Hilo de reposo. Propone una redundancia; no escribe hasta el cockpit.
+mod idle_worker;
 
 /// Analiza una fuente *Shoresh* con el kernel. Total: no puede fallar.
 #[tauri::command]
@@ -114,9 +156,7 @@ fn analyze_file(
     path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<Analysis, String> {
-    state
-        .read_path(&path)
-        .map(|document| bara_ide::analyze(&document.source))
+    workspace::read(&state.get()?, &path).map(|document| bara_ide::analyze(&document.source))
 }
 
 /// Catálogo de raíces semánticas conocidas por el kernel.
@@ -146,7 +186,7 @@ fn read_document(
     path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<String, String> {
-    state.read_path(&path).map(|document| document.source)
+    workspace::read(&state.get()?, &path).map(|document| document.source)
 }
 
 /// Raíz inicial del explorador (el workspace del repositorio, no `src-tauri/`).
@@ -155,98 +195,312 @@ fn workspace_default_root() -> Result<String, String> {
     workspace::default_root()
 }
 
-/// Árbol recursivo del workspace, sin `target/`, `node_modules/` ni `.git/`.
+/// Sugerencias de autocompletado. La carpeta es la activa; `path` no la cambia.
 #[tauri::command]
-fn workspace_tree(
-    root: String,
+fn get_local_completions(
+    line: u32,
+    prefix: String,
+    path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<workspace::WorkspaceTree, String> {
-    let tree = workspace::tree(&root)?;
-    state.set(tree.root.clone());
-    Ok(tree)
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    cache: tauri::State<'_, Mutex<completion::CompletionCache>>,
+) -> Result<Vec<completion::LocalCompletion>, String> {
+    completion::answer(line, &prefix, &path, &state, &cognition, &cache)
 }
 
-/// Texto de un `.bara` confinado a la raíz canónica del workspace.
+/// Grafo de la carpeta activa: nodos, aristas y distancia topológica.
 #[tauri::command]
-fn workspace_read_document(
-    root: String,
+fn get_workspace_topology_graph(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<graph::WorkspaceTopology, String> {
+    graph::build(&state.get()?)
+}
+
+/// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
+#[tauri::command]
+fn run_workspace_recipe(recipe: String) -> Result<orchestrate::RecipeReport, String> {
+    let name = recipe.trim();
+    if name.len() > 16 {
+        return Err("la receta no está en el catálogo cerrado".to_string());
+    }
+    orchestrate::run(name)
+}
+
+/// Juzga un bloque del asistente. La carpeta es la activa; `path` no la cambia.
+#[tauri::command]
+fn judge_auto_patch(
+    path: String,
+    line: u32,
+    host: String,
+    patch: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<auto_apply::AutoApplyReport, String> {
+    auto_apply::judge(&state.get()?, &path, line, &host, &patch)
+}
+
+/// Elige un `.gguf` en el diálogo del sistema y guarda sólo su cabecera.
+#[tauri::command]
+fn load_local_weights(
+    app: tauri::AppHandle,
+    slot: tauri::State<'_, Mutex<local_infer::LocalSlot>>,
+) -> Result<local_infer::WeightView, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Cargar pesos GGUF")
+        .add_filter("GGUF", &["gguf"])
+        .blocking_pick_file();
+    let Some(file) = picked else {
+        return Err("cancelado".to_string());
+    };
+    let path = match file {
+        tauri_plugin_dialog::FilePath::Path(path) => path,
+        tauri_plugin_dialog::FilePath::Url(_) => {
+            return Err("la selección no es un archivo local".to_string());
+        }
+    };
+    let model = local_infer::load_file(&path)?;
+    let view = local_infer::WeightView::from(&model);
+    match slot.lock() {
+        Ok(mut guard) => guard.install(model),
+        Err(_) => return Err("el modelo local no está disponible".to_string()),
+    }
+    Ok(view)
+}
+
+/// Resuelve un prompt con los pesos locales. No abre la red.
+#[tauri::command]
+fn local_complete(
+    prompt: String,
+    slot: tauri::State<'_, Mutex<local_infer::LocalSlot>>,
+) -> Result<local_infer::LocalReply, String> {
+    let model = match slot.lock() {
+        Ok(guard) => guard
+            .card()
+            .cloned()
+            .ok_or_else(|| "no hay pesos locales cargados".to_string())?,
+        Err(_) => return Err("el modelo local no está disponible".to_string()),
+    };
+    Ok(local_infer::complete(&model, &prompt))
+}
+
+/// Propaga un identificador por el grafo de la carpeta activa.
+#[tauri::command]
+fn transmute_global(
+    path: String,
+    from: String,
+    to: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<global_transmute::GlobalReport, String> {
+    global_transmute::propagate(&state.get()?, &path, &from, &to)
+}
+
+/// Aviso del hilo de reposo. Vacío si no hay una optimización limpia.
+#[tauri::command]
+fn idle_proposal(
+    slot: tauri::State<'_, Mutex<idle_worker::IdleSlot>>,
+) -> Result<Option<idle_worker::IdleNotice>, String> {
+    match slot.lock() {
+        Ok(guard) => Ok(guard.current()),
+        Err(_) => Err("el reposo no está disponible".to_string()),
+    }
+}
+
+/// Escribe la optimización si el archivo sigue en `∅`.
+#[tauri::command]
+fn idle_apply(
+    slot: tauri::State<'_, Mutex<idle_worker::IdleSlot>>,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<bool, String> {
+    let notice = match slot.lock() {
+        Ok(guard) => guard.current(),
+        Err(_) => return Err("el reposo no está disponible".to_string()),
+    };
+    let Some(notice) = notice else {
+        return Ok(false);
+    };
+    let wrote = idle_worker::apply(&state.get()?, &notice)?;
+    if let Ok(mut guard) = slot.lock() {
+        guard.clear();
+    }
+    Ok(wrote)
+}
+
+/// Descarta el aviso sin tocar el disco.
+#[tauri::command]
+fn idle_dismiss(slot: tauri::State<'_, Mutex<idle_worker::IdleSlot>>) -> Result<(), String> {
+    match slot.lock() {
+        Ok(mut guard) => {
+            guard.clear();
+            Ok(())
+        }
+        Err(_) => Err("el reposo no está disponible".to_string()),
+    }
+}
+
+/// Lee una fuente relativa del proyecto para abrirla en el editor.
+#[tauri::command]
+fn workspace_source_text(
     path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    let document = workspace::open_document(&root, &path)?;
-    state.set(document.root.clone());
-    Ok(document)
+    workspace::read_text(&state.get()?, &path)
 }
 
-/// Guarda un `.bara` del workspace y devuelve el documento persistido.
+/// Árbol de la raíz activa. Una ruta enviada por el WebView no existe en la firma.
+#[tauri::command]
+fn workspace_tree(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceTree, String> {
+    workspace::tree(&state.get()?)
+}
+
+/// Texto de un `.bara` relativo a la raíz activa. Rechaza absolutos y `..`.
+#[tauri::command]
+fn workspace_read_document(
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceDocument, String> {
+    workspace::read(&state.get()?, &path)
+}
+
+/// Guarda un `.bara` relativo a la raíz activa y devuelve el documento persistido.
 #[tauri::command]
 fn workspace_write_document(
-    root: String,
     path: String,
     source: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    let document = workspace::write(&root, &path, &source)?;
-    state.set(document.root.clone());
-    Ok(document)
+    workspace::write(&state.get()?, &path, &source)
 }
 
-/// Ejecuta una operación sobre la sesión sin `unwrap()`: si el cerrojo
-/// quedara envenenado, la interfaz recibe un error legible en vez de un
-/// aborto (A1 · totalidad).
-fn with_session<T>(
-    state: &tauri::State<'_, Mutex<Session>>,
+/// Suelta la malla y el oráculo de una carpeta. La usan el cierre y la expulsión LRU.
+fn release_folder(
+    cognition: &Mutex<telemetry::CognitiveShelf>,
+    sessions: &Mutex<telemetry::OracleShelf>,
+    path: &str,
+) {
+    if let Ok(mut mesh) = cognition.lock() {
+        mesh.forget(path);
+    }
+    if let Ok(mut oracle) = sessions.lock() {
+        oracle.forget(path);
+    }
+}
+
+/// Instala una raíz ya validada por el diálogo o por el clon y purga la expulsada.
+fn adopt_root(
+    state: &workspace::ActiveWorkspace,
+    cognition: &Mutex<telemetry::CognitiveShelf>,
+    sessions: &Mutex<telemetry::OracleShelf>,
+    root: String,
+) {
+    if let Some(evicted) = state.set(root) {
+        release_folder(cognition, sessions, &evicted);
+    }
+}
+
+/// Ejecuta una operación sobre la sesión de la carpeta activa.
+fn with_oracle<T>(
+    shelf: &tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    scope: &str,
     action: impl FnOnce(&mut Session) -> T,
 ) -> Result<T, String> {
-    match state.lock() {
-        Ok(mut session) => Ok(action(&mut session)),
+    match shelf.lock() {
+        Ok(mut guard) => Ok(action(guard.session(scope))),
         Err(_) => Err("sesión del oráculo no disponible (cerrojo envenenado)".to_string()),
     }
 }
 
-/// Conversa un turno con el oráculo del kernel.
+fn stamp(status: &mut SessionStatus, folder_id: &str) {
+    status.workspace_id = folder_id.to_string();
+}
+
+/// Conversa un turno con el oráculo de la carpeta activa.
 #[tauri::command]
 fn oracle_converse(
     input: String,
-    state: tauri::State<'_, Mutex<Session>>,
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<TurnResult, String> {
-    with_session(&state, |session| session.converse(&input))
+    let (scope, folder_id) = folder_of(&workspace);
+    let from = bara::flight_recorder::mark();
+    let mut turn = with_oracle(&sessions, &scope, |session| session.converse(&input))?;
+    let to = bara::flight_recorder::mark();
+    if let Ok(mut shelf) = cognition.lock() {
+        shelf.note_span(&scope, from, to);
+    }
+    stamp(&mut turn.status, &folder_id);
+    Ok(turn)
 }
 
-/// Estado de la sesión: informe del oráculo, control temporal y runtime.
+/// Estado de la sesión de la carpeta activa.
 #[tauri::command]
-fn oracle_status(state: tauri::State<'_, Mutex<Session>>) -> Result<SessionStatus, String> {
-    with_session(&state, |session| session.status())
+fn oracle_status(
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<SessionStatus, String> {
+    let (scope, folder_id) = folder_of(&workspace);
+    let mut status = with_oracle(&sessions, &scope, |session| session.status())?;
+    stamp(&mut status, &folder_id);
+    Ok(status)
 }
 
-/// Turnos conversados en la sesión, en orden.
+/// Turnos conversados en la sesión de la carpeta activa, en orden.
 #[tauri::command]
-fn oracle_turns(state: tauri::State<'_, Mutex<Session>>) -> Result<Vec<TurnView>, String> {
-    with_session(&state, |session| session.turns())
+fn oracle_turns(
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<Vec<TurnView>, String> {
+    let (scope, _) = folder_of(&workspace);
+    with_oracle(&sessions, &scope, |session| session.turns())
 }
 
-/// Cierra la sesión y devuelve el estado virgen.
+/// Cierra la sesión de la carpeta activa y devuelve el estado virgen.
 #[tauri::command]
-fn oracle_reset(state: tauri::State<'_, Mutex<Session>>) -> Result<SessionStatus, String> {
-    with_session(&state, |session| {
+fn oracle_reset(
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<SessionStatus, String> {
+    let (scope, folder_id) = folder_of(&workspace);
+    let mut status = with_oracle(&sessions, &scope, |session| {
         session.reset();
         session.status()
-    })
+    })?;
+    stamp(&mut status, &folder_id);
+    Ok(status)
 }
 
-/// Diario temporal `Δ⁻¹` completo (incluye los deltas revertidos).
+/// Diario temporal `Δ⁻¹` de la carpeta activa.
 #[tauri::command]
-fn temporal_deltas(state: tauri::State<'_, Mutex<Session>>) -> Result<Vec<DeltaView>, String> {
-    with_session(&state, |session| session.deltas())
+fn temporal_deltas(
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<Vec<DeltaView>, String> {
+    let (scope, _) = folder_of(&workspace);
+    with_oracle(&sessions, &scope, |session| session.deltas())
 }
 
-/// Control temporal: rebobina `Δ⁻¹` hasta `marker`.
+/// Control temporal: rebobina `Δ⁻¹` hasta `marker` en la carpeta activa.
 #[tauri::command]
 fn temporal_rollback(
     marker: u64,
-    state: tauri::State<'_, Mutex<Session>>,
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<TurnResult, String> {
-    with_session(&state, |session| session.rollback(marker))
+    let (scope, folder_id) = folder_of(&workspace);
+    let from = bara::flight_recorder::mark();
+    let mut turn = with_oracle(&sessions, &scope, |session| session.rollback(marker))?;
+    let to = bara::flight_recorder::mark();
+    if let Ok(mut shelf) = cognition.lock() {
+        shelf.note_span(&scope, from, to);
+    }
+    stamp(&mut turn.status, &folder_id);
+    Ok(turn)
 }
 
 /// Biláttice de Belnap completa, tal como la calcula el kernel.
@@ -352,6 +606,22 @@ fn visual_compose(blueprints: Vec<String>) -> Result<VisualBuildView, String> {
     bara_ide::visual_compose(&blueprints)
 }
 
+/// Reconstruye el lienzo en el kernel y sólo entonces entrega el `.bara`.
+///
+/// La interfaz no puede llevar al editor el texto que tenía en memoria: este
+/// comando vuelve a traducir, exige `verified` y un sello de 32 bytes, y
+/// rechaza el documento si algo de eso falla.
+#[tauri::command]
+fn visual_emit(blueprint: String) -> Result<VisualEmission, String> {
+    bara_ide::visual_emit(&blueprint)
+}
+
+/// Emisión de una composición: mismo sello, el orden de los lienzos importa.
+#[tauri::command]
+fn visual_emit_composed(blueprints: Vec<String>) -> Result<VisualEmission, String> {
+    bara_ide::visual_emit_composed(&blueprints)
+}
+
 /// **Fase 5** — contrato canónico del puente kernel → IDE.
 ///
 /// Devuelve el JSON de `bara::ide_bridge::Manifest::canon` sin recomillar: el
@@ -391,27 +661,229 @@ fn get_system_manifest() -> Result<String, String> {
 /// memoria a largo plazo y vista semántica *Shoresh* (`NeuralIT`).
 #[tauri::command]
 fn get_neural_frame(
-    state: tauri::State<'_, Mutex<telemetry::CognitiveState>>,
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<String, String> {
-    telemetry::guarded(|| telemetry::neural_frame(&state))
+    let scope = cognitive_scope(&workspace);
+    telemetry::guarded(|| telemetry::neural_frame(&cognition, &scope))
 }
 
-/// Volcado de sólo lectura de la caja negra (Flight Recorder).
+/// Volcado de la caja negra limitado a los tramos de la carpeta activa.
 #[tauri::command]
-fn get_flight_recorder_logs() -> Result<String, String> {
-    telemetry::guarded(telemetry::flight_recorder_logs)
+fn get_flight_recorder_logs(
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<String, String> {
+    let (scope, folder_id) = folder_of(&workspace);
+    telemetry::guarded(|| telemetry::flight_recorder_logs(&cognition, &scope, &folder_id))
 }
 
 /// Transmuta código/texto externo, lo audita y lo indexa si es admisible.
 #[tauri::command(rename_all = "snake_case")]
 fn transmute_input(
     source_code: String,
-    state: tauri::State<'_, Mutex<telemetry::CognitiveState>>,
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<String, String> {
-    telemetry::guarded(|| telemetry::transmute_input(&state, &source_code))
+    let scope = cognitive_scope(&workspace);
+    telemetry::guarded(|| telemetry::transmute_input(&cognition, &scope, &source_code))
 }
 
-/// Arranca la ventana del IDE con los treinta y cinco comandos registrados.
+/// Ventanas de escritorio que el IDE sabe abrir. El identificador es la
+/// etiqueta Tauri y, en React, el nombre de la vista.
+const DESK_VISTAS: &[(&str, &str, f64, f64)] = &[
+    ("main", "Bara IDE — AETHER-Ω", 1180.0, 760.0),
+    ("topology", "Bara — Topología", 920.0, 680.0),
+    ("autopoiesis", "Bara — Autopoiesis", 920.0, 680.0),
+    ("telemetry", "Bara — Cockpit", 920.0, 680.0),
+    ("ai-workspace", "Bara — Asistencia", 1080.0, 740.0),
+];
+
+fn desk_spec(vista: &str) -> Option<(&'static str, f64, f64)> {
+    DESK_VISTAS
+        .iter()
+        .find(|(id, ..)| *id == vista)
+        .map(|(_, title, width, height)| (*title, *width, *height))
+}
+
+fn cognitive_scope(workspace: &workspace::ActiveWorkspace) -> String {
+    workspace
+        .get()
+        .unwrap_or_else(|_| "bootstrap".to_string())
+}
+
+fn folder_of(workspace: &workspace::ActiveWorkspace) -> (String, String) {
+    let scope = cognitive_scope(workspace);
+    let folder_id = workspace::root_id(&scope);
+    (scope, folder_id)
+}
+
+/// Abre o enfoca una ventana registrada. La etiqueta no la inventa el WebView:
+/// tiene que estar en [`DESK_VISTAS`].
+#[tauri::command]
+fn open_desk_window(app: tauri::AppHandle, vista: String) -> Result<(), String> {
+    let vista = vista.trim();
+    let (title, width, height) =
+        desk_spec(vista).ok_or_else(|| "ventana no registrada".to_string())?;
+    if let Some(window) = app.get_webview_window(vista) {
+        window.set_focus().map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(&app, vista, tauri::WebviewUrl::App("index.html".into()))
+        .title(title)
+        .inner_size(width, height)
+        .min_inner_size(640.0, 420.0)
+        .center()
+        .build()
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+/// Estante de carpetas abiertas. Cada una es una jaula distinta.
+#[tauri::command]
+fn workspace_roots(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceShelf, String> {
+    state.list()
+}
+
+/// Activa una carpeta por el identificador que emitió el backend.
+#[tauri::command]
+fn workspace_activate(
+    id: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceShelf, String> {
+    state.activate(id.trim())
+}
+
+/// Cierra una carpeta del estante. La última permanece.
+#[tauri::command]
+fn workspace_close_root(
+    id: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+) -> Result<workspace::WorkspaceShelf, String> {
+    let (path, shelf) = state.release(id.trim())?;
+    release_folder(&cognition, &sessions, &path);
+    Ok(shelf)
+}
+
+/// Transmuta el árbol de la carpeta activa. La ruta no la elige el WebView.
+#[tauri::command]
+fn transmute_workspace(
+    workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<String, String> {
+    let root = workspace.get()?;
+    let project = bara::transmute_engine::transmute_workspace_dir(std::path::Path::new(&root))?;
+    let distance = if project.topology.nearest == u16::MAX {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!(project.topology.nearest)
+    };
+    Ok(serde_json::json!({
+        "archivos": project.files,
+        "archivos_omitidos": project.omitted_files,
+        "trozos": project.chunks,
+        "sentencias": project.statements,
+        "nodos": project.nodes.len(),
+        "nodos_omitidos": project.omitted_nodes,
+        "cohesion_mili": project.topology.cohesion_milli,
+        "solapes": project.topology.overlaps,
+        "distancia": distance,
+        "alerta": project.topology.alert,
+        "foco": project.topology.focus.as_str(),
+        "vecino": project.topology.neighbor.as_str(),
+        "lenguajes": project.languages,
+    })
+    .to_string())
+}
+
+/// Elige un archivo multimedia en el diálogo del sistema y aplica la cota de 32 MiB.
+///
+/// No devuelve píxeles ni la ruta absoluta. Cancelar responde `cancelado`.
+#[tauri::command]
+fn inspect_media_dialog(app: tauri::AppHandle) -> Result<media::MediaInspection, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Adjuntar imagen o video")
+        .add_filter(
+            "Multimedia",
+            &["mp4", "webm", "png", "jpg", "jpeg", "gif", "webp"],
+        )
+        .blocking_pick_file();
+    let Some(file) = picked else {
+        return Err("cancelado".to_string());
+    };
+    let path = match file {
+        tauri_plugin_dialog::FilePath::Path(path) => path,
+        tauri_plugin_dialog::FilePath::Url(_) => {
+            return Err("la selección no es un archivo local".to_string());
+        }
+    };
+    media::inspect_media_file(&path)
+}
+
+/// Abre el diálogo nativo de carpetas, canoniza la elección y la vuelve la raíz activa.
+///
+/// La ruta no viaja desde el WebView: sale del diálogo del sistema operativo.
+/// Cancelar devuelve el error estable `cancelado`, sin tocar el workspace.
+#[tauri::command]
+fn workspace_open_dialog(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+) -> Result<workspace::WorkspaceTree, String> {
+    let folder = pick_folder(&app, "Abrir carpeta del workspace")?;
+    let tree = workspace::tree(&folder.display().to_string())?;
+    adopt_root(&state, &cognition, &sessions, tree.root.clone());
+    Ok(tree)
+}
+
+/// Clona un repositorio de GitHub dentro de la carpeta que elija el diálogo.
+///
+/// Primero se valida la URL. Después el usuario elige el directorio padre.
+/// `git` corre con argumentos fijos, sin shell. Al terminar, ese clon es el
+/// workspace activo y el árbol ya viene sin `target/`, `node_modules/` ni `.git/`.
+#[tauri::command]
+fn github_clone(
+    app: tauri::AppHandle,
+    url: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
+    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+) -> Result<workspace::WorkspaceTree, String> {
+    // Validar antes de abrir el diálogo: una URL mala no pide carpeta.
+    let _ = import::github_remote(&url)?;
+    let parent = pick_folder(&app, "Carpeta donde clonar el repositorio")?;
+    let cloned = import::clone_repository(&app, &parent, &url)?;
+    let tree = workspace::tree(&cloned.display().to_string())?;
+    adopt_root(&state, &cognition, &sessions, tree.root.clone());
+    Ok(tree)
+}
+
+/// Diálogo de carpeta. `cancelado` es el contrato que la interfaz no pinta en rojo.
+fn pick_folder(app: &tauri::AppHandle, title: &str) -> Result<std::path::PathBuf, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = app.dialog().file().set_title(title).blocking_pick_folder();
+    let Some(file) = picked else {
+        return Err("cancelado".to_string());
+    };
+    let path = match file {
+        tauri_plugin_dialog::FilePath::Path(path) => path,
+        tauri_plugin_dialog::FilePath::Url(_) => {
+            return Err("la selección no es una carpeta local".to_string());
+        }
+    };
+    workspace::resolve_root(&path.display().to_string())
+}
+
+/// Arranca la ventana del IDE con los treinta y nueve comandos registrados.
 ///
 /// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
 /// instancia por ventana, detrás del cerrojo que guarda [`with_session`].
@@ -421,9 +893,17 @@ fn transmute_input(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(Mutex::new(Session::new()))
-        .manage(Mutex::new(telemetry::CognitiveState::new()))
+        .plugin(tauri_plugin_dialog::init())
+        .manage(Mutex::new(telemetry::OracleShelf::new()))
+        .manage(Mutex::new(telemetry::CognitiveShelf::new()))
         .manage(workspace::ActiveWorkspace::bootstrap())
+        .manage(Mutex::new(completion::CompletionCache::new()))
+        .manage(Mutex::new(local_infer::LocalSlot::new()))
+        .manage(Mutex::new(idle_worker::IdleSlot::new()))
+        .setup(|app| {
+            idle_worker::start(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             analyze_source,
             analyze_file,
@@ -434,6 +914,14 @@ pub fn run() {
             workspace_tree,
             workspace_read_document,
             workspace_write_document,
+            workspace_open_dialog,
+            workspace_roots,
+            workspace_activate,
+            workspace_close_root,
+            open_desk_window,
+            transmute_workspace,
+            inspect_media_dialog,
+            github_clone,
             shoresh_translate,
             oracle_converse,
             oracle_status,
@@ -454,13 +942,168 @@ pub fn run() {
             visual_sample,
             visual_build,
             visual_compose,
+            visual_emit,
+            visual_emit_composed,
             bridge_manifest,
             bridge_snapshot,
             get_system_manifest,
             get_neural_frame,
             get_flight_recorder_logs,
-            transmute_input
+            transmute_input,
+            get_local_completions,
+            get_workspace_topology_graph,
+            workspace_source_text,
+            run_workspace_recipe,
+            judge_auto_patch,
+            load_local_weights,
+            local_complete,
+            transmute_global,
+            idle_proposal,
+            idle_apply,
+            idle_dismiss
         ])
         .run(tauri::generate_context!())
         .expect("Bara IDE: no se pudo iniciar la ventana (Tauri)");
+}
+
+#[cfg(test)]
+mod ipc_boundary {
+    use std::sync::Mutex;
+
+    #[test]
+    fn la_cli_y_la_pty_no_entran_en_el_handler() {
+        let src = include_str!("lib.rs");
+        let handler = src
+            .split_once("generate_handler!")
+            .expect("handler")
+            .1
+            .split_once("])")
+            .expect("cierre del handler")
+            .0;
+        assert!(handler.contains("oracle_converse"));
+        assert!(handler.contains("open_desk_window"));
+        assert!(handler.contains("workspace_activate"));
+        assert!(handler.contains("transmute_workspace"));
+        assert!(handler.contains("inspect_media_dialog"));
+        assert!(handler.contains("get_local_completions"));
+        assert!(handler.contains("get_workspace_topology_graph"));
+        assert!(handler.contains("workspace_source_text"));
+        assert!(handler.contains("run_workspace_recipe"));
+        assert!(handler.contains("judge_auto_patch"));
+        assert!(handler.contains("load_local_weights"));
+        assert!(handler.contains("local_complete"));
+        assert!(handler.contains("transmute_global"));
+        assert!(handler.contains("idle_proposal"));
+        assert!(handler.contains("idle_apply"));
+        assert!(handler.contains("idle_dismiss"));
+        assert!(!handler.contains("read_source"));
+        assert!(super::desk_spec("topology").is_some());
+        assert!(super::desk_spec("ai-workspace").is_some());
+        assert!(super::desk_spec("pty").is_none());
+        assert!(super::desk_spec("../main").is_none());
+        assert!(!handler.to_ascii_lowercase().contains("pty"));
+        assert!(!handler.contains("Command::new"));
+        assert!(!handler.contains("cmd /c") && !handler.contains("sh -c"));
+    }
+
+    #[test]
+    fn el_webview_no_puede_imponer_una_raiz() {
+        let src = include_str!("lib.rs");
+        for name in [
+            "fn workspace_tree(",
+            "fn workspace_read_document(",
+            "fn workspace_write_document(",
+            "fn get_local_completions(",
+            "fn get_workspace_topology_graph(",
+            "fn workspace_source_text(",
+            "fn run_workspace_recipe(",
+            "fn judge_auto_patch(",
+            "fn load_local_weights(",
+            "fn local_complete(",
+            "fn transmute_global(",
+            "fn idle_proposal(",
+            "fn idle_apply(",
+            "fn idle_dismiss(",
+        ] {
+            let signature = src
+                .split(name)
+                .nth(1)
+                .and_then(|rest| rest.split('{').next())
+                .unwrap_or("");
+            assert!(
+                !signature.contains("root:"),
+                "{name} no puede aceptar una raíz del WebView"
+            );
+        }
+    }
+
+    #[test]
+    fn la_novena_carpeta_olvida_la_malla_y_el_oraculo() {
+        let workspace = super::workspace::ActiveWorkspace::empty();
+        let cognition = Mutex::new(super::telemetry::CognitiveShelf::new());
+        let sessions = Mutex::new(super::telemetry::OracleShelf::new());
+        let mut paths = Vec::new();
+        for index in 0..super::workspace::ROOT_CAP {
+            let dir = std::env::temp_dir().join(format!(
+                "bara-olvido-{index}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("directorio");
+            let path = super::workspace::resolve_root(dir.to_str().expect("utf-8"))
+                .expect("canon")
+                .display()
+                .to_string();
+            super::adopt_root(&workspace, &cognition, &sessions, path.clone());
+            paths.push((dir, path));
+        }
+        {
+            let mut mesh = cognition.lock().expect("malla");
+            mesh.note_span(&paths[0].1, 1, 2);
+            mesh.note_span(&paths[1].1, 3, 4);
+        }
+        {
+            let mut oracle = sessions.lock().expect("oráculo");
+            let _ = oracle.session(&paths[1].1).converse("hola");
+            assert!(!oracle.session(&paths[1].1).turns().is_empty());
+        }
+        super::adopt_root(&workspace, &cognition, &sessions, paths[0].1.clone());
+        let extra_dir = std::env::temp_dir().join(format!("bara-olvido-extra-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&extra_dir);
+        std::fs::create_dir_all(&extra_dir).expect("extra");
+        let extra = super::workspace::resolve_root(extra_dir.to_str().expect("utf-8"))
+            .expect("canon")
+            .display()
+            .to_string();
+        super::adopt_root(&workspace, &cognition, &sessions, extra);
+        assert!(
+            cognition.lock().expect("malla").spans_of(&paths[1].1).is_empty(),
+            "la carpeta expulsada debe perder la malla"
+        );
+        assert!(!cognition.lock().expect("malla").spans_of(&paths[0].1).is_empty());
+        assert!(sessions
+            .lock()
+            .expect("oráculo")
+            .session(&paths[1].1)
+            .turns()
+            .is_empty());
+        for (dir, _) in paths {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        let _ = std::fs::remove_dir_all(extra_dir);
+    }
+
+    #[test]
+    fn la_csp_solo_admite_el_origen_local_y_los_dos_proveedores() {
+        let conf = include_str!("../tauri.conf.json");
+        assert!(!conf.contains("\"csp\": null"));
+        assert!(conf.contains("https://api.anthropic.com"));
+        assert!(conf.contains("https://api.openai.com"));
+        assert!(conf.contains("script-src 'self'"));
+        assert!(conf.contains("\"msi\""));
+        assert!(conf.contains("\"nsis\""));
+        let package = include_str!("../../package.json");
+        assert!(package.contains("dist:windows"));
+        assert!(package.contains("msi,nsis"));
+    }
 }

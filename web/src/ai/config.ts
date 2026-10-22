@@ -8,8 +8,8 @@
 //
 // Aviso honesto que el panel repite al usuario: un WebView no puede proteger una
 // clave frente a quien controle la máquina o inyecte código en la página. Por eso
-// el IDE (a) no recuerda la clave salvo que se le pida, (b) permite apuntar
-// `baseUrl` a un proxy propio y (c) nunca imprime la clave en errores ni logs.
+// el IDE (a) no recuerda la clave salvo que se le pida, (b) sólo habla con
+// los dos endpoints oficiales y (c) nunca imprime la clave en errores ni logs.
 
 import type { AiConfig, ProviderId } from "./types";
 
@@ -149,6 +149,7 @@ export function loadStoredConfig(
 export function loadConfig(store: KeyValueStore | null = defaultStore()): AiConfig {
   const stored = loadStoredConfig(store);
   const config: AiConfig = { ...DEFAULT_CONFIG, ...(stored ?? {}) };
+  config.baseUrl = PROVIDER_ENDPOINTS[config.provider];
   if (!config.apiKey) {
     config.apiKey = envKeyFor(config.provider);
   }
@@ -220,8 +221,10 @@ export function configProblems(config: AiConfig): string[] {
   if (!config.apiKey.trim()) {
     problems.push("Falta la clave de API del proveedor activo.");
   }
-  if (!/^https?:\/\//i.test(config.baseUrl.trim())) {
-    problems.push("La raíz de la API debe empezar por http:// o https://.");
+  const official = PROVIDER_ENDPOINTS[config.provider].replace(/\/+$/, "");
+  const actual = config.baseUrl.trim().replace(/\/+$/, "");
+  if (actual !== official) {
+    problems.push(`La raíz de la API tiene que ser ${official}.`);
   }
   const { min, max } = TOKEN_RANGE;
   if (!Number.isFinite(config.maxTokens) || config.maxTokens < min || config.maxTokens > max) {

@@ -70,6 +70,13 @@ export interface InferenceView {
   truncado: boolean;
 }
 
+/** Consejo del motor para un estado `Both` antes del colapso. */
+export interface ResolutionView {
+  raiz: string;
+  tactica: string;
+  recomendacion: string;
+}
+
 /** Vista de la memoria a largo plazo del cockpit. */
 export interface MemoryView {
   entradas: number;
@@ -111,8 +118,29 @@ export interface NeuralFrame {
   /** Último ciclo autopoiético; el Cockpit no lo pinta (siempre `null` hoy). */
   ciclo: unknown;
   semantica: SemanticView | null;
+  /** Consejos para contradicciones `⊤∧⊥` que el núcleo ya calculó. */
+  recomendaciones: ResolutionView[];
+  /** Dieciséis carriles enteros del embedding simbólico. */
+  embedding: number[];
+  /** Coseno contra `ברא`, en milésimas `[-1000, 1000]`. */
+  proximidad_mili: number;
+  /** Carta métrica del AST que el núcleo acaba de medir. */
+  topologia: TopoView;
   /** ¿Censo, memoria y semántica cuadran con el informe? */
   coherente: boolean;
+}
+
+/** Malla topológica en el JSON *snake_case* del marco. */
+export interface TopoView {
+  nodos: number;
+  solapes: number;
+  cohesion_mili: number;
+  /** `null` si el documento tiene menos de dos puntos. */
+  distancia: number | null;
+  omitidos: number;
+  foco: string;
+  vecino: string;
+  alerta: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   CLASS_LABEL,
@@ -19,20 +20,30 @@ import {
   type TurnView,
 } from "./engine";
 import {
-  workspaceDefaultRoot,
+  githubClone,
+  workspaceOpenDialog,
   workspaceReadDocument,
+  workspaceReadSource,
   workspaceTree,
   workspaceWriteDocument,
   type WorkspaceEntry,
   type WorkspaceTree,
 } from "./workspace";
+import { judgeAutoPatch } from "./autoApply";
+import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
+import { runWorkspaceRecipe, type RecipeName } from "./recipes";
+import { publishVeto } from "./topology";
 import BaraEditor from "./components/BaraEditor";
 import ChatPanel from "./components/ChatPanel";
 import CockpitPanel from "./components/CockpitPanel";
 import KernelConsole, { type ConsoleLine } from "./components/KernelConsole";
 import KernelPanel from "./components/KernelPanel";
 import VisualBuilder from "./components/VisualBuilder";
+import DeskHost from "./components/DeskWindows";
+import WelcomeGate from "./components/WelcomeGate";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
+import { readReveal, TOPOLOGY_CHANNEL } from "./topology";
+import { currentVista, openDeskWindow, type DeskVista } from "./windows";
 
 /** Máximo de filas de tokens que se pintan (rendimiento del WebView). */
 const MAX_ROWS = 1200;
@@ -49,6 +60,38 @@ interface EditorTab {
   saved: string;
 }
 
+/**
+ * Un fallo al pintar el núcleo o el lienzo se queda en ese panel.
+ * Sin esto, React desmonta el editor entero y la ventana queda en blanco.
+ */
+class PanelGuard extends Component<
+  { name: string; resetKey: boolean; children: ReactNode },
+  { message: string | null }
+> {
+  state = { message: null as string | null };
+
+  static getDerivedStateFromError(error: unknown): { message: string } {
+    return { message: error instanceof Error ? error.message : String(error) };
+  }
+
+  componentDidUpdate(previous: { resetKey: boolean }): void {
+    if (previous.resetKey !== this.props.resetKey && this.state.message !== null) {
+      this.setState({ message: null });
+    }
+  }
+
+  render(): ReactNode {
+    if (this.state.message !== null) {
+      return (
+        <p className="error">
+          El panel {this.props.name} se detuvo: {this.state.message}. El editor sigue activo.
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   /** Documentos abiertos; el activo se proyecta a `source`/`origin`. */
   const [tabs, setTabs] = useState<EditorTab[]>([]);
@@ -63,6 +106,10 @@ export default function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceTree | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  /** Puerta de apertura: carpeta local o clon de GitHub. */
+  const [showWelcome, setShowWelcome] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [cloneProgress, setCloneProgress] = useState<string | null>(null);
   /** Documento de ejemplo del kernel (contexto del asistente). */
   const [sample, setSample] = useState("");
   /** Visibilidad del panel lateral del asistente. */
@@ -73,6 +120,7 @@ export default function App() {
   const [visualOpen, setVisualOpen] = useState(false);
   /** Visibilidad del Cockpit de telemetría (censo, transmutador, Shoresh, caja negra). */
   const [cockpitOpen, setCockpitOpen] = useState(false);
+  const [idle, setIdle] = useState<IdleNotice | null>(null);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
   const [lastTurn, setLastTurn] = useState<TurnView | null>(null);
@@ -84,6 +132,16 @@ export default function App() {
   const [query, setQuery] = useState("ברא");
   /** Transcripción de la consola inferior (mismo oráculo, sin PTY). */
   const [consoleLog, setConsoleLog] = useState<ConsoleLine[]>([]);
+  /** Etiqueta de esta ventana. `null` hasta leerla. */
+  const [vista, setVista] = useState<DeskVista | null>(null);
+  /** Salto pedido por el grafo topológico. */
+  const [reveal, setReveal] = useState<{ path: string; line: number; token: number } | null>(null);
+  const revealToken = useRef(0);
+  const tabsRef = useRef(tabs);
+
+  useEffect(() => {
+    void currentVista().then(setVista);
+  }, []);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.path === activePath) ?? null,
@@ -91,6 +149,13 @@ export default function App() {
   );
   const source = activeTab?.source ?? "";
   const origin = activeTab?.path ?? "<editor>";
+  const sourceRef = useRef(source);
+  const pathRef = useRef(activePath);
+  const cursorLineRef = useRef(1);
+  useEffect(() => {
+    sourceRef.current = source;
+    pathRef.current = activePath;
+  }, [source, activePath]);
   const dirty = activeTab !== null && activeTab.source !== activeTab.saved;
 
   /** Invoca al backend del kernel y publica el resultado. */
@@ -147,15 +212,11 @@ export default function App() {
     };
   }, []);
 
-  /**
-   * Enumera una raíz del workspace. Sin texto usa el directorio de
-   * lanzamiento; el backend devuelve siempre la raíz canónica resultante.
-   */
-  const loadWorkspace = useCallback(async (root: string) => {
+  /** Vuelve a enumerar la raíz que el backend ya tiene activa. */
+  const refreshWorkspace = useCallback(async () => {
     setWorkspaceLoading(true);
     try {
-      const requested = root.trim().length > 0 ? root : await workspaceDefaultRoot();
-      const next = await workspaceTree(requested);
+      const next = await workspaceTree();
       setWorkspace(next);
       setWorkspaceRoot(next.root);
       setError(null);
@@ -169,8 +230,64 @@ export default function App() {
   // El explorador arranca en paralelo con el catálogo y el documento de
   // ejemplo: un fallo del árbol no impide analizar el texto del editor.
   useEffect(() => {
-    void loadWorkspace("");
-  }, [loadWorkspace]);
+    void refreshWorkspace();
+  }, [refreshWorkspace]);
+
+  const adoptWorkspace = useCallback((next: WorkspaceTree) => {
+    setWorkspace(next);
+    setWorkspaceRoot(next.root);
+    setError(null);
+    setShowWelcome(false);
+    setCloneProgress(null);
+  }, []);
+
+  /** El diálogo del sistema elige la carpeta; el WebView no manda la ruta. */
+  const pickFolder = useCallback(async () => {
+    setWorkspaceLoading(true);
+    setError(null);
+    try {
+      adoptWorkspace(await workspaceOpenDialog());
+    } catch (failure) {
+      const message = describeError(failure);
+      if (message !== "cancelado") {
+        setError(message);
+      }
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }, [adoptWorkspace]);
+
+  /** URL allowlist en Rust, carpeta por diálogo, `git clone` sin shell. */
+  const cloneRepository = useCallback(
+    async (url: string) => {
+      setImporting(true);
+      setCloneProgress("comprobando la URL…");
+      setError(null);
+      let unlisten: (() => void) | null = null;
+      try {
+        unlisten = await listen<string>("github-clone-progress", (event) => {
+          setCloneProgress(event.payload);
+        });
+      } catch {
+        unlisten = null;
+      }
+      try {
+        adoptWorkspace(await githubClone(url));
+      } catch (failure) {
+        const message = describeError(failure);
+        if (message !== "cancelado") {
+          setError(message);
+        }
+        setCloneProgress(null);
+      } finally {
+        if (unlisten) {
+          unlisten();
+        }
+        setImporting(false);
+      }
+    },
+    [adoptWorkspace],
+  );
 
   // Análisis en vivo con retardo: no se invoca al kernel en cada tecla.
   useEffect(() => {
@@ -202,7 +319,7 @@ export default function App() {
 
       setBusy(true);
       try {
-        const document = await workspaceReadDocument(workspaceRoot, entry.path);
+        const document = await workspaceReadDocument(entry.path);
         setTabs((current) =>
           current.some((tab) => tab.path === document.path)
             ? current
@@ -226,6 +343,76 @@ export default function App() {
     },
     [tabs, workspaceRoot],
   );
+
+  tabsRef.current = tabs;
+
+  /** Abre la fuente que el grafo señaló y coloca el cursor en su línea. */
+  const openFromGraph = useCallback(async (path: string, line: number) => {
+    const normalized = path.replaceAll("\\", "/");
+    if (!tabsRef.current.some((tab) => tab.path === normalized)) {
+      const document = await workspaceReadSource(normalized);
+      setTabs((current) =>
+        current.some((tab) => tab.path === document.path)
+          ? current
+          : [
+              ...current,
+              {
+                path: document.path,
+                name: document.name,
+                source: document.source,
+                saved: document.source,
+              },
+            ],
+      );
+    }
+    revealToken.current += 1;
+    setActivePath(normalized);
+    setReveal({ path: normalized, line, token: revealToken.current });
+    setError(null);
+  }, []);
+
+  useEffect(() => {
+    if (vista !== "main") {
+      return undefined;
+    }
+    const channel = new BroadcastChannel(TOPOLOGY_CHANNEL);
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      const request = readReveal(event.data);
+      if (request === null) {
+        return;
+      }
+      void openFromGraph(request.path, request.line).catch((reason: unknown) => {
+        setError(describeError(reason));
+      });
+    };
+    return () => channel.close();
+  }, [vista, openFromGraph]);
+
+  useEffect(() => {
+    if (vista !== "main") {
+      return undefined;
+    }
+    let alive = true;
+    const tick = () => {
+      void idleProposal()
+        .then((notice) => {
+          if (alive) {
+            setIdle(notice);
+          }
+        })
+        .catch(() => {
+          if (alive) {
+            setIdle(null);
+          }
+        });
+    };
+    tick();
+    const timer = window.setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [vista]);
 
   /** Cierra una pestaña; pide confirmación si hay cambios sin guardar. */
   const closeTab = useCallback(
@@ -263,11 +450,7 @@ export default function App() {
 
     setSaving(true);
     try {
-      const document = await workspaceWriteDocument(
-        workspaceRoot,
-        activeTab.path,
-        activeTab.source,
-      );
+      const document = await workspaceWriteDocument(activeTab.path, activeTab.source);
       // Se actualiza sólo la marca de guardado: si el usuario escribió
       // mientras se persistía, su texto vivo no se pisa.
       setTabs((current) =>
@@ -294,6 +477,42 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [saveActive]);
+
+  /** Receta del catálogo cerrado. No abre un shell. */
+  const runRecipe = useCallback(async (recipe: RecipeName) => {
+    setBusy(true);
+    try {
+      const report = await runWorkspaceRecipe(recipe);
+      const faults = report.lines.filter((line) => line.status === "false").slice(0, 6);
+      const reply = [
+        `${report.recipe} · salida ${report.exitCode} · ⊤ ${report.trueCount} · ⊥ ${report.falseCount} · ⊤∧⊥ ${report.bothCount} · ∅ ${report.neitherCount}${report.truncated ? " · recortado" : ""}${report.timedOut ? " · tiempo agotado" : ""}`,
+        ...faults.map((line) => `${line.glyph} ${line.text}`),
+      ].join("\n");
+      setConsoleLog((current) => [...current, { input: recipe, reply, roots: "" }].slice(-40));
+    } catch (failure) {
+      const reply = describeError(failure);
+      setConsoleLog((current) => [...current, { input: recipe, reply, roots: "" }].slice(-40));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+        return;
+      }
+      const recipe: RecipeName | null =
+        event.key === "1" ? "check" : event.key === "2" ? "test" : event.key === "3" ? "typecheck" : null;
+      if (recipe === null || vista !== "main") {
+        return;
+      }
+      event.preventDefault();
+      void runRecipe(recipe);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [runRecipe, vista]);
 
   /** Conversa un turno con el oráculo del kernel (`oracle_converse`). */
   const converse = useCallback(async (line: string) => {
@@ -395,6 +614,37 @@ export default function App() {
     [activePath],
   );
 
+  const judgeSuggestion = useCallback(async (patch: string) => {
+    const path = pathRef.current;
+    if (path === null || path.length === 0) {
+      return {
+        glyph: "⊥",
+        status: "false",
+        applied: false,
+        path: "",
+        line: cursorLineRef.current,
+        inserted: 0,
+        source: "",
+      };
+    }
+    const report = await judgeAutoPatch(path, cursorLineRef.current, sourceRef.current, patch);
+    if (report.applied) {
+      sourceRef.current = report.source;
+      cursorLineRef.current = report.line + Math.max(report.inserted, 1);
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.path === path || tab.path === report.path
+            ? { ...tab, source: report.source, saved: report.source }
+            : tab,
+        ),
+      );
+    }
+    if (report.status === "both") {
+      publishVeto(path, report.line > 0 ? report.line : cursorLineRef.current);
+    }
+    return report;
+  }, []);
+
   const applyCode = useCallback(
     (code: string) => {
       updateActiveSource((previous) =>
@@ -411,6 +661,13 @@ export default function App() {
     [analysis],
   );
 
+  if (vista === null) {
+    return <p className="muted">Abriendo ventana…</p>;
+  }
+  if (vista !== "main") {
+    return <DeskHost vista={vista} />;
+  }
+
   return (
     <div className={`app${aiOpen ? " ai-open" : ""}${kernelOpen ? " kernel-open" : ""}${cockpitOpen ? " cockpit-open" : ""}`}>
       <header className="bar">
@@ -418,7 +675,15 @@ export default function App() {
         <span className="tag">kernel v0.1.0-kernel · Shoresh</span>
         <span className="grow" />
         <span className="status">
-          {saving ? "guardando…" : busy ? "analizando…" : origin}
+          {importing
+            ? cloneProgress ?? "clonando…"
+            : workspaceLoading
+              ? "sincronizando workspace…"
+              : saving
+                ? "guardando…"
+                : busy
+                  ? "analizando…"
+                  : "workspace en sincronía"}
         </span>
         <button type="button" onClick={() => setKernelOpen(!kernelOpen)}>
           {kernelOpen ? "ocultar núcleo" : "núcleo AETHER-Ω"}
@@ -432,7 +697,40 @@ export default function App() {
         <button type="button" onClick={() => setAiOpen(!aiOpen)}>
           {aiOpen ? "ocultar asistente" : "asistente"}
         </button>
+        <button type="button" onClick={() => void openDeskWindow("topology").catch((reason: unknown) => setError(describeError(reason)))}>
+          ventana topología
+        </button>
+        <button type="button" onClick={() => void openDeskWindow("autopoiesis").catch((reason: unknown) => setError(describeError(reason)))}>
+          ventana ledger
+        </button>
+        <button type="button" onClick={() => void openDeskWindow("telemetry").catch((reason: unknown) => setError(describeError(reason)))}>
+          ventana cockpit
+        </button>
+        <button type="button" onClick={() => void openDeskWindow("ai-workspace").catch((reason: unknown) => setError(describeError(reason)))}>
+          ventana IA
+        </button>
       </header>
+      {idle ? (
+        <div className="idle-note" role="status">
+          <span>{idle.message}</span>
+          <button
+            type="button"
+            onClick={() => {
+              void idleApply().finally(() => setIdle(null));
+            }}
+          >
+            transmutar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void idleDismiss().finally(() => setIdle(null));
+            }}
+          >
+            ahora no
+          </button>
+        </div>
+      ) : null}
 
       {error ? <div className="error">{error}</div> : null}
 
@@ -442,13 +740,14 @@ export default function App() {
             <WorkspaceSidebar
               root={workspaceRoot}
               tree={workspace}
-              loading={workspaceLoading}
+              loading={workspaceLoading || importing}
               activePath={activePath}
-              onOpenRoot={(next) => {
-                void loadWorkspace(next);
+              onPickFolder={() => {
+                void pickFolder();
               }}
+              onClone={() => setShowWelcome(true)}
               onRefresh={() => {
-                void loadWorkspace(workspaceRoot);
+                void refreshWorkspace();
               }}
               onOpenFile={(entry) => {
                 void openWorkspaceFile(entry);
@@ -456,6 +755,19 @@ export default function App() {
             />
 
             <div className="editor-main">
+              {showWelcome ? (
+                <WelcomeGate
+                  busy={workspaceLoading || importing}
+                  progress={cloneProgress}
+                  onOpenFolder={() => {
+                    void pickFolder();
+                  }}
+                  onClone={(url) => {
+                    void cloneRepository(url);
+                  }}
+                  onDismiss={() => setShowWelcome(false)}
+                />
+              ) : null}
               <div className="tabs" role="tablist" aria-label="Documentos abiertos">
                 {tabs.map((tab) => {
                   const active = tab.path === activePath;
@@ -496,11 +808,12 @@ export default function App() {
                 <span className="status" title={origin}>
                   {activeTab ? origin : "sin documento"}
                   {dirty ? " · sin guardar" : ""}
+                  {activeTab && !activeTab.path.endsWith(".bara") ? " · lectura" : ""}
                 </span>
                 <span className="grow" />
                 <button
                   type="button"
-                  disabled={!dirty || saving}
+                  disabled={!dirty || saving || (activeTab !== null && !activeTab.path.endsWith(".bara"))}
                   onClick={() => {
                     void saveActive();
                   }}
@@ -510,7 +823,18 @@ export default function App() {
                 </button>
               </div>
 
-              <BaraEditor value={source} onChange={updateActiveSource} />
+              <BaraEditor
+                value={source}
+                path={activePath ?? ""}
+                revealLine={reveal !== null && reveal.path === activePath ? reveal.line : null}
+                revealToken={reveal?.token ?? 0}
+                onChange={updateActiveSource}
+                onCursor={(line) => {
+                  cursorLineRef.current = line;
+                }}
+              />
+              <details className="fold console-fold" open>
+                <summary>Consola del oráculo</summary>
               <KernelConsole
                 lines={consoleLog}
                 busy={busy}
@@ -519,19 +843,26 @@ export default function App() {
                 onSubmit={(line) => {
                   void converse(line);
                 }}
+                onRecipe={(recipe) => {
+                  void runRecipe(recipe);
+                }}
               />
+              </details>
             </div>
           </div>
         </section>
 
         <section className="pane">
-          <h2>Resumen</h2>
+          <details className="fold" open>
+            <summary>Resumen</summary>
           {analysis ? (
             <SummaryPanel analysis={analysis} />
           ) : (
             <p className="muted">Sin documento analizado.</p>
           )}
-          <h2>Inventario de raíces</h2>
+          </details>
+          <details className="fold" open>
+            <summary>Inventario de raíces</summary>
           {analysis && analysis.roots.length > 0 ? (
             <ul className="roots">
               {analysis.roots.map((root) => (
@@ -545,7 +876,9 @@ export default function App() {
           ) : (
             <p className="muted">Ninguna raíz reconocida.</p>
           )}
-          <h2>Catálogo del kernel</h2>
+          </details>
+          <details className="fold" open>
+            <summary>Catálogo del kernel</summary>
           <ul className="roots">
             {catalogue.map((entry) => (
               <li key={entry.glyph}>
@@ -554,10 +887,12 @@ export default function App() {
               </li>
             ))}
           </ul>
+          </details>
         </section>
 
         <section className="pane">
-          <h2>Oráculo del kernel</h2>
+          <details className="fold" open>
+            <summary>Oráculo del kernel</summary>
           <div className="row">
             <input
               className="path"
@@ -682,7 +1017,9 @@ export default function App() {
             <p className="muted">Sesión del oráculo no disponible.</p>
           )}
 
-          <h2>Biláttice de Belnap</h2>
+          </details>
+          <details className="fold" open>
+            <summary>Biláttice de Belnap</summary>
           {lattice ? (
             <ul className="roots">
               {lattice.values.map((point) => (
@@ -698,10 +1035,12 @@ export default function App() {
           ) : (
             <p className="muted">Sin biláttice servida por el kernel.</p>
           )}
+          </details>
         </section>
 
         <section className="pane tokens">
-          <h2>Tokens{analysis ? ` (${analysis.summary.total})` : ""}</h2>
+          <details className="fold" open>
+            <summary>Tokens{analysis ? ` (${analysis.summary.total})` : ""}</summary>
           <div className="scroll">
             <table>
               <thead>
@@ -731,14 +1070,19 @@ export default function App() {
               Se muestran las primeras {MAX_ROWS} de {analysis.tokens.length} tokens.
             </p>
           ) : null}
+          </details>
         </section>
       </main>
 
-      <KernelPanel open={kernelOpen} source={source} />
+      <PanelGuard name="núcleo" resetKey={kernelOpen}>
+        <KernelPanel open={kernelOpen} source={source} />
+      </PanelGuard>
 
       <CockpitPanel open={cockpitOpen} source={source} />
 
-      <VisualBuilder open={visualOpen} onUseCode={applyCode} />
+      <PanelGuard name="lienzo" resetKey={visualOpen}>
+        <VisualBuilder open={visualOpen} onUseCode={applyCode} />
+      </PanelGuard>
 
       <ChatPanel
         open={aiOpen}
@@ -749,6 +1093,7 @@ export default function App() {
         catalogue={catalogue}
         sample={sample}
         onUseCode={applyCode}
+        onJudge={judgeSuggestion}
       />
     </div>
   );

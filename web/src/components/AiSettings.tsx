@@ -118,9 +118,9 @@ export default function AiSettings({
         <span>Raíz de la API</span>
         <input
           spellCheck={false}
-          value={config.baseUrl}
-          placeholder={PROVIDER_ENDPOINTS[config.provider]}
-          onChange={(event) => onChange({ ...config, baseUrl: event.target.value })}
+          readOnly
+          value={PROVIDER_ENDPOINTS[config.provider]}
+          aria-label="Raíz oficial de la API"
         />
       </label>
 

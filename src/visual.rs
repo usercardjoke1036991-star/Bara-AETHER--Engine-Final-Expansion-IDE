@@ -520,6 +520,53 @@ pub fn visual_compose(lienzos: &[String]) -> Result<VisualBuildView, String> {
     Ok(project(&blueprint, &build))
 }
 
+/// Documento `.bara` que el kernel acepta emitir: programa y sello juntos.
+///
+/// No sale de `visual_build` cacheado en la interfaz. Se reconstruye en Rust
+/// y sólo existe si el ADN vuelve a verificar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct VisualEmission {
+    /// Programa *Shoresh* listo para el editor.
+    pub source: String,
+    /// Etiqueta que viaja dentro del ADN.
+    pub label: String,
+    /// Raíz de Merkle, hexadecimal.
+    pub root_hex: String,
+    /// Firma HMAC del ADN, hexadecimal.
+    pub signature_hex: String,
+}
+
+/// Traduce el lienzo otra vez y niega la emisión si el sello no verifica.
+pub fn visual_emit(json: &str) -> Result<VisualEmission, String> {
+    release(visual_build(json)?)
+}
+
+/// Igual que [`visual_emit`], sobre la composición ordenada de varios lienzos.
+pub fn visual_emit_composed(lienzos: &[String]) -> Result<VisualEmission, String> {
+    release(visual_compose(lienzos)?)
+}
+
+/// La emisión exige verificación, raíz y firma de 32 bytes (64 hex).
+fn release(view: VisualBuildView) -> Result<VisualEmission, String> {
+    if !view.report.verified {
+        return Err("el ADN no verifica: el documento .bara no se emite".to_string());
+    }
+    if view.report.root_hex.len() != 64 || view.report.signature_hex.len() != 64 {
+        return Err("el sello está incompleto: el documento .bara no se emite".to_string());
+    }
+    if view.source.trim().is_empty() {
+        return Err("el kernel no produjo programa Shoresh".to_string());
+    }
+    Ok(VisualEmission {
+        source: view.source,
+        label: view.label,
+        root_hex: view.report.root_hex,
+        signature_hex: view.report.signature_hex,
+    })
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Pruebas: contrato del lienzo, sello determinista y contrato del IPC
 // ─────────────────────────────────────────────────────────────────────────
@@ -707,5 +754,19 @@ mod tests {
         assert_eq!(catalogo["limits"]["maxBlocks"], MAX_BLOCKS);
         assert_eq!(catalogo["limits"]["sealThreshold"], SEAL_THRESHOLD);
         assert!(serde_json::to_value(visual_sample()).is_ok());
+    }
+
+    #[test]
+    fn no_se_emite_un_bara_sin_sello_verificado() {
+        let emitido = visual_emit(&visual_sample()).expect("el ejemplo firma");
+        assert!(!emitido.source.is_empty());
+        assert_eq!(emitido.root_hex.len(), 64);
+        assert_eq!(emitido.signature_hex.len(), 64);
+        assert!(visual_emit("{").is_err(), "JSON roto no emite");
+        assert!(visual_emit("").is_err(), "vacío no emite");
+        let compuesto = visual_emit_composed(&[visual_sample(), MINIMO.to_string()])
+            .expect("la composición firma");
+        assert!(compuesto.label.contains("compuesto") || !compuesto.source.is_empty());
+        assert_eq!(compuesto.signature_hex.len(), 64);
     }
 }

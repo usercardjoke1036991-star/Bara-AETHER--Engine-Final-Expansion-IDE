@@ -126,13 +126,16 @@ export function readDocument(path: string): Promise<string> {
 
 /** Normaliza cualquier fallo (IPC, disco, serialización) a una línea. */
 export function describeError(error: unknown): string {
-  if (typeof error === "string") {
-    return error;
+  const message =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : "error desconocido al invocar al kernel";
+  if (message.includes("reading 'invoke'") || message.includes("__TAURI_INTERNALS__")) {
+    return "Esta pestaña del navegador no es la ventana del IDE: no tiene el kernel. Ábrelo con la aplicación de escritorio.";
   }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "error desconocido al invocar al kernel";
+  return message;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -230,6 +233,8 @@ export interface SessionStatus {
   qubits: number;
   meshPeers: number;
   lastReply: string | null;
+  /** Identificador de la carpeta activa. Vacío si el backend no lo estampó. */
+  workspaceId: string;
 }
 
 /** Resultado de una operación de sesión: turno, rebobinados y estado. */

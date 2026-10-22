@@ -20,6 +20,8 @@ import { baraSystemPrompt } from "../ai/prompt";
 import { listModels, sendChat } from "../ai/providers";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
+import type { AutoApplyReport } from "../autoApply";
+import { loadLocalWeights, localComplete } from "../offline";
 import { shoreshTranslate, type Analysis, type RootEntry, type Translation } from "../engine";
 import AiSettings from "./AiSettings";
 import AssistantText, { codeBlocks } from "./AssistantText";
@@ -37,7 +39,8 @@ function reasonOf(error: unknown): string {
 export interface ChatPanelProps {
   /** Visibilidad del panel (lo gobierna `App`). */
   open: boolean;
-  onClose: () => void;
+  /** Ausente en la ventana dedicada: allí el panel no se cierra. */
+  onClose?: () => void;
   /** Origen del documento abierto: ruta del disco o `<editor>`. */
   documentName: string;
   /** Fuente del documento abierto: lo que se inyecta como contexto. */
@@ -48,6 +51,8 @@ export interface ChatPanelProps {
   sample: string;
   /** Envía un bloque de código al editor del IDE. */
   onUseCode: (code: string) => void;
+  /** Pide al núcleo el veto de Belnap y, si es `∅`, la escritura. */
+  onJudge: (patch: string) => Promise<AutoApplyReport>;
 }
 
 export default function ChatPanel({
@@ -59,6 +64,7 @@ export default function ChatPanel({
   catalogue,
   sample,
   onUseCode,
+  onJudge,
 }: ChatPanelProps) {
   const [config, setConfig] = useState<AiConfig>(() => loadConfig());
   const [settings, setSettings] = useState(false);
@@ -73,6 +79,15 @@ export default function ChatPanel({
   const [report, setReport] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [offline, setOffline] = useState(false);
+  const [weights, setWeights] = useState<string | null>(null);
+  const [autoApply, setAutoApply] = useState(() => {
+    try {
+      return localStorage.getItem("bara.autoApply") === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const abortRef = useRef<AbortController | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
@@ -91,6 +106,14 @@ export default function ChatPanel({
       draftRef.current?.focus();
     }
   }, [open, settings]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("bara.autoApply", autoApply ? "1" : "0");
+    } catch {
+      // El almacén puede estar cerrado. El interruptor sigue valiendo en esta sesión.
+    }
+  }, [autoApply]);
 
   /** Adjunta archivos (arrastrados, pegados o elegidos) al mensaje en curso. */
   const attach = useCallback(
@@ -132,6 +155,22 @@ export default function ChatPanel({
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      if (offline) {
+        const local = await localComplete(text);
+        setMessages((previous) => [
+          ...previous,
+          {
+            id: newId(),
+            role: "assistant",
+            text: local.reply,
+            images: [],
+            model: local.name,
+            createdAt: Date.now(),
+            error: null,
+          },
+        ]);
+        return;
+      }
       const result = await sendChat(config, history, system, controller.signal);
       const id = newId();
       const usage = result.usage;
@@ -150,6 +189,28 @@ export default function ChatPanel({
       if (usage) {
         setUsages((previous) => ({ ...previous, [id]: usage }));
       }
+      if (autoApply) {
+        const blocks = codeBlocks(result.text);
+        for (const block of blocks) {
+          try {
+            const report = await onJudge(block);
+            if (report.status === "both") {
+              setNotice(
+                `Veto ${report.glyph}: el bloque contradice el archivo. Hace falta intervención manual.`,
+              );
+              break;
+            }
+            if (report.applied) {
+              setNotice(`Auto-Apply ${report.glyph}: escrito en ${report.path}:${report.line}.`);
+            } else {
+              setNotice(`Auto-Apply ${report.glyph}: el bloque no se escribió.`);
+            }
+          } catch (error) {
+            setNotice(reasonOf(error));
+            break;
+          }
+        }
+      }
     } catch (error) {
       setMessages((previous) => [
         ...previous,
@@ -167,7 +228,7 @@ export default function ChatPanel({
       abortRef.current = null;
       setPending(false);
     }
-  }, [attachments, config, draft, messages, pending, system]);
+  }, [attachments, autoApply, config, draft, messages, offline, onJudge, pending, system]);
 
   /** Cancela el turno en curso (el proveedor corta en cuanto se interrumpe). */
   const stop = useCallback(() => {
@@ -256,13 +317,44 @@ export default function ChatPanel({
     >
       <header className="ai-head">
         <h2>Asistente</h2>
+        <button
+          type="button"
+          className={offline ? "ai-offline-on" : ""}
+          aria-pressed={offline}
+          onClick={() => setOffline((current) => !current)}
+        >
+          Offline
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void loadLocalWeights()
+              .then((card) => {
+                setWeights(`${card.name} · ${card.architecture}`);
+                setNotice(null);
+              })
+              .catch((error: unknown) => setNotice(reasonOf(error)));
+          }}
+        >
+          GGUF
+        </button>
+        <button
+          type="button"
+          className={autoApply ? "ai-auto-on" : ""}
+          aria-pressed={autoApply}
+          onClick={() => setAutoApply((current) => !current)}
+        >
+          Auto-Apply
+        </button>
         <span className="grow" />
         <button type="button" onClick={() => setSettings(!settings)}>
           {settings ? "chat" : "ajustes"}
         </button>
-        <button type="button" onClick={onClose}>
-          cerrar
-        </button>
+        {onClose ? (
+          <button type="button" onClick={onClose}>
+            cerrar
+          </button>
+        ) : null}
       </header>
 
       {settings ? (
@@ -300,6 +392,10 @@ export default function ChatPanel({
                   .
                 </p>
                 <p className="muted">{describeConfig(config)}</p>
+                <p className="muted">
+                  Offline responde con el núcleo y la cabecera GGUF
+                  {weights ? ` (${weights})` : ""}. No abre la red.
+                </p>
                 <p className="muted">
                   Adjunte capturas con el botón «imagen», arrástrelas al panel o péguelas con
                   Ctrl+V: hasta {MAX_ATTACHMENTS} por mensaje.

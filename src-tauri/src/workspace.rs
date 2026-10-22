@@ -150,47 +150,257 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
     })
 }
 
+/// Tope de carpetas abiertas a la vez. Cada una conserva su propia jaula.
+pub const ROOT_CAP: usize = 8;
+
+/// Una carpeta del estante, tal como la pinta el panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRootView {
+    /// Identificador estable: FNV-1a de la ruta canónica, no un reloj.
+    pub id: String,
+    /// Ruta canónica.
+    pub path: String,
+    /// Nombre de la carpeta.
+    pub name: String,
+    /// ¿Es la raíz cuyos documentos y cuyo ledger están activos?
+    pub active: bool,
+}
+
+/// Estante de carpetas y la que está activa.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceShelf {
+    /// Identificador de la raíz activa. Vacío si no hay ninguna.
+    pub active_id: String,
+    /// Carpetas abiertas, en orden de llegada.
+    pub roots: Vec<WorkspaceRootView>,
+}
+
+struct RootSlot {
+    id: String,
+    path: String,
+    name: String,
+    /// Tic lógico del último uso. No es un reloj de pared.
+    used: u64,
+}
+
+struct Shelf {
+    slots: Vec<RootSlot>,
+    active: usize,
+    clock: u64,
+}
+
 /// Raíz canónica que los comandos de disco —nuevos y heredados— comparten.
 ///
-/// La fija el explorador (`tree` / lectura / escritura) y, al arrancar, el
-/// directorio de lanzamiento. `read_document` y `analyze_file` no eligen otra:
-/// sólo abren un `.bara` que, ya canonizado, queda dentro de esta raíz.
+/// El estante puede guardar varias carpetas. Sólo una está activa: `read_document`
+/// y `analyze_file` no eligen otra. Cada ruta, ya canonizada, sigue presa de
+/// su propia raíz.
 pub struct ActiveWorkspace {
-    root: Mutex<Option<String>>,
+    shelf: Mutex<Shelf>,
+}
+
+/// Identificador determinista de una ruta canónica.
+pub fn root_id(path: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn folder_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
 }
 
 impl ActiveWorkspace {
     /// Raíz inicial: el workspace del repositorio, ya canonizado.
     pub fn bootstrap() -> Self {
-        let root = default_root()
+        let mut shelf = Shelf {
+            slots: Vec::new(),
+            active: 0,
+            clock: 0,
+        };
+        if let Some(path) = default_root()
             .ok()
             .and_then(|raw| resolve_root(&raw).ok())
-            .map(|path| path.display().to_string());
+            .map(|path| path.display().to_string())
+        {
+            shelf.admit(path);
+        }
         Self {
-            root: Mutex::new(root),
+            shelf: Mutex::new(shelf),
         }
     }
 
-    /// Sustituye la raíz activa por una ya canonizada por el explorador.
-    pub fn set(&self, root: String) {
-        if let Ok(mut guard) = self.root.lock() {
-            *guard = Some(root);
+    /// Admite una raíz ya canonizada y la vuelve la activa.
+    ///
+    /// Si ya estaba en el estante, sólo se activa y se marca como recién usada.
+    /// Si el estante está lleno, sale la carpeta inactiva con el tic más bajo.
+    /// Devuelve la ruta expulsada para que el llamador ejecute `forget`.
+    pub fn set(&self, root: String) -> Option<String> {
+        match self.shelf.lock() {
+            Ok(mut shelf) => shelf.admit(root),
+            Err(_) => None,
         }
+    }
+
+    /// Estante vacío, sólo para pruebas de la política LRU.
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            shelf: Mutex::new(Shelf {
+                slots: Vec::new(),
+                active: 0,
+                clock: 0,
+            }),
+        }
+    }
+
+    /// Estante completo, para el panel.
+    pub fn list(&self) -> Result<WorkspaceShelf, String> {
+        let shelf = self
+            .shelf
+            .lock()
+            .map_err(|_| "workspace no disponible (cerrojo envenenado)".to_string())?;
+        Ok(shelf.view())
+    }
+
+    /// Activa una carpeta por su identificador. No acepta una ruta del WebView.
+    pub fn activate(&self, id: &str) -> Result<WorkspaceShelf, String> {
+        let mut shelf = self
+            .shelf
+            .lock()
+            .map_err(|_| "workspace no disponible (cerrojo envenenado)".to_string())?;
+        let Some(index) = shelf.slots.iter().position(|slot| slot.id == id) else {
+            return Err("esa carpeta no está en el estante".to_string());
+        };
+        shelf.active = index;
+        let used = shelf.tick();
+        if let Some(slot) = shelf.slots.get_mut(index) {
+            slot.used = used;
+        }
+        Ok(shelf.view())
+    }
+
+    /// Cierra una carpeta y devuelve su ruta canónica para soltar la malla.
+    ///
+    /// La última no se cierra: el IDE no se queda sin jaula y no se libera
+    /// una memoria que sigue siendo la activa.
+    pub fn release(&self, id: &str) -> Result<(String, WorkspaceShelf), String> {
+        let mut shelf = self
+            .shelf
+            .lock()
+            .map_err(|_| "workspace no disponible (cerrojo envenenado)".to_string())?;
+        if shelf.slots.len() <= 1 {
+            return Err("la última carpeta del estante no se cierra".to_string());
+        }
+        let Some(index) = shelf.slots.iter().position(|slot| slot.id == id) else {
+            return Err("esa carpeta no está en el estante".to_string());
+        };
+        let path = shelf
+            .slots
+            .get(index)
+            .map(|slot| slot.path.clone())
+            .unwrap_or_default();
+        shelf.slots.remove(index);
+        if shelf.active > index {
+            shelf.active -= 1;
+        } else if shelf.active == index {
+            shelf.active = index.min(shelf.slots.len().saturating_sub(1));
+        }
+        Ok((path, shelf.view()))
     }
 
     /// Raíz activa, o error si el cerrojo está envenenado o aún no hay ninguna.
     pub fn get(&self) -> Result<String, String> {
-        match self.root.lock() {
-            Ok(guard) => guard
-                .clone()
+        match self.shelf.lock() {
+            Ok(shelf) => shelf
+                .slots
+                .get(shelf.active)
+                .map(|slot| slot.path.clone())
                 .ok_or_else(|| "no hay un workspace activo".to_string()),
             Err(_) => Err("workspace no disponible (cerrojo envenenado)".to_string()),
         }
     }
 
     /// Lee un `.bara` confinándolo a la raíz activa.
+    ///
+    /// El IPC de producción usa [`read`], que sólo acepta rutas relativas.
+    /// Esta entrada conserva la prueba del absoluto que sigue dentro de la jaula.
+    #[cfg(test)]
     pub fn read_path(&self, path: &str) -> Result<WorkspaceDocument, String> {
         open_document(&self.get()?, path)
+    }
+}
+
+impl Shelf {
+    fn tick(&mut self) -> u64 {
+        self.clock = self.clock.saturating_add(1);
+        self.clock
+    }
+
+    /// `Some` es la ruta canónica expulsada por LRU. `None` si nadie salió.
+    fn admit(&mut self, path: String) -> Option<String> {
+        if let Some(index) = self.slots.iter().position(|slot| slot.path == path) {
+            self.active = index;
+            let used = self.tick();
+            if let Some(slot) = self.slots.get_mut(index) {
+                slot.used = used;
+            }
+            return None;
+        }
+        let mut evicted = None;
+        if self.slots.len() >= ROOT_CAP {
+            let drop_at = self
+                .slots
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != self.active)
+                .min_by_key(|(index, slot)| (slot.used, *index))
+                .map(|(index, _)| index);
+            if let Some(drop_at) = drop_at {
+                let victim = self.slots.remove(drop_at);
+                evicted = Some(victim.path);
+                if self.active > drop_at {
+                    self.active -= 1;
+                }
+            }
+        }
+        let used = self.tick();
+        self.slots.push(RootSlot {
+            id: root_id(&path),
+            name: folder_name(&path),
+            path,
+            used,
+        });
+        self.active = self.slots.len().saturating_sub(1);
+        evicted
+    }
+
+    fn view(&self) -> WorkspaceShelf {
+        WorkspaceShelf {
+            active_id: self
+                .slots
+                .get(self.active)
+                .map(|slot| slot.id.clone())
+                .unwrap_or_default(),
+            roots: self
+                .slots
+                .iter()
+                .enumerate()
+                .map(|(index, slot)| WorkspaceRootView {
+                    id: slot.id.clone(),
+                    path: slot.path.clone(),
+                    name: slot.name.clone(),
+                    active: index == self.active,
+                })
+                .collect(),
+        }
     }
 }
 
@@ -198,7 +408,9 @@ impl ActiveWorkspace {
 ///
 /// Rechaza `..`, cualquier componente que no sea un nombre normal en rutas
 /// relativas, extensiones que no sean `.bara` y todo lo que, una vez
-/// canonizado (enlaces incluidos), quede fuera de la raíz.
+/// canonizado (enlaces incluidos), quede fuera de la raíz. El IPC no la usa:
+/// los comandos llaman a [`read`] y [`write`], que exigen una ruta relativa.
+#[cfg(test)]
 pub fn open_document(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
     if path.trim().is_empty() {
         return Err("la ruta del documento está vacía".to_string());
@@ -213,6 +425,46 @@ pub fn open_document(root: &str, path: &str) -> Result<WorkspaceDocument, String
     } else {
         read(root, path)
     }
+}
+
+/// Extensiones que el grafo y el salto al editor pueden leer. La escritura sigue
+/// siendo sólo `.bara`.
+const SOURCE_EXTENSIONS: [&str; 14] = [
+    "bara", "rs", "py", "go", "sol", "c", "h", "cpp", "cc", "hpp", "js", "jsx", "ts", "tsx",
+];
+
+/// ¿El archivo es una fuente del proyecto, dentro de la jaula de lectura?
+pub(crate) fn is_project_source(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            SOURCE_EXTENSIONS
+                .iter()
+                .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+        })
+}
+
+/// Lee una fuente del proyecto (`.bara` o un lenguaje del grafo).
+///
+/// Misma jaula que [`read`]: ruta relativa, sin `..`, y la forma canónica tiene
+/// que seguir dentro de la raíz. No escribe.
+pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
+    let canonical_root = resolve_root(root)?;
+    let canonical = resolve_member(&canonical_root, relative)?;
+    if !is_project_source(&canonical) {
+        return Err(format!(
+            "«{relative}» no es una fuente del proyecto"
+        ));
+    }
+    ensure_file_size(&canonical)?;
+    let source = fs::read_to_string(&canonical)
+        .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
+    Ok(WorkspaceDocument {
+        root: canonical_root.display().to_string(),
+        path: normalize_relative(relative),
+        name: file_name(&canonical),
+        source,
+    })
 }
 
 /// Lee un `.bara` del workspace, validando que la ruta pertenezca a la raíz.
@@ -248,6 +500,35 @@ pub fn write(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocume
     fs::write(&canonical, source)
         .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
 
+    Ok(WorkspaceDocument {
+        root: canonical_root.display().to_string(),
+        path: normalize_relative(relative),
+        name: file_name(&canonical),
+        source: source.to_string(),
+    })
+}
+
+/// Guarda una fuente del proyecto (`.bara` o una extensión del lote).
+///
+/// La usa el modo autónomo después de un veredicto `∅`. La jaula es la misma
+/// que [`write`]: ruta relativa, sin `..`, y la forma canónica dentro de la raíz.
+pub fn write_source(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocument, String> {
+    let canonical_root = resolve_root(root)?;
+    if !is_project_source(Path::new(relative)) {
+        return Err(format!("«{relative}» no es una fuente del proyecto"));
+    }
+    if source.len() as u64 > MAX_FILE_BYTES {
+        return Err(format!(
+            "el documento supera la cota de {} bytes del editor",
+            MAX_FILE_BYTES
+        ));
+    }
+    let canonical = resolve_for_write(&canonical_root, relative)?;
+    if !is_project_source(&canonical) {
+        return Err(format!("«{relative}» no es una fuente del proyecto"));
+    }
+    fs::write(&canonical, source)
+        .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
     Ok(WorkspaceDocument {
         root: canonical_root.display().to_string(),
         path: normalize_relative(relative),
@@ -371,6 +652,7 @@ fn is_excluded(name: &str) -> bool {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Abre un `.bara` absoluto sólo si su forma canónica sigue dentro de la raíz.
+#[cfg(test)]
 fn open_absolute(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
     let canonical_root = resolve_root(root)?;
     let canonical = fs::canonicalize(Path::new(path))
@@ -394,6 +676,7 @@ fn open_absolute(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
 }
 
 /// `..` no se normaliza: se rechaza antes de tocar el disco.
+#[cfg(test)]
 fn has_parent_component(path: &str) -> bool {
     Path::new(path)
         .components()
@@ -600,11 +883,92 @@ mod tests {
         assert!(open_document(root_s, dotted.to_str().expect("utf-8")).is_err());
 
         let active = ActiveWorkspace::bootstrap();
-        active.set(root_s.to_string());
+        let _ = active.set(root_s.to_string());
         assert_eq!(active.read_path("ok.bara").expect("relativa").source, "ברא");
         assert!(active.read_path(outside.join("secreto.bara").to_str().expect("utf-8")).is_err());
 
         fs::remove_dir_all(&root).expect("limpiar raíz");
         fs::remove_dir_all(&outside).expect("limpiar fuera");
+    }
+
+    #[test]
+    fn el_estante_alterna_carpetas_sin_mezclar_sus_jaulas() {
+        let first = scratch("estante-a");
+        let second = scratch("estante-b");
+        fs::write(first.join("a.bara"), "uno").expect("a");
+        fs::write(second.join("b.bara"), "dos").expect("b");
+        let first_s = first.to_str().expect("utf-8").to_string();
+        let second_s = second.to_str().expect("utf-8").to_string();
+
+        let active = ActiveWorkspace::bootstrap();
+        let _ = active.set(first_s.clone());
+        let _ = active.set(second_s.clone());
+        assert_eq!(active.get().expect("activa"), second_s);
+        assert_eq!(active.read_path("b.bara").expect("b").source, "dos");
+        assert!(active.read_path("a.bara").is_err());
+
+        let shelf = active.list().expect("estante");
+        assert!(shelf.roots.iter().any(|slot| slot.path == first_s));
+        assert!(shelf.roots.iter().any(|slot| slot.path == second_s));
+        let first_id = root_id(&first_s);
+        assert_ne!(first_id, root_id(&second_s));
+        active.activate(&first_id).expect("volver");
+        assert_eq!(active.get().expect("primera"), first_s);
+        assert_eq!(active.read_path("a.bara").expect("a").source, "uno");
+        assert!(active.read_path("b.bara").is_err());
+
+        let before = active.list().expect("antes").roots.len();
+        active.release(&root_id(&second_s)).expect("cerrar");
+        assert_eq!(active.list().expect("queda").roots.len(), before - 1);
+        loop {
+            let current = active.list().expect("drenar");
+            if current.roots.len() <= 1 {
+                assert!(active.release(&current.active_id).is_err());
+                break;
+            }
+            let extra = current
+                .roots
+                .iter()
+                .find(|slot| !slot.active)
+                .expect("inactiva");
+            let extra_id = extra.id.clone();
+            active.release(&extra_id).expect("cerrar extra");
+        }
+        assert_eq!(active.read_path("a.bara").expect("sigue").source, "uno");
+
+        fs::remove_dir_all(&first).expect("limpiar a");
+        fs::remove_dir_all(&second).expect("limpiar b");
+    }
+
+    #[test]
+    fn la_expulsion_del_estante_es_lru() {
+        let active = ActiveWorkspace::empty();
+        let mut paths = Vec::new();
+        for index in 0..ROOT_CAP {
+            let dir = scratch(&format!("lru-{index}"));
+            let path = resolve_root(dir.to_str().expect("utf-8"))
+                .expect("canon")
+                .display()
+                .to_string();
+            assert!(active.set(path.clone()).is_none());
+            paths.push((dir, path));
+        }
+        assert!(active.set(paths[0].1.clone()).is_none());
+        let extra_dir = scratch("lru-extra");
+        let extra = resolve_root(extra_dir.to_str().expect("utf-8"))
+            .expect("canon")
+            .display()
+            .to_string();
+        let evicted = active.set(extra.clone()).expect("la novena expulsa");
+        assert_eq!(evicted, paths[1].1);
+        let shelf = active.list().expect("estante");
+        assert!(shelf.roots.iter().all(|slot| slot.path != paths[1].1));
+        assert!(shelf.roots.iter().any(|slot| slot.path == paths[0].1));
+        assert!(shelf.roots.iter().any(|slot| slot.path == extra));
+
+        for (dir, _) in paths {
+            fs::remove_dir_all(dir).expect("limpiar");
+        }
+        fs::remove_dir_all(extra_dir).expect("limpiar extra");
     }
 }

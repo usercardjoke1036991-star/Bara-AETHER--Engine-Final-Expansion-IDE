@@ -1,0 +1,346 @@
+// Vistas de las ventanas secundarias.
+//
+// Comparten el mismo documento Vite. La etiqueta de la ventana elige el
+// layout. Los números salen de los comandos ya tipados: el marco neuronal
+// en snake_case y el informe de autopoiesis en camelCase.
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { kernelAutopoiesis, type AutopoiesisReport } from "../aether";
+import { describeError, sampleGenesis } from "../engine";
+import { inspectMediaDialog } from "../media";
+import {
+  workspaceActivate,
+  workspaceCloseRoot,
+  workspaceOpenDialog,
+  workspaceReadDocument,
+  workspaceRoots,
+  workspaceTree,
+  type WorkspaceEntry,
+  type WorkspaceShelf,
+  type WorkspaceTree,
+} from "../workspace";
+import type { DeskVista } from "../windows";
+import ChatPanel from "./ChatPanel";
+import CockpitPanel from "./CockpitPanel";
+import FileTree from "./FileTree";
+import TopologyGraph from "./TopologyGraph";
+
+const MAX_TEXT_BYTES = 256 * 1024;
+
+/** Título visible de cada vista. */
+const TITLES: Record<Exclude<DeskVista, "main">, string> = {
+  topology: "Topología",
+  autopoiesis: "Autopoiesis y ledger",
+  telemetry: "Cockpit telemétrico",
+  "ai-workspace": "Asistencia multimodal",
+};
+
+export default function DeskHost({ vista }: { vista: Exclude<DeskVista, "main"> }) {
+  return (
+    <div className="desk">
+      <header className="bar">
+        <h1>{TITLES[vista]}</h1>
+        <span className="tag">ventana {vista}</span>
+      </header>
+      {vista === "topology" ? <TopologyDesk /> : null}
+      {vista === "autopoiesis" ? <AutopoiesisDesk /> : null}
+      {vista === "telemetry" ? <CockpitPanel open source="" /> : null}
+      {vista === "ai-workspace" ? <AiDesk /> : null}
+    </div>
+  );
+}
+
+function TopologyDesk() {
+  return (
+    <section className="desk-body topo-desk">
+      <TopologyGraph />
+    </section>
+  );
+}
+
+function AutopoiesisDesk() {
+  const [source, setSource] = useState("");
+  const [report, setReport] = useState<AutopoiesisReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const project = useCallback((text: string) => {
+    setError(null);
+    kernelAutopoiesis(text)
+      .then(setReport)
+      .catch((reason: unknown) => setError(describeError(reason)));
+  }, []);
+
+  useEffect(() => {
+    sampleGenesis()
+      .then((sample) => {
+        setSource(sample);
+        project(sample);
+      })
+      .catch((reason: unknown) => setError(describeError(reason)));
+  }, [project]);
+
+  return (
+    <section className="desk-body">
+      <textarea
+        className="desk-source"
+        value={source}
+        spellCheck={false}
+        aria-label="Documento para el ledger"
+        onChange={(event) => setSource(event.target.value)}
+      />
+      <button type="button" onClick={() => project(source)}>
+        Proyectar ledger
+      </button>
+      {error ? <p className="error">{error}</p> : null}
+      {report ? (
+        <dl className="desk-facts">
+          <div>
+            <dt>Atención total</dt>
+            <dd>{report.attentionTotal}</dd>
+          </div>
+          <div>
+            <dt>Raíz prioritaria</dt>
+            <dd>{report.priorityRoot || "—"}</dd>
+          </div>
+          <div>
+            <dt>Generación</dt>
+            <dd>{report.generation}</dd>
+          </div>
+          <div>
+            <dt>Contradicciones</dt>
+            <dd>{report.contradictions}</dd>
+          </div>
+          <div>
+            <dt>Veredicto</dt>
+            <dd>{report.verdict}</dd>
+          </div>
+          <div>
+            <dt>Malla</dt>
+            <dd>
+              {report.topology.nodes} nodos · cohesión {report.topology.cohesionMilli}
+              {report.topology.alert ? " · ⊤∧⊥" : ""}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
+      {report && report.axioms.length > 0 ? (
+        <table className="desk-table">
+          <thead>
+            <tr>
+              <th>Raíz</th>
+              <th>Atención</th>
+              <th>Valencia</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.axioms.map((axiom) => (
+              <tr key={`${axiom.root}-${axiom.generation}`}>
+                <td>{axiom.root}</td>
+                <td>{axiom.attention}</td>
+                <td>{axiom.valence.key}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+    </section>
+  );
+}
+
+function AiDesk() {
+  const [tree, setTree] = useState<WorkspaceTree | null>(null);
+  const [shelf, setShelf] = useState<WorkspaceShelf | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [documentName, setDocumentName] = useState("<asistencia>");
+  const [documentSource, setDocumentSource] = useState("");
+  const [videoName, setVideoName] = useState<string | null>(null);
+  const [mediaNote, setMediaNote] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    workspaceRoots()
+      .then((next) => {
+        setShelf(next);
+        return workspaceTree();
+      })
+      .then(setTree)
+      .catch((reason: unknown) => setError(describeError(reason)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const context = useMemo(() => {
+    const note = videoName
+      ? `\n\n[video local «${videoName}»: previsualización en la ventana, sin enviar píxeles]`
+      : "";
+    return `${documentSource}${note}`;
+  }, [documentSource, videoName]);
+
+  function openEntry(entry: WorkspaceEntry) {
+    if (!tree || !entry.bara) {
+      return;
+    }
+    workspaceReadDocument(entry.path)
+      .then((document) => {
+        setDocumentName(document.path);
+        setDocumentSource(document.source);
+        setError(null);
+      })
+      .catch((reason: unknown) => setError(describeError(reason)));
+  }
+
+  function attachText(file: File) {
+    if (file.size > MAX_TEXT_BYTES) {
+      setError("el fragmento supera 256 KB");
+      return;
+    }
+    file
+      .text()
+      .then((text) => {
+        setDocumentName(file.name);
+        setDocumentSource(text);
+        setError(null);
+      })
+      .catch((reason: unknown) => setError(describeError(reason)));
+  }
+
+  return (
+    <div className="desk-split">
+      <aside className="workspace">
+        <ul className="shelf">
+          {(shelf?.roots ?? []).map((slot) => (
+            <li key={slot.id}>
+              <button
+                type="button"
+                className={slot.active ? "shelf-active" : undefined}
+                onClick={() => {
+                  workspaceActivate(slot.id)
+                    .then(() => reload())
+                    .catch((reason: unknown) => setError(describeError(reason)));
+                }}
+              >
+                {slot.name}
+              </button>
+              <button
+                type="button"
+                aria-label={`Cerrar ${slot.name}`}
+                onClick={() => {
+                  workspaceCloseRoot(slot.id)
+                    .then((next) => {
+                      setShelf(next);
+                      reload();
+                    })
+                    .catch((reason: unknown) => setError(describeError(reason)));
+                }}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="workspace-actions">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => {
+              setLoading(true);
+              workspaceOpenDialog()
+                .then((next) => {
+                  setTree(next);
+                  setError(null);
+                })
+                .catch((reason: unknown) => {
+                  const message = describeError(reason);
+                  if (message !== "cancelado") {
+                    setError(message);
+                  }
+                })
+                .finally(() => setLoading(false));
+            }}
+          >
+            Añadir carpeta
+          </button>
+        </div>
+        {error ? <p className="error">{error}</p> : null}
+        <div className="workspace-tree">
+          {loading ? (
+            <p className="muted">Enumerando…</p>
+          ) : tree ? (
+            <FileTree entries={tree.entries} activePath={null} onOpen={openEntry} />
+          ) : (
+            <p className="muted">Sin carpeta activa.</p>
+          )}
+        </div>
+      </aside>
+      <section className="desk-chat">
+        <div className="desk-media">
+          <label>
+            Fragmento de código
+            <input
+              type="file"
+              accept=".bara,.txt,.rs,.ts,.tsx,.md,text/plain"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  attachText(file);
+                }
+                event.target.value = "";
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              inspectMediaDialog()
+                .then((inspection) => {
+                  setVideoName(inspection.name);
+                  setMediaNote(
+                    `${inspection.kind} · ${inspection.bytes} bytes · el backend no entregó píxeles`,
+                  );
+                  setError(null);
+                })
+                .catch((reason: unknown) => {
+                  const message = describeError(reason);
+                  if (message !== "cancelado") {
+                    setError(message);
+                  }
+                });
+            }}
+          >
+            Inspeccionar imagen o video
+          </button>
+          <p className="muted">
+            {mediaNote ?? "La cota de 32 MB la aplica el backend. Los píxeles no entran en el chat."}
+          </p>
+        </div>
+        <ChatPanel
+          open
+          documentName={documentName}
+          documentSource={context}
+          analysis={null}
+          catalogue={[]}
+          sample=""
+          onUseCode={(code) => {
+            setDocumentName("<fragmento>");
+            setDocumentSource(code);
+          }}
+          onJudge={async () => ({
+            glyph: "⊥",
+            status: "false",
+            applied: false,
+            path: "",
+            line: 1,
+            inserted: 0,
+            source: "",
+          })}
+        />
+      </section>
+    </div>
+  );
+}

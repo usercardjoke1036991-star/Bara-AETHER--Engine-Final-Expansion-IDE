@@ -1,14 +1,20 @@
-// Barra lateral del workspace: raíz, recarga y árbol recursivo.
+// Barra lateral del workspace: raíz activa, recarga y árbol recursivo.
 //
-// La raíz es un texto editable porque el escritorio no incorpora un selector
-// nativo de carpetas (el backend no añade plugins): el usuario puede pegar
-// cualquier ruta absoluta y el comando `workspace_tree` la canonicaliza antes
-// de enumerarla.
+// La carpeta entra por el diálogo del sistema o por un clon de GitHub.
+// El campo de ruta es de sólo lectura: el WebView no impone otra raíz.
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 
+import { describeError } from "../engine";
 import FileTree from "./FileTree";
-import type { WorkspaceEntry, WorkspaceTree } from "../workspace";
+import {
+  workspaceActivate,
+  workspaceCloseRoot,
+  workspaceRoots,
+  type WorkspaceEntry,
+  type WorkspaceShelf,
+  type WorkspaceTree,
+} from "../workspace";
 
 interface WorkspaceSidebarProps {
   /** Raíz canónica actual. */
@@ -19,8 +25,10 @@ interface WorkspaceSidebarProps {
   loading: boolean;
   /** Ruta activa en el editor. */
   activePath: string | null;
-  /** Abre una carpeta escribiendo su ruta. */
-  onOpenRoot: (root: string) => void;
+  /** Diálogo nativo: la carpeta elegida sustituye a la raíz activa. */
+  onPickFolder: () => void;
+  /** Muestra la puerta de clonación de GitHub. */
+  onClone: () => void;
   /** Vuelve a enumerar la raíz actual. */
   onRefresh: () => void;
   /** Abre un documento `.bara`. */
@@ -33,25 +41,24 @@ export default function WorkspaceSidebar({
   tree,
   loading,
   activePath,
-  onOpenRoot,
+  onPickFolder,
+  onClone,
   onRefresh,
   onOpenFile,
 }: WorkspaceSidebarProps) {
-  const [draft, setDraft] = useState(root);
+  const [shelf, setShelf] = useState<WorkspaceShelf | null>(null);
+  const [shelfError, setShelfError] = useState<string | null>(null);
 
-  // Si el backend devuelve la raíz canónica (por ejemplo, `.` → absoluta),
-  // el campo refleja siempre lo que realmente se está explorando.
   useEffect(() => {
-    setDraft(root);
+    void workspaceRoots()
+      .then((next) => {
+        setShelf(next);
+        setShelfError(null);
+      })
+      .catch((reason: unknown) => {
+        setShelfError(describeError(reason));
+      });
   }, [root]);
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const next = draft.trim();
-    if (next.length > 0 && next !== root) {
-      onOpenRoot(next);
-    }
-  }
 
   return (
     <aside className="workspace" aria-label="Explorador del workspace">
@@ -69,19 +76,60 @@ export default function WorkspaceSidebar({
         </button>
       </div>
 
-      <form className="workspace-root" onSubmit={submit}>
-        <input
-          className="path"
-          value={draft}
-          spellCheck={false}
-          placeholder="C:\\ruta\\al\\workspace"
-          aria-label="Ruta de la raíz del workspace"
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button type="submit" disabled={loading || draft.trim() === root}>
-          Abrir
+      <div className="workspace-actions">
+        <button type="button" disabled={loading} onClick={onPickFolder}>
+          Abrir carpeta
         </button>
-      </form>
+        <button type="button" disabled={loading} onClick={onClone}>
+          Clonar
+        </button>
+      </div>
+
+      {shelf && shelf.roots.length > 0 ? (
+        <ul className="shelf">
+          {shelf.roots.map((slot) => (
+            <li key={slot.id}>
+              <button
+                type="button"
+                className={slot.active ? "shelf-active" : undefined}
+                disabled={loading}
+                onClick={() => {
+                  void workspaceActivate(slot.id)
+                    .then(() => onRefresh())
+                    .catch((reason: unknown) => {
+                      setShelfError(describeError(reason));
+                    });
+                }}
+              >
+                {slot.name}
+              </button>
+              <button
+                type="button"
+                aria-label={`Cerrar ${slot.name}`}
+                disabled={loading}
+                onClick={() => {
+                  void workspaceCloseRoot(slot.id)
+                    .then((next) => {
+                      setShelf(next);
+                      setShelfError(null);
+                      onRefresh();
+                    })
+                    .catch((reason: unknown) => {
+                      setShelfError(describeError(reason));
+                    });
+                }}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {shelfError ? <p className="error">{shelfError}</p> : null}
+
+      <p className="workspace-root path" title={root}>
+        {root || "Sin carpeta activa"}
+      </p>
 
       {tree ? (
         <p className="workspace-meta" title={tree.root}>
@@ -102,7 +150,7 @@ export default function WorkspaceSidebar({
             onOpen={onOpenFile}
           />
         ) : (
-          <p className="muted">Escribe una raíz y pulsa «Abrir».</p>
+          <p className="muted">Abre una carpeta con el diálogo del sistema.</p>
         )}
       </div>
 

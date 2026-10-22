@@ -6,6 +6,7 @@
 // y de texto existen para no ahogar el WebView; los datos completos siguen en
 // el backend y se muestran bajo demanda.
 
+import type { AutopoiesisReport } from "../aether";
 import type {
   BelnapCensus,
   FlightLog,
@@ -107,8 +108,31 @@ export function CensoCard({ frame }: { frame: NeuralFrame }) {
             <th>truncado</th>
             <td className="num">{yesNo(frame.inferencia.truncado)}</td>
           </tr>
+          <tr>
+            <th>proximidad a ברא</th>
+            <td className="num">{frame.proximidad_mili} mili · {frame.embedding.length} carriles</td>
+          </tr>
+          <tr>
+            <th>malla topológica</th>
+            <td className="num">
+              {frame.topologia.nodos} nodos · cohesión {frame.topologia.cohesion_mili}
+              {frame.topologia.alerta
+                ? ` · solape ${frame.topologia.foco}↔${frame.topologia.vecino}`
+                : ""}
+            </td>
+          </tr>
         </tbody>
       </table>
+      {frame.recomendaciones.length > 0 ? (
+        <ul className="roots">
+          {frame.recomendaciones.map((item) => (
+            <li key={`${item.raiz}:${item.tactica}`}>
+              <span className="glyph">{item.raiz}</span>
+              <span className="meaning">{item.recomendacion}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <div className="ck-divider" />
       <h4 className="ck-subhead">Memoria a largo plazo</h4>
@@ -532,6 +556,52 @@ export function RecorderCard({ logs }: { logs: FlightLog }) {
           </p>
         ) : null}
       </details>
+    </article>
+  );
+}
+
+/** Carriles simbólicos, proximidad y peso de los axiomas del documento. */
+export function AttentionCard({
+  frame,
+  axioms,
+}: {
+  frame: NeuralFrame;
+  axioms: AutopoiesisReport | null;
+}) {
+  const lanes = frame.embedding;
+  const peak = lanes.reduce((max, lane) => Math.max(max, Math.abs(lane)), 1);
+  const total = axioms?.attentionTotal ?? 0;
+  return (
+    <article className="kx-card ck-card">
+      <h3>Vectores y atención</h3>
+      <p>
+        proximidad a ברא · {frame.proximidad_mili} mili
+        {axioms ? ` · atención ${total} · prioridad ${axioms.priorityRoot || "—"}` : ""}
+      </p>
+      <div className="ck-lanes" aria-label="carriles del vector simbólico">
+        {lanes.map((lane, index) => (
+          <span
+            key={index}
+            className={lane < 0 ? "ck-lane ck-lane-neg" : "ck-lane"}
+            style={{ height: `${Math.max(8, (Math.abs(lane) / peak) * 100)}%` }}
+            title={`carril ${index}: ${lane}`}
+          />
+        ))}
+      </div>
+      {axioms && axioms.axioms.length > 0 ? (
+        <ul className="roots">
+          {axioms.axioms.slice(0, 12).map((axiom) => (
+            <li key={`${axiom.root}:${axiom.generation}:${axiom.rule}`}>
+              <span className="glyph">
+                {axiom.valence.observation.glyph} {axiom.root}
+              </span>
+              <span className="meaning">peso {axiom.attention}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">Sin axiomas mutados en el documento abierto.</p>
+      )}
     </article>
   );
 }

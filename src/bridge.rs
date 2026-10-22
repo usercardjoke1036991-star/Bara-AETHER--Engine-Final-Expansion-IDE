@@ -111,6 +111,36 @@ mod tests {
     }
 
     #[test]
+    fn el_puente_llega_en_snake_case_y_no_vacia_el_nucleo() {
+        let raw = bridge_snapshot(DOCUMENTO).expect("la instantánea debe capturarse");
+        assert!(
+            !raw.contains("rootHex") && !raw.contains("signatureHex"),
+            "el puente no recomilla a camelCase"
+        );
+        let document = valor(DOCUMENTO);
+        let keys: Vec<&str> = document
+            .as_object()
+            .expect("el sobre es un objeto")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert!(keys.iter().all(|key| !key.chars().any(|char| char.is_ascii_uppercase())));
+        let nucleo = &document["secciones"]["nucleo"];
+        assert!(nucleo["axiomas"]["generacion"].is_number());
+        assert!(nucleo["evolucion"]["ledger"].is_number());
+        assert!(nucleo["evolucion"]["avistamientos"].is_number());
+        assert!(nucleo["atencion"]["total"].is_number());
+        assert_eq!(nucleo["simbolo"]["lanes"].as_array().map(Vec::len), Some(16));
+        assert!(nucleo["correccion"]["rastros"].is_number());
+        assert!(nucleo["malla"]["nodos"].is_number());
+        let catalogo = document["catalogo"]
+            .as_array()
+            .expect("el catálogo es una lista");
+        assert!(!catalogo.is_empty());
+        assert!(catalogo.iter().all(|entry| entry["presente"].is_boolean()));
+    }
+
+    #[test]
     fn el_manifiesto_declara_las_cuatro_secciones_en_orden() {
         let manifiesto: serde_json::Value =
             serde_json::from_str(&bridge_manifest()).expect("el manifiesto debe ser JSON");

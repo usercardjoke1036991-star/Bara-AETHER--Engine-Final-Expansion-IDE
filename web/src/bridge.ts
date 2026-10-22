@@ -26,6 +26,15 @@ export interface BridgeSectionSpec {
   origen: string;
 }
 
+/** El núcleo entrega el puente como texto JSON, no como objeto ya parseado. */
+function parseBridge<T>(raw: unknown, what: string): T {
+  const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+  if (value === null || typeof value !== "object") {
+    throw new Error(`el puente no entregó ${what}`);
+  }
+  return value as T;
+}
+
 /** Contrato del puente: lo que el panel carga una vez y compara después. */
 export interface BridgeManifest {
   /** Esquema del documento (`aether-omega/puente/1`). */
@@ -212,6 +221,33 @@ export interface BridgeAxioms {
   total: number;
 }
 
+/** Ledger de síntesis y reajuste de masas. */
+export interface BridgeEvolution {
+  avistamientos: number;
+  ledger: number;
+  ultimo: string | null;
+}
+
+/** Atención acumulada del mutador. */
+export interface BridgeAttention {
+  total: number;
+  cumbre: number;
+  prioridad: string | null;
+}
+
+/** Embedding simbólico del foco activo. */
+export interface BridgeSymbol {
+  lanes: number[];
+}
+
+/** Correcciones de `⊤∧⊥` ya registradas. */
+export interface BridgeCorrection {
+  rastros: number;
+  sello: number;
+  separacion: number;
+  anticipa: string | null;
+}
+
 /** Diario temporal del runtime. */
 export interface BridgeTime {
   instantaneas: number;
@@ -243,6 +279,10 @@ export interface BridgeKernel {
   pila: BridgeStack;
   memoria: number;
   axiomas: BridgeAxioms;
+  evolucion: BridgeEvolution;
+  atencion: BridgeAttention;
+  simbolo: BridgeSymbol;
+  correccion: BridgeCorrection;
   regiones: number;
   tiempo: BridgeTime;
   qubits: BridgeQubits;
@@ -294,13 +334,19 @@ export interface BridgeSnapshot {
 // ─────────────────────────────────────────────────────────────────────────
 
 /** Contrato canónico del puente (`bridge_manifest`): se pide una sola vez. */
-export function bridgeManifest(): Promise<BridgeManifest> {
-  return invoke<BridgeManifest>("bridge_manifest");
+export async function bridgeManifest(): Promise<BridgeManifest> {
+  const raw = await invoke<string>("bridge_manifest");
+  return parseBridge<BridgeManifest>(raw, "el contrato");
 }
 
 /** Instantánea de sólo lectura del kernel sobre el documento (`bridge_snapshot`). */
-export function bridgeSnapshot(source: string): Promise<BridgeSnapshot> {
-  return invoke<BridgeSnapshot>("bridge_snapshot", { source });
+export async function bridgeSnapshot(source: string): Promise<BridgeSnapshot> {
+  const raw = await invoke<string>("bridge_snapshot", { source });
+  const document = parseBridge<BridgeSnapshot>(raw, "la instantánea");
+  if (!document.secciones || !document.catalogo) {
+    throw new Error("la instantánea del puente no trae secciones");
+  }
+  return document;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
