@@ -26,8 +26,10 @@ import {
   type WorkspaceEntry,
   type WorkspaceTree,
 } from "./workspace";
+import BaraEditor from "./components/BaraEditor";
 import ChatPanel from "./components/ChatPanel";
 import CockpitPanel from "./components/CockpitPanel";
+import KernelConsole, { type ConsoleLine } from "./components/KernelConsole";
 import KernelPanel from "./components/KernelPanel";
 import VisualBuilder from "./components/VisualBuilder";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
@@ -80,6 +82,8 @@ export default function App() {
   const [lattice, setLattice] = useState<BelnapLattice | null>(null);
   /** Consulta que se conversa con el oráculo (léxico del kernel). */
   const [query, setQuery] = useState("ברא");
+  /** Transcripción de la consola inferior (mismo oráculo, sin PTY). */
+  const [consoleLog, setConsoleLog] = useState<ConsoleLine[]>([]);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.path === activePath) ?? null,
@@ -292,22 +296,36 @@ export default function App() {
   }, [saveActive]);
 
   /** Conversa un turno con el oráculo del kernel (`oracle_converse`). */
-  const askOracle = useCallback(async () => {
-    if (query.trim().length === 0) {
+  const converse = useCallback(async (line: string) => {
+    const text = line.trim();
+    if (text.length === 0) {
       return;
     }
     setBusy(true);
     try {
-      const result = await oracleConverse(query);
+      const result = await oracleConverse(text);
       setLastTurn(result.turn);
       setOracle(result.status);
+      if (result.turn) {
+        const turn = result.turn;
+        setConsoleLog((current) =>
+          [
+            ...current,
+            { input: text, reply: turn.reply, roots: turn.roots },
+          ].slice(-40),
+        );
+      }
       setError(null);
     } catch (failure) {
       setError(describeError(failure));
     } finally {
       setBusy(false);
     }
-  }, [query]);
+  }, []);
+
+  const askOracle = useCallback(async () => {
+    await converse(query);
+  }, [converse, query]);
 
   /** Captura el marcador temporal actual para el `Δ⁻¹` manual. */
   const markTimeline = useCallback(() => {
@@ -341,6 +359,7 @@ export default function App() {
       setOracle(await oracleReset());
       setLastTurn(null);
       setMarker(null);
+      setConsoleLog([]);
       setError(null);
     } catch (failure) {
       setError(describeError(failure));
@@ -491,14 +510,15 @@ export default function App() {
                 </button>
               </div>
 
-              <textarea
-                className="code"
-                dir="auto"
-                spellCheck={false}
-                aria-label="Editor del documento activo"
-                placeholder="Abre un documento .bara del workspace para editarlo."
-                value={source}
-                onChange={(event) => updateActiveSource(event.target.value)}
+              <BaraEditor value={source} onChange={updateActiveSource} />
+              <KernelConsole
+                lines={consoleLog}
+                busy={busy}
+                lattice={lattice}
+                current={oracle?.timelineObservation ?? null}
+                onSubmit={(line) => {
+                  void converse(line);
+                }}
               />
             </div>
           </div>

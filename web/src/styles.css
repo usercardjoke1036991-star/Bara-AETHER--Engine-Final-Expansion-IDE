@@ -377,6 +377,99 @@ body,
   min-height: 0;
 }
 
+.bara-editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--pane);
+}
+
+.bara-editor .cm-editor {
+  height: 100%;
+}
+
+.kernel-console {
+  display: flex;
+  flex: 0 0 11.5rem;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--line);
+}
+
+.belnap-meter {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.belnap-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--pane);
+}
+
+.belnap-cell.live {
+  border-color: var(--accent);
+}
+
+.belnap-glyph {
+  color: var(--root);
+  font-size: 0.95rem;
+}
+
+.belnap-name,
+.belnap-mass,
+.console-roots {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.console-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: Consolas, "Segoe UI Mono", monospace;
+  font-size: 0.75rem;
+}
+
+.console-log p {
+  margin: 0 0 0.35rem;
+}
+
+.console-prompt {
+  color: var(--accent);
+}
+
+.console-reply {
+  color: var(--text);
+}
+
+.console-form {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.console-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Consolas, "Segoe UI Mono", monospace;
+}
+
 
 button {
   background: var(--pane);
