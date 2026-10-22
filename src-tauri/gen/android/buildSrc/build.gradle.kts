@@ -2,6 +2,12 @@ plugins {
     `kotlin-dsl`
 }
 
+// Una sola fuente: scripts/android/BuildTask.kt. No se copia al arbol
+// generado, porque Sonar contaria las dos copias como duplicado.
+sourceSets.main {
+    kotlin.srcDir("../../../../scripts/android")
+}
+
 gradlePlugin {
     plugins {
         create("pluginsForCoolKids") {

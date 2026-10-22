@@ -157,20 +157,18 @@ try {
         }
     }
 
-    # El contenedor generado trae un BuildTask que delega en la CLI. Se
-    # reemplaza por la version directa con Cargo, incluso si Tauri acaba de
-    # regenerar src-tauri/gen/android.
+    # La fuente unica de BuildTask.kt es scripts/android. buildSrc la
+    # compila por sourceSets. Si Tauri regenero una copia dentro del
+    # contenedor, se retira: dos archivos iguales rompen la compilacion
+    # y la puerta de duplicados.
     $buildTaskTemplate = Join-Path $repo 'scripts\android\BuildTask.kt'
     $buildTaskTarget = Join-Path $androidProject 'buildSrc\src\main\java\com\aetheromega\bara\ide\kotlin\BuildTask.kt'
     if (-not (Test-Path $buildTaskTemplate)) {
-        throw "Falta la plantilla del BuildTask: $buildTaskTemplate"
+        throw "Falta la fuente del BuildTask: $buildTaskTemplate"
     }
-    $needsPatch = -not (Test-Path $buildTaskTarget) -or
-        (Get-FileHash $buildTaskTemplate).Hash -ne (Get-FileHash $buildTaskTarget).Hash
-    if ($needsPatch) {
-        New-Item -ItemType Directory -Force (Split-Path -Parent $buildTaskTarget) | Out-Null
-        Copy-Item $buildTaskTemplate $buildTaskTarget -Force
-        Write-Host 'Aplicado BuildTask.kt (Cargo directo) al contenedor Gradle.'
+    if (Test-Path $buildTaskTarget) {
+        Remove-Item $buildTaskTarget -Force
+        Write-Host 'Retirada la copia generada de BuildTask.kt.'
     }
 
     # La CLI de Tauri crea el enlace simbolico de jniLibs con cargo-mobile2,

@@ -193,8 +193,8 @@ frontend con `npm run build` y ejecuta directamente la tarea Gradle
 (`assembleArm64Debug`, `bundleUniversalRelease`, etc.). **No invoca la CLI de
 Tauri**: en Windows ésta usa `cargo-mobile2`, que crea un enlace simbólico para
 `jniLibs` y falla sin Developer Mode (`CreateProcess error=2`). En su lugar,
-`scripts/android/BuildTask.kt` (que el guion copia a
-`src-tauri/gen/android/buildSrc/.../BuildTask.kt`) compila la biblioteca con
+`scripts/android/BuildTask.kt` (que `buildSrc` compila directamente, sin
+una segunda copia) compila la biblioteca con
 `cargo build --lib --target <triple>`, configura el enlazador del NDK y copia
 `libbara_ide_desktop_lib.so` a `app/src/main/jniLibs/<abi>`. Los artefactos
 quedan en `src-tauri/gen/android/app/build/outputs/{apk,bundle}`.

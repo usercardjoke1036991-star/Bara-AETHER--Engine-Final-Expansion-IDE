@@ -17,4 +17,6 @@ key.properties
 keystore.properties
 
 /.tauri
+# Copia que Tauri regenera. La fuente es scripts/android/BuildTask.kt.
+buildSrc/src/main/java/com/aetheromega/bara/ide/kotlin/BuildTask.kt
 /tauri.settings.gradle

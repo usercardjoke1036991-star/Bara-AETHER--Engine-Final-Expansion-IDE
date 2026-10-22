@@ -1,6 +1,6 @@
-// Canonical copy. scripts/build_android.ps1 copies this file to
-// src-tauri/gen/android/buildSrc/src/main/java/com/aetheromega/bara/ide/kotlin/BuildTask.kt.
-// Do not edit the generated copy by hand.
+// Fuente unica. buildSrc/build.gradle.kts la compila con sourceSets.
+// No copies este archivo dentro de src-tauri/gen/android: Gradle veria
+// dos clases y Sonar las contaria como duplicado.
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
