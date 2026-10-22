@@ -52,10 +52,14 @@ import ctypes
 import os
 import shutil
 import struct
-import subprocess
 import tempfile
 import time
 from ctypes import wintypes
+
+from win_gnu_proceso import cerrar, codigo_de, esperar, iniciar, terminar
+
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ICONO = os.path.join(RAIZ, "icons", "icon.ico")
 
 RT_ICON = 3
 RT_GROUP_ICON = 14
@@ -167,12 +171,9 @@ def dll_webview(ruta):
     return absoluta
 
 
-def leer_ico(ruta):
-    """Imagenes de un `.ico`: [(ancho, alto, colores, planos, bits, bytes)]."""
-    ruta = _ruta_real(ruta, "ruta del icono")
-    if not os.path.basename(ruta).lower().endswith(".ico") or not os.path.isfile(ruta):
-        raise ValueError("se esperaba un .ico")
-    with open(ruta, "rb") as f:
+def leer_ico():
+    """Imagenes de `icons/icon.ico`: [(ancho, alto, colores, planos, bits, bytes)]."""
+    with open(ICONO, "rb") as f:
         datos = f.read()
     reservado, tipo, cuenta = struct.unpack_from("<HHH", datos, 0)
     if reservado != 0 or tipo != 1:
@@ -200,8 +201,8 @@ def embebe_recursos(exe, ico=None, manifiesto=MANIFIESTO):
             raise OSError("RT_MANIFEST fallo (error %d)" % ctypes.get_last_error())
 
         imagenes = []
-        if ico and os.path.isfile(ico):
-            imagenes = leer_ico(ico)
+        if ico and os.path.isfile(ICONO):
+            imagenes = leer_ico()
             for indice, (_, _, _, _, _, imagen) in enumerate(imagenes):
                 if not k.UpdateResourceW(
                     manejar, _rid(RT_ICON), _rid(indice + 1), LANG_NEUTRAL, imagen, len(imagen)
@@ -256,12 +257,9 @@ def ya_tiene_recursos(exe):
     """
     try:
         exe = exe_existente(exe)
-        with open(exe, "rb") as f:
-            if b"Microsoft.Windows.Common-Controls" not in f.read():
-                return False
-    except (OSError, ValueError):
+    except ValueError:
         return False
-    return _existe_recurso(exe, RT_GROUP_ICON, ID_ICONO_APP)
+    return _existe_recurso(exe, RT_MANIFEST, 1) and _existe_recurso(exe, RT_GROUP_ICON, ID_ICONO_APP)
 
 
 def buscar_webview2():
@@ -384,24 +382,29 @@ def esperar_exe(exe, segundos):
 
 
 def probar(exe, segundos):
-    """Lanza el `.exe` con `CreateProcess` y mide cuanto sobrevive."""
+    """Lanza el `.exe` con `CreateProcessW` y mide cuanto sobrevive."""
     exe = exe_existente(exe)
     if not isinstance(segundos, int) or isinstance(segundos, bool) or segundos < 1 or segundos > 120:
         raise ValueError("la observacion tiene que durar entre 1 y 120 s")
-    proceso = subprocess.Popen([exe], cwd=os.path.dirname(exe))
+    handle = iniciar(exe, [], os.path.dirname(exe))
     inicio = time.time()
-    while time.time() - inicio < segundos:
-        time.sleep(1)
-        if proceso.poll() is not None:
-            print("MURIO 0x%08x tras %.1fs" % (proceso.returncode & 0xFFFFFFFF, time.time() - inicio))
-            return 1
-    print("VIVO %.1fs (ventana creada, proceso en pie)" % (time.time() - inicio))
-    proceso.kill()
-    return 0
+    try:
+        while time.time() - inicio < segundos:
+            if esperar(handle, 1000):
+                print(
+                    "MURIO 0x%08x tras %.1fs"
+                    % (codigo_de(handle) & 0xFFFFFFFF, time.time() - inicio)
+                )
+                return 1
+        print("VIVO %.1fs (ventana creada, proceso en pie)" % (time.time() - inicio))
+        terminar(handle)
+        return 0
+    finally:
+        cerrar(handle)
 
 
 def main(argv=None):
-    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    raiz = RAIZ
     analizador = argparse.ArgumentParser(
         description="Embebe manifiesto e icono, y copia WebView2Loader.dll, en el .exe de Bara IDE."
     )

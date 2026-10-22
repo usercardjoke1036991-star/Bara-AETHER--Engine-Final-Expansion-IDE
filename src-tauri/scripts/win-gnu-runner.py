@@ -20,9 +20,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
-import subprocess
 import sys
+
+from win_gnu_proceso import lanzar
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 RECURSOS = os.path.join(AQUI, "win-gnu-recursos.py")
@@ -79,11 +81,16 @@ def main(argv):
 
     if necesita_recursos(binario):
         try:
-            subprocess.run([sys.executable, RECURSOS, "--exe", binario], check=False)
-        except OSError as error:
+            spec = importlib.util.spec_from_file_location("win_gnu_recursos", RECURSOS)
+            if spec is None or spec.loader is None:
+                raise ImportError(RECURSOS)
+            modulo = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(modulo)
+            modulo.main(["--exe", binario])
+        except (OSError, ValueError, ImportError) as error:
             print("aviso: no pude parchear el .exe (%s)" % error, file=sys.stderr)
 
-    return subprocess.call([binario, *argumentos])
+    return lanzar(binario, argumentos)
 
 
 if __name__ == "__main__":
