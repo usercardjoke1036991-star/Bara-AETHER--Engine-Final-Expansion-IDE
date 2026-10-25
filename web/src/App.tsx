@@ -29,6 +29,7 @@ import {
   type WorkspaceEntry,
   type WorkspaceTree,
 } from "./workspace";
+import { analysisStillCurrent } from "./analysisGate";
 import { judgeAutoPatch } from "./autoApply";
 import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
 import { runWorkspaceRecipe, type RecipeName } from "./recipes";
@@ -152,23 +153,33 @@ export default function App() {
   const sourceRef = useRef(source);
   const pathRef = useRef(activePath);
   const cursorLineRef = useRef(1);
-  useEffect(() => {
-    sourceRef.current = source;
-    pathRef.current = activePath;
-  }, [source, activePath]);
+  const analysisGen = useRef(0);
+  sourceRef.current = source;
+  pathRef.current = activePath;
   const dirty = activeTab !== null && activeTab.source !== activeTab.saved;
 
-  /** Invoca al backend del kernel y publica el resultado. */
-  const runAnalysis = useCallback(async (text: string) => {
+  /** Invoca al backend del kernel y publica el resultado si sigue vigente. */
+  const runAnalysis = useCallback(async (text: string, path: string | null) => {
+    const generation = analysisGen.current + 1;
+    analysisGen.current = generation;
+    const request = { generation, text, path };
     setBusy(true);
     try {
       const result = await analyzeSource(text);
+      if (!analysisStillCurrent(request, analysisGen.current, sourceRef.current, pathRef.current)) {
+        return;
+      }
       setAnalysis(result);
       setError(null);
     } catch (failure) {
+      if (generation !== analysisGen.current) {
+        return;
+      }
       setError(describeError(failure));
     } finally {
-      setBusy(false);
+      if (generation === analysisGen.current) {
+        setBusy(false);
+      }
     }
   }, []);
 
@@ -294,13 +305,15 @@ export default function App() {
     if (!ready) {
       return undefined;
     }
+    const text = source;
+    const path = activePath;
     const timer = window.setTimeout(() => {
-      void runAnalysis(source);
+      void runAnalysis(text, path);
     }, 200);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [ready, source, runAnalysis]);
+  }, [ready, source, activePath, runAnalysis]);
 
   /** Abre un `.bara` del árbol; si ya está en una pestaña, sólo la activa. */
   const openWorkspaceFile = useCallback(

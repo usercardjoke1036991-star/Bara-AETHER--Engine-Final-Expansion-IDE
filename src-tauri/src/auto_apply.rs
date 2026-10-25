@@ -102,7 +102,13 @@ pub fn judge(
             source: String::new(),
         });
     }
-    let (next, at, inserted) = splice(host, patch, line);
+    // El veredicto `∅` usó el host del WebView. Antes de escribir, el archivo
+    // canónico de la jaula tiene que ser ese mismo texto, byte a byte.
+    let on_disk = workspace::read_text(root, path)?;
+    if on_disk.source != host {
+        return Err("el archivo en disco no coincide con el editor; no se escribió".to_string());
+    }
+    let (next, at, inserted) = splice(&on_disk.source, patch, line);
     let document: WorkspaceDocument = workspace::write_source(root, path, &next)?;
     Ok(AutoApplyReport {
         glyph,
@@ -182,5 +188,44 @@ mod tests {
         assert_eq!(report.status, "both");
         let disk = fs::read_to_string(root.join("src").join("lib.rs")).expect("disco");
         assert!(!disk.contains("gamma"));
+    }
+
+    #[test]
+    fn el_host_distinto_no_escribe() {
+        let root = scratch();
+        let file = root.join("src").join("lib.rs");
+        let original = "fn alpha() {}\n";
+        fs::write(&file, original).expect("semilla");
+        let stale = judge(
+            &root.display().to_string(),
+            "src/lib.rs",
+            2,
+            "fn alpha() {}\nfn extra() {}\n",
+            "fn beta() {}\n",
+        );
+        assert!(
+            stale.is_err(),
+            "un host distinto del disco no puede escribir"
+        );
+        let message = stale.expect_err("error");
+        assert!(
+            message.contains("no coincide"),
+            "el error no dice que el disco difiere: {message}"
+        );
+        assert!(!message.contains("⊤∧⊥"));
+        let disk = fs::read_to_string(&file).expect("disco");
+        assert_eq!(disk, original);
+        let fresh = judge(
+            &root.display().to_string(),
+            "src/lib.rs",
+            2,
+            original,
+            "fn beta() {}\n",
+        )
+        .expect("host igual");
+        assert!(fresh.applied);
+        assert!(fs::read_to_string(&file)
+            .expect("disco")
+            .contains("fn beta()"));
     }
 }

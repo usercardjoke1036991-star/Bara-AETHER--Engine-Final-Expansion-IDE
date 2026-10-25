@@ -229,7 +229,7 @@ desde el kernel por IPC.
 | Proveedores | `web/src/ai/providers.ts` | Construcción de peticiones y análisis de respuestas (puras, sin red). |
 | Contexto | `web/src/ai/prompt.ts` | Prompt del sistema con el catálogo, el análisis y el ejemplo del kernel. |
 | Imágenes | `web/src/ai/images.ts` | Arrastrar/soltar, pegar y elegir; reducción a 1568 px y topes de tamaño. |
-| Autodiagnóstico | `web/src/ai/selfcheck.ts` | Doce comprobaciones sin red: ajustes, peticiones, respuestas, prompt, imágenes y el reintento del chat. |
+| Autodiagnóstico | `web/src/ai/selfcheck.ts` | Trece comprobaciones sin red: ajustes, peticiones, respuestas, prompt, imágenes, el reintento del chat y el descarte del análisis viejo. |
 | Interfaz | `web/src/components/*.tsx` | `ChatPanel` (panel y conversación), `AiSettings` (ajustes), `AssistantText` (prosa y bloques de código). |
 
 * **Proveedores**: Anthropic (Messages API) y OpenAI (Chat Completions). La
@@ -264,7 +264,7 @@ cargo test   --workspace --locked                            # kernel + motor + 
 cargo clippy --workspace --all-targets --locked -- -D warnings  # política del CI: salida 0 y 0 avisos de rustc
                                                                 # (solo el aviso esperado del build.rs de Tauri)
 npm run typecheck                                           # tsc --noEmit
-npm run test:ai                                             # 12 comprobaciones del panel de IA, sin red
+npm run test:ai                                             # 13 comprobaciones del panel de IA, sin red
 npm run build                                               # tsc --noEmit && vite build -> web/dist
 ```
 

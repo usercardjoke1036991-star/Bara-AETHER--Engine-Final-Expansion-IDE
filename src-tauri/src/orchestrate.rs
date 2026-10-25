@@ -1,6 +1,15 @@
 //! Recetas de un clic. El catálogo es cerrado: el WebView elige un nombre y
 //! el proceso nace con un programa y unos argumentos literales. No hay
 //! intérprete de shell ni una cadena de comando armada por el cliente.
+//!
+//! El directorio de trabajo es la carpeta abierta, y sólo si ella misma
+//! contiene el ancla (`package.json` o `Cargo.toml`). No se sube a un padre:
+//! un `package.json` ancestro no debe ejecutar `npm run typecheck`.
+//!
+//! En Windows `typecheck` arranca `cmd.exe` con argv fijo (`/d /s /c npm run
+//! typecheck`) porque CreateProcess no ejecuta un `.cmd`. Al vencer el plazo
+//! se mata el árbol: `taskkill /F /T` en Windows y el grupo de procesos en
+//! Unix. Los plazos siguen en 60 s (npm) y 120 s (cargo).
 
 #![forbid(unsafe_code)]
 
@@ -85,21 +94,26 @@ fn spec(recipe: &str) -> Result<Spec, String> {
             ],
             ide: false,
         }),
-        "typecheck" => Ok(Spec {
-            program: npm_program(),
-            args: &["run", "typecheck"],
-            ide: true,
-        }),
+        "typecheck" => Ok(typecheck_spec()),
         _ => Err("la receta no está en el catálogo cerrado".to_string()),
     }
 }
 
-/// `npm` en Windows es un `.cmd`. Se nombra el ejecutable; no se abre un shell.
-const fn npm_program() -> &'static str {
+/// `npm.cmd` no es un ejecutable PE: CreateProcess lo rechaza. `cmd.exe` sí,
+/// y el argv es literal (no llega texto del WebView).
+fn typecheck_spec() -> Spec {
     if cfg!(windows) {
-        "npm.cmd"
+        Spec {
+            program: "cmd.exe",
+            args: &["/d", "/s", "/c", "npm", "run", "typecheck"],
+            ide: true,
+        }
     } else {
-        "npm"
+        Spec {
+            program: "npm",
+            args: &["run", "typecheck"],
+            ide: true,
+        }
     }
 }
 
@@ -113,28 +127,19 @@ fn ide_dir() -> Result<PathBuf, String> {
     anchored(&dir, "package.json")
 }
 
-/// Sube desde la carpeta abierta hasta encontrar el ancla. La ruta grabada en
-/// el binario (`CARGO_MANIFEST_DIR`) no existe en un MSI instalado en otra máquina.
-fn find_anchor(start: &Path, anchor: &str) -> Option<PathBuf> {
-    let mut current = start.to_path_buf();
-    for _ in 0..6 {
-        if let Ok(found) = anchored(&current, anchor) {
-            return Some(found);
-        }
-        if !current.pop() {
-            break;
-        }
-    }
-    None
-}
-
 fn recipe_dir(ide: bool, active: Option<&Path>) -> Result<PathBuf, String> {
     let anchor = if ide { "package.json" } else { "Cargo.toml" };
     if let Some(root) = active {
-        if let Some(found) = find_anchor(root, anchor) {
-            return Ok(found);
-        }
+        return anchored(root, anchor).map_err(|_| {
+            if ide {
+                "la carpeta abierta no contiene package.json".to_string()
+            } else {
+                "la carpeta abierta no contiene Cargo.toml".to_string()
+            }
+        });
     }
+    // Sin carpeta abierta: la ruta grabada al compilar. En un MSI esa ruta
+    // no existe y la receta pide abrir el proyecto, sin buscar ancestros.
     let compiled = if ide { ide_dir() } else { workspace_dir() };
     compiled.map_err(|_| {
         if ide {
@@ -187,8 +192,46 @@ fn drain_pipe(pipe: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>> {
     })
 }
 
-/// Espera `limit`. Si el hijo sigue vivo, lo termina y devuelve lo ya leído.
+/// Mata el proceso lanzado y los que haya creado (npm/node, rustc).
+///
+/// Windows: `taskkill /F /T /PID`. Unix: el hijo es líder de grupo
+/// ([`new_group`]) y `kill -KILL` apunta a ese grupo. El PID es el que
+/// acaba de crear este proceso, no una cadena del WebView.
+fn terminate_tree(child: &mut std::process::Child) {
+    let pid = child.id();
+    if cfg!(windows) {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    } else {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// En Unix el hijo abre su propio grupo para poder matar a rustc/node con él.
+fn new_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = command;
+    }
+}
+
+/// Espera `limit`. Si el hijo sigue vivo, mata su árbol y devuelve lo ya leído.
 fn drive(command: &mut Command, limit: Duration) -> Result<Driven, String> {
+    new_group(command);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -211,14 +254,12 @@ fn drive(command: &mut Command, limit: Duration) -> Result<Driven, String> {
             Ok(Some(status)) => break Some(status),
             Ok(None) if started.elapsed() >= limit => {
                 timed_out = true;
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_tree(&mut child);
                 break None;
             }
             Ok(None) => thread::sleep(Duration::from_millis(40)),
             Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_tree(&mut child);
                 return Err("la receta se interrumpió".to_string());
             }
         }
@@ -261,8 +302,8 @@ fn clip(text: &str) -> String {
 
 /// Ejecuta la receta y devuelve el registro clasificado.
 ///
-/// `active` es la carpeta abierta en el IDE. Si contiene el ancla (o un padre
-/// cercano la contiene), manda ella. Si no, se prueba la ruta de compilación.
+/// `active` es la carpeta abierta. El cwd es esa carpeta si contiene el
+/// ancla; no un padre. Sin carpeta, se prueba la ruta de compilación.
 pub fn run(recipe: &str, active: Option<&Path>) -> Result<RecipeReport, String> {
     let chosen = spec(recipe)?;
     let cwd = recipe_dir(chosen.ide, active)?;
@@ -340,8 +381,14 @@ mod tests {
         assert_eq!(check.args, ["check", "-p", "bara", "--offline"]);
         assert!(!check.ide);
         let typed = spec("typecheck").expect("tipos");
-        assert_eq!(typed.args, ["run", "typecheck"]);
         assert!(typed.ide);
+        if cfg!(windows) {
+            assert_eq!(typed.program, "cmd.exe");
+            assert_eq!(typed.args, ["/d", "/s", "/c", "npm", "run", "typecheck"]);
+        } else {
+            assert_eq!(typed.program, "npm");
+            assert_eq!(typed.args, ["run", "typecheck"]);
+        }
     }
 
     #[test]
@@ -371,9 +418,34 @@ mod tests {
     fn el_modulo_no_abre_un_shell() {
         let source = include_str!("orchestrate.rs");
         let production = source.split("mod tests").next().unwrap_or(source);
-        assert!(!production.contains("cmd /c"));
         assert!(!production.contains("sh -c"));
         assert!(!production.contains("read_source"));
-        assert!(!production.contains("Command::new(\"cmd\""));
+        assert!(!production.contains("Command::new(recipe"));
+        assert!(!production.contains("Command::new(&"));
+        let typed = spec("typecheck").expect("tipos");
+        assert!(!typed
+            .args
+            .iter()
+            .any(|arg| arg.contains('&') || arg.contains('|')));
+    }
+
+    #[test]
+    fn el_cwd_no_sube_a_un_ancestro() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("reloj")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bara-recipe-{nonce}"));
+        let child = root.join("crate");
+        std::fs::create_dir_all(&child).expect("hijo");
+        std::fs::write(root.join("package.json"), "{}\n").expect("package");
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"t\"\n").expect("cargo");
+        let opened = recipe_dir(true, Some(&root)).expect("raíz npm");
+        assert_eq!(opened, std::fs::canonicalize(&root).expect("canon"));
+        assert!(recipe_dir(true, Some(&child)).is_err());
+        assert!(recipe_dir(false, Some(&child)).is_err());
+        let cargo_root = recipe_dir(false, Some(&root)).expect("raíz cargo");
+        assert_eq!(cargo_root, std::fs::canonicalize(&root).expect("canon"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
