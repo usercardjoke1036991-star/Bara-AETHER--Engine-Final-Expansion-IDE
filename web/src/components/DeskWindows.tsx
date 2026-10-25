@@ -214,7 +214,9 @@ function AiDesk() {
     <div className="desk-split">
       <aside className="workspace">
         <ul className="shelf">
-          {(shelf?.roots ?? []).map((slot) => (
+          {(shelf?.roots ?? []).map((slot) => {
+            const onlyRoot = (shelf?.roots.length ?? 0) <= 1;
+            return (
             <li key={slot.id}>
               <button
                 type="button"
@@ -229,8 +231,14 @@ function AiDesk() {
               </button>
               <button
                 type="button"
-                aria-label={`Cerrar ${slot.name}`}
+                className="shelf-close"
+                aria-label={onlyRoot ? `No se cierra la última carpeta (${slot.name})` : `Cerrar ${slot.name}`}
+                title={onlyRoot ? "La última carpeta del estante no se cierra" : "Cerrar carpeta"}
+                disabled={onlyRoot}
                 onClick={() => {
+                  if (onlyRoot) {
+                    return;
+                  }
                   workspaceCloseRoot(slot.id)
                     .then((next) => {
                       setShelf(next);
@@ -242,7 +250,8 @@ function AiDesk() {
                 ×
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
         <div className="workspace-actions">
           <button

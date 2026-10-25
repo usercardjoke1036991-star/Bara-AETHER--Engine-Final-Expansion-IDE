@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 interface WelcomeGateProps {
   /** Hay una apertura o un clon en curso. */
@@ -22,6 +22,11 @@ export default function WelcomeGate({
   onDismiss,
 }: WelcomeGateProps) {
   const [url, setUrl] = useState("");
+  const openRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    openRef.current?.focus();
+  }, []);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -33,7 +38,7 @@ export default function WelcomeGate({
   }
 
   return (
-    <section className="welcome" aria-label="Abrir un workspace">
+    <section className="welcome" role="dialog" aria-modal="false" aria-label="Abrir un workspace">
       <p className="welcome-kicker">Bara IDE</p>
       <h2>Abre un workspace</h2>
       <p className="muted">
@@ -43,7 +48,7 @@ export default function WelcomeGate({
       </p>
 
       <div className="welcome-actions">
-        <button type="button" disabled={busy} onClick={onOpenFolder}>
+        <button type="button" ref={openRef} disabled={busy} onClick={onOpenFolder}>
           Abrir carpeta
         </button>
       </div>

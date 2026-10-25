@@ -15,6 +15,7 @@ import {
   PROVIDER_ENDPOINTS,
   PROVIDER_MODEL_PRESETS,
   STORAGE_KEY,
+  chatSendGate,
   configProblems,
   describeConfig,
   forgetConfig,
@@ -35,8 +36,11 @@ import {
 import { baraSystemPrompt, excerpt, inventoryLine, MAX_DOCUMENT_CHARS, rootTable } from "./prompt";
 import {
   anthropicRequest,
+  CHAT_ATTEMPT_LIMIT,
+  CHAT_TIMEOUT_MS,
   catalogModelId,
   chatRequest,
+  chatRetry,
   closestSupportedModel,
   extractApiError,
   modelAcceptedByError,
@@ -143,6 +147,13 @@ const CHECKS: Check[] = [
       expect(
         configProblems(DEFAULT_CONFIG).length === 1,
         "sin clave debe haber exactamente un problema (la clave)",
+      );
+      const blocked = chatSendGate({ ...readyConfig(), apiKey: "" }, "hola", false, false);
+      expect(blocked !== null && blocked.includes("clave"), "Enviar salió sin clave");
+      expect(chatSendGate(readyConfig(), "hola", false, true) === null, "offline no exige clave");
+      expect(
+        chatSendGate({ ...readyConfig(), temperature: 9 }, "hola", false, false) !== null,
+        "una temperatura fuera de rango no bloqueó Enviar",
       );
       return `fábrica: ${describeConfig(DEFAULT_CONFIG).replace(/clave .*? \(/, "clave oculta (")}`;
     },
@@ -448,6 +459,19 @@ const CHECKS: Check[] = [
         "el 400 no propone el modelo admitido",
       );
       expect(modelAcceptedByError(401, detail, "deepseek-flash") === null, "un 401 no debe cambiar el modelo");
+      expect(
+        chatRetry(400, detail, "deepseek:deepseek-v4-flash", 1)?.kind === "model",
+        "el primer 400 de modelo no se reintenta",
+      );
+      expect(chatRetry(400, "clave inválida", "deepseek-flash", 1) === null, "un 400 sin modelo se reintenta");
+      expect(chatRetry(401, detail, "deepseek-flash", 1) === null, "un 401 se reintenta");
+      expect(chatRetry(500, "ocupado", "deepseek-flash", 1)?.kind === "transient", "un 500 no se reintenta");
+      expect(chatRetry(500, "ocupado", "deepseek-flash", 2) === null, "el segundo fallo se reintenta");
+      expect(CHAT_ATTEMPT_LIMIT === 2, "hay más de un reintento");
+      expect(
+        CHAT_TIMEOUT_MS >= 60_000 && CHAT_TIMEOUT_MS <= 120_000,
+        `el plazo del chat queda fuera de 60–120 s: ${CHAT_TIMEOUT_MS}`,
+      );
       const config: AiConfig = {
         ...withProvider(readyConfig(), "openai"),
         model: "deepseek:deepseek-v4-flash",
