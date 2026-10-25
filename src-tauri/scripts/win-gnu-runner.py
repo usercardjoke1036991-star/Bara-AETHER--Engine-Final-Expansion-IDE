@@ -24,9 +24,11 @@ import importlib.util
 import os
 import sys
 
-from win_gnu_proceso import lanzar
-
 AQUI = os.path.dirname(os.path.abspath(__file__))
+if AQUI not in sys.path:
+    sys.path.insert(0, AQUI)
+
+from win_gnu_proceso import lanzar
 RECURSOS = os.path.join(AQUI, "win-gnu-recursos.py")
 NOMBRE_APP = "bara-ide-desktop.exe"
 

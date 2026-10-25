@@ -9,8 +9,13 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
+
+/// Un clon que sigue vivo después de este plazo se mata y se borra el destino.
+const CLONE_LIMIT: Duration = Duration::from_secs(600);
 
 /// Remote ya normalizado: la cadena que recibe `git` y el nombre de carpeta.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,8 +146,13 @@ pub fn clone_repository(app: &AppHandle, parent: &Path, url: &str) -> Result<Pat
         .spawn()
         .map_err(|err| format!("no se pudo ejecutar git ({err}). ¿Está en el PATH?"))?;
 
-    let mut last_line = String::new();
-    if let Some(mut stderr) = child.stderr.take() {
+    let child_stderr = child.stderr.take();
+    let app_progress = app.clone();
+    let reader = thread::spawn(move || {
+        let mut last_line = String::new();
+        let Some(mut stderr) = child_stderr else {
+            return last_line;
+        };
         let mut buf = [0u8; 512];
         let mut pending = String::new();
         while let Ok(read) = stderr.read(&mut buf) {
@@ -158,14 +168,34 @@ pub fn clone_repository(app: &AppHandle, parent: &Path, url: &str) -> Result<Pat
                 }
                 let shown: String = shown.chars().take(180).collect();
                 last_line.clone_from(&shown);
-                let _ = app.emit("github-clone-progress", shown);
+                let _ = app_progress.emit("github-clone-progress", shown.clone());
             }
         }
-    }
+        last_line
+    });
 
-    let status = child
-        .wait()
-        .map_err(|err| format!("git no terminó: {err}"))?;
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= CLONE_LIMIT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                if dest.exists() {
+                    let _ = fs::remove_dir_all(&dest);
+                }
+                return Err("git clone superó los 10 minutos y se detuvo".to_string());
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(err) => {
+                let _ = child.kill();
+                let _ = reader.join();
+                return Err(format!("git no terminó: {err}"));
+            }
+        }
+    };
+    let last_line = reader.join().unwrap_or_default();
     if !status.success() {
         if dest.exists() {
             let _ = fs::remove_dir_all(&dest);

@@ -53,6 +53,81 @@ export function normalizeBaseUrl(baseUrl: string, fallback: string): string {
   return stripTrailingSlashes(value);
 }
 
+/**
+ * Nombre que viaja en el cuerpo. `proveedor:modelo-del-proveedor` es un id de
+ * catálogo (p. ej. `deepseek:deepseek-v4-flash`); la API quiere el segundo
+ * tramo. Una etiqueta de versión (`llama3:latest`) se conserva.
+ */
+export function catalogModelId(model: string): string {
+  const value = model.trim();
+  const colon = value.indexOf(":");
+  if (colon <= 0 || value.includes(":", colon + 1)) {
+    return value;
+  }
+  const vendor = value.slice(0, colon);
+  const slug = value.slice(colon + 1);
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(vendor) || !/^[a-z0-9][a-z0-9._/-]*$/i.test(slug)) {
+    return value;
+  }
+  if (slug === vendor || slug.startsWith(`${vendor}-`) || slug.startsWith(`${vendor}/`)) {
+    return slug;
+  }
+  return value;
+}
+
+/** Modelos que el proveedor enumera en un HTTP 400 de nombre no admitido. */
+export function supportedModelNames(detail: string): string[] {
+  const match = detail.match(/supported API model names are (.+?), but you passed/i);
+  if (!match) {
+    return [];
+  }
+  const names: string[] = [];
+  for (const part of match[1].split(",")) {
+    const name = part.trim();
+    if (name) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Elige, entre los nombres que el servidor acaba de enumerar, el que corresponde
+ * al modelo pedido. Sin una pista común (`flash`, `pro`, …) no adivina.
+ */
+export function closestSupportedModel(requested: string, supported: string[]): string | null {
+  const wanted = catalogModelId(requested).toLowerCase();
+  for (const name of supported) {
+    if (name.toLowerCase() === wanted) {
+      return name;
+    }
+  }
+  const hints = ["flash", "pro", "reasoner", "chat", "coder"];
+  for (const hint of hints) {
+    if (!wanted.includes(hint)) {
+      continue;
+    }
+    for (const name of supported) {
+      if (name.toLowerCase().includes(hint)) {
+        return name;
+      }
+    }
+  }
+  return null;
+}
+
+/** Nombre con el que reintentar tras un 400, o `null` si no hay uno distinto. */
+export function modelAcceptedByError(status: number, detail: string, requested: string): string | null {
+  if (status !== 400) {
+    return null;
+  }
+  const next = closestSupportedModel(requested, supportedModelNames(detail));
+  if (!next || next.toLowerCase() === catalogModelId(requested).toLowerCase()) {
+    return null;
+  }
+  return next;
+}
+
 /** Petición HTTP completa, lista para `fetch`. */
 export interface HttpRequest {
   url: string;
@@ -66,7 +141,7 @@ export function anthropicBody(
   system: string,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model: config.model.trim(),
+    model: catalogModelId(config.model),
     max_tokens: config.maxTokens,
     messages: messages.map((message) => {
       const content: Record<string, unknown>[] = [];
@@ -98,7 +173,7 @@ export function anthropicRequest(
   messages: WireMessage[],
   system: string,
 ): HttpRequest {
-  const base = PROVIDER_ENDPOINTS.anthropic;
+  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS.anthropic);
   return {
     url: `${base}/messages`,
     init: {
@@ -133,12 +208,19 @@ export function openAiBody(
     return { role: message.role, content: parts };
   });
   const body: Record<string, unknown> = {
-    model: config.model.trim(),
+    model: catalogModelId(config.model),
     messages: system.trim() ? [{ role: "system", content: system }, ...wire] : wire,
   };
-  // Los modelos de razonamiento exigen `max_completion_tokens`; el interruptor
-  // permite volver a `max_tokens` en servidores compatibles más antiguos.
-  if (config.useMaxCompletionTokens) {
+  // Los modelos de razonamiento de OpenAI exigen `max_completion_tokens`.
+  // DeepSeek rechaza ese campo y sólo acepta `max_tokens`.
+  const root = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS.openai);
+  let host = "";
+  try {
+    host = new URL(root).hostname;
+  } catch {
+    host = "";
+  }
+  if (config.useMaxCompletionTokens && host !== "api.deepseek.com") {
     body.max_completion_tokens = config.maxTokens;
   } else {
     body.max_tokens = config.maxTokens;
@@ -155,7 +237,7 @@ export function openAiRequest(
   messages: WireMessage[],
   system: string,
 ): HttpRequest {
-  const base = PROVIDER_ENDPOINTS.openai;
+  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS.openai);
   return {
     url: `${base}/chat/completions`,
     init: {
@@ -297,18 +379,32 @@ export async function sendChat(
   system: string,
   signal?: AbortSignal,
 ): Promise<ChatResult> {
-  const request = chatRequest(config, wireMessages(messages), system);
+  const wired = wireMessages(messages);
+  const request = chatRequest(config, wired, system);
   const response = await fetch(request.url, { ...request.init, signal });
   const payload = await readJson(response);
   if (!response.ok) {
-    throw new Error(extractApiError(response.status, payload, config.provider));
+    const detail = extractApiError(response.status, payload, config.provider);
+    const accepted = modelAcceptedByError(response.status, detail, config.model);
+    if (accepted) {
+      const retry = chatRequest({ ...config, model: accepted }, wired, system);
+      const second = await fetch(retry.url, { ...retry.init, signal });
+      const secondPayload = await readJson(second);
+      if (!second.ok) {
+        throw new Error(extractApiError(second.status, secondPayload, config.provider));
+      }
+      return { ...parseChatResponse(config.provider, secondPayload), acceptedModel: accepted };
+    }
+    throw new Error(detail);
   }
-  return parseChatResponse(config.provider, payload);
+  const sent = catalogModelId(config.model);
+  const result = parseChatResponse(config.provider, payload);
+  return sent === config.model.trim() ? result : { ...result, acceptedModel: sent };
 }
 
 /** Lista real de modelos de la cuenta (`GET {base}/models`). */
 export async function listModels(config: AiConfig, signal?: AbortSignal): Promise<ModelInfo[]> {
-  const base = PROVIDER_ENDPOINTS[config.provider];
+  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS[config.provider]);
   const anthropic = config.provider === "anthropic";
   const response = await fetch(`${base}/models`, {
     method: "GET",

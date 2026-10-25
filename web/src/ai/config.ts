@@ -8,8 +8,8 @@
 //
 // Aviso honesto que el panel repite al usuario: un WebView no puede proteger una
 // clave frente a quien controle la máquina o inyecte código en la página. Por eso
-// el IDE (a) no recuerda la clave salvo que se le pida, (b) sólo habla con
-// los dos endpoints oficiales y (c) nunca imprime la clave en errores ni logs.
+// el IDE (a) no recuerda la clave salvo que se le pida, (b) sólo llama a una
+// raíz http(s) que el usuario pueda leer y (c) nunca imprime la clave en errores ni logs.
 
 import type { AiConfig, ProviderId } from "./types";
 
@@ -18,7 +18,7 @@ export const STORAGE_KEY = "bara-ide.ai.config.v1";
 
 /** Raíz de la API por defecto de cada proveedor. */
 export const PROVIDER_ENDPOINTS: Record<ProviderId, string> = {
-  anthropic: "https://api.anthropic.com",
+  anthropic: "https://api.anthropic.com/v1",
   openai: "https://api.openai.com/v1",
 };
 
@@ -64,6 +64,14 @@ export const DEFAULT_CONFIG: AiConfig = {
 
 /** Rango de tokens que el panel acepta. */
 export const TOKEN_RANGE = { min: 256, max: 8192 };
+
+/** Anthropic admite 0–1. OpenAI y los compatibles, 0–2. */
+export function temperatureRange(provider: ProviderId): { min: number; max: number } {
+  if (provider === "openai") {
+    return { min: 0, max: 2 };
+  }
+  return { min: 0, max: 1 };
+}
 
 /** Almacén mínimo compatible con `localStorage` (inyectable para probarlo). */
 export interface KeyValueStore {
@@ -149,7 +157,16 @@ export function loadStoredConfig(
 export function loadConfig(store: KeyValueStore | null = defaultStore()): AiConfig {
   const stored = loadStoredConfig(store);
   const config: AiConfig = { ...DEFAULT_CONFIG, ...(stored ?? {}) };
-  config.baseUrl = PROVIDER_ENDPOINTS[config.provider];
+  if (!isApiRoot(config.baseUrl)) {
+    config.baseUrl = PROVIDER_ENDPOINTS[config.provider];
+  } else if (
+    config.provider === "anthropic" &&
+    stripTrailingSlashes(config.baseUrl.trim()) === "https://api.anthropic.com"
+  ) {
+    // La Messages API vive en /v1. Una raíz guardada sin ese segmento
+    // recibía 404 y el panel decía que el proveedor no la reconocía.
+    config.baseUrl = PROVIDER_ENDPOINTS.anthropic;
+  }
   if (!config.apiKey) {
     config.apiKey = envKeyFor(config.provider);
   }
@@ -221,6 +238,27 @@ export function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
+/** `https` con anfitrión, o `http` sólo en la máquina local. Sin usuario ni clave en la URL. */
+export function isApiRoot(value: string): boolean {
+  const trimmed = stripTrailingSlashes(value.trim());
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return false;
+  }
+  if (url.username.length > 0 || url.password.length > 0) {
+    return false;
+  }
+  if (url.protocol === "https:") {
+    return url.hostname.length > 0;
+  }
+  if (url.protocol === "http:") {
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  }
+  return false;
+}
+
 /** Problemas de configuración que impiden enviar (lista vacía = todo listo). */
 export function configProblems(config: AiConfig): string[] {
   const problems: string[] = [];
@@ -230,17 +268,19 @@ export function configProblems(config: AiConfig): string[] {
   if (!config.apiKey.trim()) {
     problems.push("Falta la clave de API del proveedor activo.");
   }
-  const official = stripTrailingSlashes(PROVIDER_ENDPOINTS[config.provider]);
-  const actual = stripTrailingSlashes(config.baseUrl.trim());
-  if (actual !== official) {
-    problems.push(`La raíz de la API tiene que ser ${official}.`);
+  if (!isApiRoot(config.baseUrl)) {
+    problems.push("La raíz de la API tiene que ser https, o http en localhost.");
   }
   const { min, max } = TOKEN_RANGE;
   if (!Number.isFinite(config.maxTokens) || config.maxTokens < min || config.maxTokens > max) {
     problems.push(`Los tokens máximos deben estar entre ${min} y ${max}.`);
   }
-  if (config.temperature !== null && (config.temperature < 0 || config.temperature > 1)) {
-    problems.push("La temperatura debe estar entre 0 y 1.");
+  const heat = temperatureRange(config.provider);
+  if (
+    config.temperature !== null &&
+    (config.temperature < heat.min || config.temperature > heat.max)
+  ) {
+    problems.push(`La temperatura debe estar entre ${heat.min} y ${heat.max}.`);
   }
   return problems;
 }

@@ -21,6 +21,7 @@ import {
   loadConfig,
   maskSecret,
   saveConfig,
+  temperatureRange,
   withProvider,
   type KeyValueStore,
 } from "./config";
@@ -34,8 +35,11 @@ import {
 import { baraSystemPrompt, excerpt, inventoryLine, MAX_DOCUMENT_CHARS, rootTable } from "./prompt";
 import {
   anthropicRequest,
+  catalogModelId,
   chatRequest,
+  closestSupportedModel,
   extractApiError,
+  modelAcceptedByError,
   openAiRequest,
   parseAnthropicResponse,
   parseChatResponse,
@@ -168,6 +172,24 @@ const CHECKS: Check[] = [
       expect(cambiada.apiKey === "", "la clave de Anthropic se filtró a OpenAI");
       expect(cambiada.baseUrl === PROVIDER_ENDPOINTS.openai, "raíz de API incorrecta");
       expect(cambiada.model === PROVIDER_MODEL_PRESETS.openai[0], "modelo por defecto incorrecto");
+      const store = memoryStore();
+      const propia = "https://api.example/v1";
+      expect(
+        saveConfig({ ...readyConfig(), baseUrl: propia, rememberKey: false }, store),
+        "no se guardó la raíz propia",
+      );
+      expect(loadConfig(store).baseUrl === propia, "la raíz guardada volvió a la oficial");
+      const local = { ...readyConfig(), baseUrl: "http://127.0.0.1:11434/v1" };
+      expect(
+        !configProblems(local).some((problem) => problem.includes("raíz")),
+        "una raíz local no debería bloquear el envío",
+      );
+      expect(
+        configProblems({ ...readyConfig(), baseUrl: "file:///tmp" }).some((problem) =>
+          problem.includes("raíz"),
+        ),
+        "una raíz que no es http(s) debería rechazarse",
+      );
       return `openai ⇒ ${cambiada.baseUrl} · ${cambiada.model}`;
     },
   },
@@ -192,7 +214,12 @@ const CHECKS: Check[] = [
       const messages = wireMessages([userMessage("¿Qué ves?", [image])]);
       const request = anthropicRequest(config, messages, "SISTEMA");
       const headers = request.init.headers as Record<string, string>;
-      expect(request.url === "https://api.anthropic.com/messages", `URL inesperada: ${request.url}`);
+      expect(request.url === "https://api.anthropic.com/v1/messages", `URL inesperada: ${request.url}`);
+      const proxy = { ...config, baseUrl: "https://api.example/v1" };
+      expect(
+        anthropicRequest(proxy, messages, "SISTEMA").url === "https://api.example/v1/messages",
+        "la raíz escrita no viaja en la petición",
+      );
       expect(chatRequest(config, messages, "SISTEMA").url === request.url, "el selector falla");
       expect(headers["x-api-key"] === config.apiKey, "falta la cabecera x-api-key");
       expect(headers["anthropic-version"] === ANTHROPIC_VERSION, "falta la versión de la API");
@@ -230,6 +257,12 @@ const CHECKS: Check[] = [
       expect(
         request.url === "https://api.openai.com/v1/chat/completions",
         `URL inesperada: ${request.url}`,
+      );
+      const local = { ...config, baseUrl: "http://127.0.0.1:11434/v1" };
+      expect(
+        openAiRequest(local, wireMessages([userMessage("hola", [])]), "").url ===
+          "http://127.0.0.1:11434/v1/chat/completions",
+        "la raíz local no viaja en la petición",
       );
       expect(headers.authorization === `Bearer ${config.apiKey}`, "falta la autorización Bearer");
       const body = JSON.parse(String(request.init.body)) as {
@@ -393,6 +426,45 @@ const CHECKS: Check[] = [
       expect(ACCEPTED_TYPES.includes("image/png"), "el PNG debería admitirse");
       expect(!ACCEPTED_TYPES.includes("image/svg+xml"), "el SVG no lo aceptan los proveedores");
       return `${image.mediaType} · ${image.width}×${image.height} · ${formatBytes(image.bytes)}`;
+    },
+  },
+  {
+    name: "modelo · el id de catálogo no viaja y el 400 elige el nombre admitido",
+    run: () => {
+      expect(
+        catalogModelId("deepseek:deepseek-v4-flash") === "deepseek-v4-flash",
+        "el prefijo de catálogo sigue en el cuerpo",
+      );
+      expect(catalogModelId("llama3:latest") === "llama3:latest", "se perdió la etiqueta de versión");
+      const detail =
+        "The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed deepseek:deepseek-v4-flash.";
+      expect(
+        closestSupportedModel("deepseek:deepseek-v4-flash", ["deepseek-flash", "deepseek-v4-pro"]) ===
+          "deepseek-flash",
+        "flash no encontró su nombre admitido",
+      );
+      expect(
+        modelAcceptedByError(400, detail, "deepseek:deepseek-v4-flash") === "deepseek-flash",
+        "el 400 no propone el modelo admitido",
+      );
+      expect(modelAcceptedByError(401, detail, "deepseek-flash") === null, "un 401 no debe cambiar el modelo");
+      const config: AiConfig = {
+        ...withProvider(readyConfig(), "openai"),
+        model: "deepseek:deepseek-v4-flash",
+        baseUrl: "https://api.deepseek.com/v1",
+        useMaxCompletionTokens: true,
+      };
+      const body = JSON.parse(String(openAiRequest(config, wireMessages([userMessage("hola")]), "").init.body)) as {
+        model: string;
+        max_tokens?: number;
+        max_completion_tokens?: number;
+      };
+      expect(body.model === "deepseek-v4-flash", `viajó el id de catálogo: ${body.model}`);
+      expect(body.max_tokens === config.maxTokens, "DeepSeek debería recibir max_tokens");
+      expect(body.max_completion_tokens === undefined, "DeepSeek rechaza max_completion_tokens");
+      expect(temperatureRange("openai").max === 2, "OpenAI admite hasta 2");
+      expect(temperatureRange("anthropic").max === 1, "Anthropic admite hasta 1");
+      return `${body.model} · max_tokens ${body.max_tokens} · reintento deepseek-flash`;
     },
   },
   // (fin de las comprobaciones registradas)

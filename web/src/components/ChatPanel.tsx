@@ -172,6 +172,14 @@ export default function ChatPanel({
         return;
       }
       const result = await sendChat(config, history, system, controller.signal);
+      if (result.acceptedModel && result.acceptedModel !== config.model) {
+        const next = { ...config, model: result.acceptedModel };
+        setConfig(next);
+        saveConfig(next);
+        setNotice(
+          `El proveedor no admite «${config.model}». A partir de ahora se usa ${result.acceptedModel}.`,
+        );
+      }
       const id = newId();
       const usage = result.usage;
       setMessages((previous) => [

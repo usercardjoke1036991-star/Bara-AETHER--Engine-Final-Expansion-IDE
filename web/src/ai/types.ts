@@ -70,6 +70,8 @@ export interface ChatResult {
   text: string;
   model: string;
   usage: ChatUsage | null;
+  /** Nombre que el servidor aceptó, si no era el que estaba escrito en ajustes. */
+  acceptedModel?: string;
 }
 
 /** Modelo ofrecido por el proveedor (`GET /models`). */

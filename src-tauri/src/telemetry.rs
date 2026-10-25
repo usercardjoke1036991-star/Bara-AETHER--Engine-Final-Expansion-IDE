@@ -26,8 +26,10 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(panic = "abort"))]
 use std::any::Any;
 use std::collections::BTreeMap;
+#[cfg(not(panic = "abort"))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, MutexGuard};
 
@@ -531,11 +533,24 @@ pub fn transmute_input(
 // Contención de pánicos y cerrojos
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Ejecuta una operación del backend y convierte cualquier *unwind* en `Err`.
+/// Ejecuta una operación del backend.
 ///
-/// El kernel es total por diseño; esta guarda es la segunda línea de defensa
-/// para que un fallo inesperado de la capa glue no derribe el proceso de la UI.
+/// En debug (`panic = unwind`) un pánico de la capa glue vuelve como `Err` y
+/// la ventana sigue viva. El perfil release del workspace es `panic = abort`:
+/// ahí `catch_unwind` no llega a capturar nada, porque el proceso termina
+/// antes. El kernel y el IDE comparten ese perfil al enlazarse en el mismo
+/// binario, así que no se puede relajar sólo en el escritorio.
 pub fn guarded<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    contain(operation)
+}
+
+#[cfg(panic = "abort")]
+fn contain<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    operation()
+}
+
+#[cfg(not(panic = "abort"))]
+fn contain<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     match catch_unwind(AssertUnwindSafe(operation)) {
         Ok(result) => result,
         Err(payload) => Err(format!(
@@ -545,6 +560,7 @@ pub fn guarded<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, St
     }
 }
 
+#[cfg(not(panic = "abort"))]
 fn panic_text(payload: &(dyn Any + Send)) -> &str {
     if let Some(text) = payload.downcast_ref::<&str>() {
         text

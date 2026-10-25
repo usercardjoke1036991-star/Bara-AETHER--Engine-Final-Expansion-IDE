@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -25,7 +28,10 @@ jobs:
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         repository: usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion
-        ref: dev
+        # Commit de `dev` del kernel. Se sube a mano cuando el IDE debe seguir
+        # un kernel nuevo; una rama móvil recompilaría el IDE contra código
+        # que aún no se ha visto.
+        ref: b916ff9da35cc74844771b91857b53f6606ba02b
         token: ${{ secrets.KERNEL_READ_TOKEN }}
         path: BAR-local
     - name: Enlazar el núcleo en ../BAR
@@ -40,3 +46,7 @@ jobs:
       run: cargo build --locked --verbose
     - name: Run tests
       run: cargo test --locked --verbose
+    - name: Escritorio Tauri
+      run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+    - name: Frontend
+      run: npm ci && npm run typecheck && npm run test:ai

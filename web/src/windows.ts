@@ -22,11 +22,14 @@ function isVista(value: string | null): value is DeskVista {
   return VISTAS.some((vista) => vista === value);
 }
 
-/** Etiqueta de la ventana actual. Fuera de Tauri, `main` o `?vista=`. */
+/** Etiqueta de la ventana actual. `?vista=` manda; si no, la etiqueta Tauri. */
 export async function currentVista(): Promise<DeskVista> {
   const query = new URLSearchParams(window.location.search).get("vista");
+  if (isVista(query)) {
+    return query;
+  }
   if (!("__TAURI_INTERNALS__" in window)) {
-    return isVista(query) ? query : "main";
+    return "main";
   }
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   const label = getCurrentWindow().label;

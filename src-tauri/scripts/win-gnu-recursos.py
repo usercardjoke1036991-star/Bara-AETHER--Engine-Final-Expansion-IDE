@@ -47,6 +47,12 @@
 
 from __future__ import annotations
 
+import sys
+
+if __name__ == "__main__" and sys.platform != "win32":
+    print("win-gnu-recursos: esta máquina no es Windows; no hay recursos PE que embeber")
+    raise SystemExit(0)
+
 import argparse
 import ctypes
 import os

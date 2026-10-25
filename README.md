@@ -1,8 +1,14 @@
 # Bara IDE — escritorio (Tauri v2 + React + TypeScript)
 
 Aplicación de escritorio del IDE para el lenguaje **Bara** (*Shoresh*,
-AETHER‑Ω). Envuelve el **kernel congelado** `bara` (etiqueta `v0.1.0-kernel`)
-sin reimplementar nada y expone su análisis léxico a una interfaz React.
+AETHER‑Ω). Envuelve el kernel `bara`. La etiqueta `v0.1.0-kernel` es la
+identidad congelada del lenguaje; el crate publicado está en `0.5.0`. No
+reimplementa el lexer y expone su análisis a una interfaz React.
+
+Para compilar hace falta el repositorio del kernel como carpeta hermana
+`../BAR` (desde `src-tauri`, `../../BAR`). El `Cargo.toml` de workspace que
+agrupa los dos vive en la máquina de desarrollo y no está en este repo. La CI
+clona el kernel en un commit fijo y crea ese enlace.
 
 ## Arquitectura (una sola dirección, cero duplicación)
 

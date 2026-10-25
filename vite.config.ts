@@ -8,6 +8,9 @@ const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   root: "web",
+  // `.env.local` vive junto a package.json. Con `root: "web"`, el directorio
+  // de entorno por defecto sería `web/` y el ejemplo de la raíz no se leería.
+  envDir: "..",
   plugins: [react()],
   // Tauri muestra sus propios diagnósticos: no borrar la consola.
   clearScreen: false,

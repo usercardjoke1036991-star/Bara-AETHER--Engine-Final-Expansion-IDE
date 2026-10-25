@@ -218,12 +218,21 @@ fn get_workspace_topology_graph(
 
 /// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
 #[tauri::command]
-fn run_workspace_recipe(recipe: String) -> Result<orchestrate::RecipeReport, String> {
-    let name = recipe.trim();
+async fn run_workspace_recipe(
+    recipe: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<orchestrate::RecipeReport, String> {
+    let name = recipe.trim().to_string();
     if name.len() > 16 {
         return Err("la receta no está en el catálogo cerrado".to_string());
     }
-    orchestrate::run(name)
+    let root = state.get().ok();
+    tauri::async_runtime::spawn_blocking(move || {
+        let active = root.as_deref().map(std::path::Path::new);
+        orchestrate::run(&name, active)
+    })
+    .await
+    .map_err(|_| "la receta se interrumpió".to_string())?
 }
 
 /// Juzga un bloque del asistente. La carpeta es la activa; `path` no la cambia.
@@ -240,7 +249,7 @@ fn judge_auto_patch(
 
 /// Elige un `.gguf` en el diálogo del sistema y guarda sólo su cabecera.
 #[tauri::command]
-fn load_local_weights(
+async fn load_local_weights(
     app: tauri::AppHandle,
     slot: tauri::State<'_, Mutex<local_infer::LocalSlot>>,
 ) -> Result<local_infer::WeightView, String> {
@@ -426,7 +435,7 @@ fn oracle_converse(
     cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<TurnResult, String> {
-    let (scope, folder_id) = folder_of(&workspace);
+    let (scope, folder_id) = folder_of(&workspace)?;
     let from = bara::flight_recorder::mark();
     let mut turn = with_oracle(&sessions, &scope, |session| session.converse(&input))?;
     let to = bara::flight_recorder::mark();
@@ -443,7 +452,7 @@ fn oracle_status(
     sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<SessionStatus, String> {
-    let (scope, folder_id) = folder_of(&workspace);
+    let (scope, folder_id) = folder_of(&workspace)?;
     let mut status = with_oracle(&sessions, &scope, |session| session.status())?;
     stamp(&mut status, &folder_id);
     Ok(status)
@@ -455,7 +464,7 @@ fn oracle_turns(
     sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<Vec<TurnView>, String> {
-    let (scope, _) = folder_of(&workspace);
+    let (scope, _) = folder_of(&workspace)?;
     with_oracle(&sessions, &scope, |session| session.turns())
 }
 
@@ -465,7 +474,7 @@ fn oracle_reset(
     sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<SessionStatus, String> {
-    let (scope, folder_id) = folder_of(&workspace);
+    let (scope, folder_id) = folder_of(&workspace)?;
     let mut status = with_oracle(&sessions, &scope, |session| {
         session.reset();
         session.status()
@@ -480,7 +489,7 @@ fn temporal_deltas(
     sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<Vec<DeltaView>, String> {
-    let (scope, _) = folder_of(&workspace);
+    let (scope, _) = folder_of(&workspace)?;
     with_oracle(&sessions, &scope, |session| session.deltas())
 }
 
@@ -492,7 +501,7 @@ fn temporal_rollback(
     cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<TurnResult, String> {
-    let (scope, folder_id) = folder_of(&workspace);
+    let (scope, folder_id) = folder_of(&workspace)?;
     let from = bara::flight_recorder::mark();
     let mut turn = with_oracle(&sessions, &scope, |session| session.rollback(marker))?;
     let to = bara::flight_recorder::mark();
@@ -648,8 +657,8 @@ fn bridge_snapshot(source: String) -> Result<String, String> {
 // Cockpit de telemetría (FASE 6) — `src/telemetry.rs`
 // ─────────────────────────────────────────────────────────────────────────
 // Todos los comandos devuelven `Result<String, String>` y pasan por
-// `telemetry::guarded`: un pánico inesperado del backend se convierte en un
-// error IPC, nunca en la caída de la ventana.
+// `telemetry::guarded`: en debug, un pánico inesperado del backend se convierte
+// en un error IPC. El perfil release aborta, así que ahí la guarda no alcanza.
 
 /// Manifiesto ontológico canónico + huella de identidad del puente.
 #[tauri::command]
@@ -664,7 +673,7 @@ fn get_neural_frame(
     cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<String, String> {
-    let scope = cognitive_scope(&workspace);
+    let scope = cognitive_scope(&workspace)?;
     telemetry::guarded(|| telemetry::neural_frame(&cognition, &scope))
 }
 
@@ -674,7 +683,7 @@ fn get_flight_recorder_logs(
     cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<String, String> {
-    let (scope, folder_id) = folder_of(&workspace);
+    let (scope, folder_id) = folder_of(&workspace)?;
     telemetry::guarded(|| telemetry::flight_recorder_logs(&cognition, &scope, &folder_id))
 }
 
@@ -685,7 +694,7 @@ fn transmute_input(
     cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<String, String> {
-    let scope = cognitive_scope(&workspace);
+    let scope = cognitive_scope(&workspace)?;
     telemetry::guarded(|| telemetry::transmute_input(&cognition, &scope, &source_code))
 }
 
@@ -706,31 +715,43 @@ fn desk_spec(vista: &str) -> Option<(&'static str, f64, f64)> {
         .map(|(_, title, width, height)| (*title, *width, *height))
 }
 
-fn cognitive_scope(workspace: &workspace::ActiveWorkspace) -> String {
-    workspace.get().unwrap_or_else(|_| "bootstrap".to_string())
+fn cognitive_scope(workspace: &workspace::ActiveWorkspace) -> Result<String, String> {
+    workspace.get()
 }
 
-fn folder_of(workspace: &workspace::ActiveWorkspace) -> (String, String) {
-    let scope = cognitive_scope(workspace);
+fn folder_of(workspace: &workspace::ActiveWorkspace) -> Result<(String, String), String> {
+    let scope = cognitive_scope(workspace)?;
     let folder_id = workspace::root_id(&scope);
-    (scope, folder_id)
+    Ok((scope, folder_id))
 }
 
 /// Abre o enfoca una ventana registrada. La etiqueta no la inventa el WebView:
 /// tiene que estar en [`DESK_VISTAS`].
+///
+/// El comando es `async` a propósito. En Windows, `WebviewWindowBuilder` dentro
+/// de un comando síncrono bloquea el hilo de WebView2: la ventana nace y se
+/// queda en `about:blank` (pantalla blanca que ni siquiera cierra).
 #[tauri::command]
-fn open_desk_window(app: tauri::AppHandle, vista: String) -> Result<(), String> {
-    let vista = vista.trim();
+async fn open_desk_window(app: tauri::AppHandle, vista: String) -> Result<(), String> {
+    let vista = vista.trim().to_string();
     let (title, width, height) =
-        desk_spec(vista).ok_or_else(|| "ventana no registrada".to_string())?;
-    if let Some(window) = app.get_webview_window(vista) {
-        window.set_focus().map_err(|err| err.to_string())?;
-        return Ok(());
+        desk_spec(&vista).ok_or_else(|| "ventana no registrada".to_string())?;
+    if let Some(window) = app.get_webview_window(&vista) {
+        let blank = window
+            .url()
+            .map(|current| current.as_str() == "about:blank")
+            .unwrap_or(true);
+        if !blank {
+            window.set_focus().map_err(|err| err.to_string())?;
+            return Ok(());
+        }
+        let _ = window.close();
     }
     tauri::WebviewWindowBuilder::new(&app, vista, tauri::WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(width, height)
         .min_inner_size(640.0, 420.0)
+        .background_color(tauri::window::Color(11, 15, 20, 255))
         .center()
         .build()
         .map(|_| ())
@@ -801,7 +822,7 @@ fn transmute_workspace(
 ///
 /// No devuelve píxeles ni la ruta absoluta. Cancelar responde `cancelado`.
 #[tauri::command]
-fn inspect_media_dialog(app: tauri::AppHandle) -> Result<media::MediaInspection, String> {
+async fn inspect_media_dialog(app: tauri::AppHandle) -> Result<media::MediaInspection, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let picked = app
@@ -830,7 +851,7 @@ fn inspect_media_dialog(app: tauri::AppHandle) -> Result<media::MediaInspection,
 /// La ruta no viaja desde el WebView: sale del diálogo del sistema operativo.
 /// Cancelar devuelve el error estable `cancelado`, sin tocar el workspace.
 #[tauri::command]
-fn workspace_open_dialog(
+async fn workspace_open_dialog(
     app: tauri::AppHandle,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
@@ -848,7 +869,7 @@ fn workspace_open_dialog(
 /// `git` corre con argumentos fijos, sin shell. Al terminar, ese clon es el
 /// workspace activo y el árbol ya viene sin `target/`, `node_modules/` ni `.git/`.
 #[tauri::command]
-fn github_clone(
+async fn github_clone(
     app: tauri::AppHandle,
     url: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
@@ -858,7 +879,12 @@ fn github_clone(
     // Validar antes de abrir el diálogo: una URL mala no pide carpeta.
     let _ = import::github_remote(&url)?;
     let parent = pick_folder(&app, "Carpeta donde clonar el repositorio")?;
-    let cloned = import::clone_repository(&app, &parent, &url)?;
+    let app_clone = app.clone();
+    let cloned = tauri::async_runtime::spawn_blocking(move || {
+        import::clone_repository(&app_clone, &parent, &url)
+    })
+    .await
+    .map_err(|_| "el clon se interrumpió".to_string())??;
     let tree = workspace::tree(&cloned.display().to_string())?;
     adopt_root(&state, &cognition, &sessions, tree.root.clone());
     Ok(tree)
@@ -881,7 +907,7 @@ fn pick_folder(app: &tauri::AppHandle, title: &str) -> Result<std::path::PathBuf
     workspace::resolve_root(&path.display().to_string())
 }
 
-/// Arranca la ventana del IDE con los treinta y nueve comandos registrados.
+/// Arranca la ventana del IDE con los cincuenta y seis comandos registrados.
 ///
 /// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
 /// instancia por ventana, detrás del cerrojo que guarda [`with_session`].

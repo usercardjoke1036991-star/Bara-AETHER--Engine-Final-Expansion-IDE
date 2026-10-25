@@ -14,8 +14,12 @@ use bara::autopoietic::BelnapValue;
 use bara::log_lattice::{observe_log_line, status_key};
 use serde::Serialize;
 
-/// Un proceso que sigue vivo después de este plazo se mata y su hilo queda libre.
-const RECIPE_LIMIT: Duration = Duration::from_secs(30);
+/// `npm run typecheck` no debería pasar de un minuto.
+const IDE_RECIPE_LIMIT: Duration = Duration::from_secs(60);
+
+/// `cargo check` en frío supera los 30 s. Dos minutos cubren una compilación
+/// corta; si sigue vivo, se mata y el panel lo cuenta como tiempo agotado.
+const CARGO_RECIPE_LIMIT: Duration = Duration::from_secs(120);
 
 /// Tope de bytes que vuelven al panel. El resto se descarta.
 const MAX_OUTPUT: usize = 48 * 1024;
@@ -48,7 +52,7 @@ pub struct RecipeReport {
     pub both_count: u32,
     pub neither_count: u32,
     pub truncated: bool,
-    /// El proceso superó [`RECIPE_LIMIT`] y fue terminado.
+    /// El proceso superó el plazo de su receta y fue terminado.
     pub timed_out: bool,
 }
 
@@ -107,6 +111,38 @@ fn workspace_dir() -> Result<PathBuf, String> {
 fn ide_dir() -> Result<PathBuf, String> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     anchored(&dir, "package.json")
+}
+
+/// Sube desde la carpeta abierta hasta encontrar el ancla. La ruta grabada en
+/// el binario (`CARGO_MANIFEST_DIR`) no existe en un MSI instalado en otra máquina.
+fn find_anchor(start: &Path, anchor: &str) -> Option<PathBuf> {
+    let mut current = start.to_path_buf();
+    for _ in 0..6 {
+        if let Ok(found) = anchored(&current, anchor) {
+            return Some(found);
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    None
+}
+
+fn recipe_dir(ide: bool, active: Option<&Path>) -> Result<PathBuf, String> {
+    let anchor = if ide { "package.json" } else { "Cargo.toml" };
+    if let Some(root) = active {
+        if let Some(found) = find_anchor(root, anchor) {
+            return Ok(found);
+        }
+    }
+    let compiled = if ide { ide_dir() } else { workspace_dir() };
+    compiled.map_err(|_| {
+        if ide {
+            "abre la carpeta del IDE: hace falta package.json".to_string()
+        } else {
+            "abre la carpeta del kernel: hace falta Cargo.toml".to_string()
+        }
+    })
 }
 
 /// Canonicaliza y exige el ancla. Así un enlace no recoloca el directorio
@@ -224,19 +260,23 @@ fn clip(text: &str) -> String {
 }
 
 /// Ejecuta la receta y devuelve el registro clasificado.
-pub fn run(recipe: &str) -> Result<RecipeReport, String> {
+///
+/// `active` es la carpeta abierta en el IDE. Si contiene el ancla (o un padre
+/// cercano la contiene), manda ella. Si no, se prueba la ruta de compilación.
+pub fn run(recipe: &str, active: Option<&Path>) -> Result<RecipeReport, String> {
     let chosen = spec(recipe)?;
-    let cwd = if chosen.ide {
-        ide_dir()?
+    let cwd = recipe_dir(chosen.ide, active)?;
+    let limit = if chosen.ide {
+        IDE_RECIPE_LIMIT
     } else {
-        workspace_dir()?
+        CARGO_RECIPE_LIMIT
     };
     let mut command = Command::new(chosen.program);
     command
         .args(chosen.args)
         .current_dir(&cwd)
         .env("CARGO_TERM_COLOR", "never");
-    let driven = drive(&mut command, RECIPE_LIMIT)?;
+    let driven = drive(&mut command, limit)?;
     let mut lines = Vec::new();
     let mut true_count = 0u32;
     let mut false_count = 0u32;
@@ -316,7 +356,11 @@ mod tests {
     #[test]
     fn un_proceso_colgado_se_corta() {
         let mut command = Command::new("ping");
-        command.args(["-n", "12", "127.0.0.1"]);
+        if cfg!(windows) {
+            command.args(["-n", "12", "127.0.0.1"]);
+        } else {
+            command.args(["-c", "12", "127.0.0.1"]);
+        }
         let started = Instant::now();
         let driven = drive(&mut command, Duration::from_millis(350)).expect("ping");
         assert!(driven.timed_out);

@@ -13,6 +13,7 @@ import {
   PROVIDER_MODEL_PRESETS,
   TOKEN_RANGE,
   configProblems,
+  temperatureRange,
   describeConfig,
   maskSecret,
   withProvider,
@@ -56,6 +57,7 @@ export default function AiSettings({
   const [reveal, setReveal] = useState(false);
   const problems = configProblems(config);
   const presets = PROVIDER_MODEL_PRESETS[config.provider];
+  const heat = temperatureRange(config.provider);
 
   return (
     <div className="ai-settings">
@@ -118,11 +120,26 @@ export default function AiSettings({
         <span>Raíz de la API</span>
         <input
           spellCheck={false}
-          readOnly
-          value={PROVIDER_ENDPOINTS[config.provider]}
-          aria-label="Raíz oficial de la API"
+          value={config.baseUrl}
+          placeholder={PROVIDER_ENDPOINTS[config.provider]}
+          aria-label="Raíz de la API"
+          onChange={(event) => onChange({ ...config, baseUrl: event.target.value })}
         />
+        <span className="muted">
+          Prefijo de la petición. Anthropic añade /messages; OpenAI y los servidores compatibles,
+          /chat/completions.
+        </span>
       </label>
+      <div className="row">
+        <button
+          type="button"
+          onClick={() =>
+            onChange({ ...config, baseUrl: PROVIDER_ENDPOINTS[config.provider] })
+          }
+        >
+          raíz oficial
+        </button>
+      </div>
 
       <div className="ai-field-row">
         <label className="ai-field">
@@ -145,14 +162,17 @@ export default function AiSettings({
           <span>Temperatura</span>
           <input
             type="number"
-            min={0}
-            max={1}
+            min={heat.min}
+            max={heat.max}
             step={0.1}
             placeholder="del proveedor"
             value={config.temperature === null ? "" : String(config.temperature)}
             onChange={(event) => {
               const raw = event.target.value.trim();
-              onChange({ ...config, temperature: raw === "" ? null : clamp(Number(raw), 0, 1) });
+              onChange({
+                ...config,
+                temperature: raw === "" ? null : clamp(Number(raw), heat.min, heat.max),
+              });
             }}
           />
         </label>
