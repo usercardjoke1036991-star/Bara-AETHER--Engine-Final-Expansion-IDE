@@ -755,6 +755,7 @@ export default function App() {
             />
 
             <div className="editor-main">
+              <div className="editor-stage">
               {showWelcome ? (
                 <WelcomeGate
                   busy={workspaceLoading || importing}
@@ -833,6 +834,7 @@ export default function App() {
                   cursorLineRef.current = line;
                 }}
               />
+              </div>
               <details className="fold console-fold" open>
                 <summary>Consola del oráculo</summary>
               <KernelConsole

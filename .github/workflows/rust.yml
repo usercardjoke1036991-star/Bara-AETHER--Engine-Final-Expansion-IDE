@@ -28,10 +28,10 @@ jobs:
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         repository: usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion
-        # Commit de `dev` del kernel. Se sube a mano cuando el IDE debe seguir
-        # un kernel nuevo; una rama móvil recompilaría el IDE contra código
-        # que aún no se ha visto.
-        ref: b916ff9da35cc74844771b91857b53f6606ba02b
+        # Tip de `dev` del kernel. Respecto de b916ff9 el delta es sólo CI:
+        # Rust 1.99.0 fijo y la veda de panic!/unreachable! fuera de los tests.
+        # Una rama móvil recompilaría el IDE contra código que aún no se ha visto.
+        ref: c9ca8a3bf917bf3e24504af8a8539af6f0b924a7
         token: ${{ secrets.KERNEL_READ_TOKEN }}
         path: BAR-local
     - name: Enlazar el núcleo en ../BAR

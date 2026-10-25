@@ -259,6 +259,30 @@ export function isApiRoot(value: string): boolean {
   return false;
 }
 
+/**
+ * Motivo por el que Enviar no sale, o `null` si el turno puede viajar.
+ *
+ * El modo offline habla con el núcleo local y no usa la clave ni la raíz.
+ * En línea, el primer problema de [`configProblems`] bloquea el envío.
+ */
+export function chatSendGate(
+  config: AiConfig,
+  draft: string,
+  pending: boolean,
+  offline: boolean,
+): string | null {
+  if (pending) {
+    return "hay un turno en curso";
+  }
+  if (draft.trim().length === 0) {
+    return "el mensaje está vacío";
+  }
+  if (offline) {
+    return null;
+  }
+  return configProblems(config)[0] ?? null;
+}
+
 /** Problemas de configuración que impiden enviar (lista vacía = todo listo). */
 export function configProblems(config: AiConfig): string[] {
   const problems: string[] = [];

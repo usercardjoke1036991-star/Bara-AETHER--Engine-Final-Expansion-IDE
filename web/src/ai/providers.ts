@@ -116,6 +116,45 @@ export function closestSupportedModel(requested: string, supported: string[]): s
   return null;
 }
 
+/** Un intento original y, como mucho, un reintento. */
+export const CHAT_ATTEMPT_LIMIT = 2;
+
+/** Plazo de todo el intercambio, incluido el reintento. Entre 60 s y 120 s. */
+export const CHAT_TIMEOUT_MS = 90_000;
+
+/** Qué hacer tras un fallo HTTP, o `null` si no hay que reintentar. */
+export type ChatRetry = { kind: "model"; model: string } | { kind: "transient" };
+
+/**
+ * Un solo reintento: o el modelo que el 400 nombra, o un fallo transitorio.
+ * Un 400 sin modelo admitido, un 401 y el segundo fallo no se reintentan.
+ */
+export function chatRetry(
+  status: number,
+  detail: string,
+  requested: string,
+  attempt: number,
+): ChatRetry | null {
+  if (attempt >= CHAT_ATTEMPT_LIMIT) {
+    return null;
+  }
+  const accepted = modelAcceptedByError(status, detail, requested);
+  if (accepted) {
+    return { kind: "model", model: accepted };
+  }
+  if (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    return { kind: "transient" };
+  }
+  return null;
+}
+
 /** Nombre con el que reintentar tras un 400, o `null` si no hay uno distinto. */
 export function modelAcceptedByError(status: number, detail: string, requested: string): string | null {
   if (status !== 400) {
@@ -373,6 +412,34 @@ async function readJson(response: Response): Promise<unknown> {
  * `signal` permite cancelar el turno desde la interfaz (botón «Detener»).
  * Los fallos de red se propagan como `Error` con el detalle del proveedor.
  */
+/** Une la cancelación del usuario con un plazo fijo. Abortar no se reintenta. */
+function linkAbort(
+  outer: AbortSignal | undefined,
+  ms: number,
+): { signal: AbortSignal; cancel: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException("el proveedor no respondió a tiempo", "TimeoutError"));
+  }, ms);
+  const fromOuter = () => {
+    controller.abort(outer?.reason);
+  };
+  if (outer) {
+    if (outer.aborted) {
+      fromOuter();
+    } else {
+      outer.addEventListener("abort", fromOuter);
+    }
+  }
+  return {
+    signal: controller.signal,
+    cancel: () => {
+      clearTimeout(timer);
+      outer?.removeEventListener("abort", fromOuter);
+    },
+  };
+}
+
 export async function sendChat(
   config: AiConfig,
   messages: ChatMessage[],
@@ -380,26 +447,44 @@ export async function sendChat(
   signal?: AbortSignal,
 ): Promise<ChatResult> {
   const wired = wireMessages(messages);
-  const request = chatRequest(config, wired, system);
-  const response = await fetch(request.url, { ...request.init, signal });
-  const payload = await readJson(response);
-  if (!response.ok) {
-    const detail = extractApiError(response.status, payload, config.provider);
-    const accepted = modelAcceptedByError(response.status, detail, config.model);
-    if (accepted) {
-      const retry = chatRequest({ ...config, model: accepted }, wired, system);
-      const second = await fetch(retry.url, { ...retry.init, signal });
-      const secondPayload = await readJson(second);
-      if (!second.ok) {
-        throw new Error(extractApiError(second.status, secondPayload, config.provider));
+  const linked = linkAbort(signal, CHAT_TIMEOUT_MS);
+  try {
+    let model = config.model;
+    let acceptedModel: string | undefined;
+    for (let attempt = 1; attempt <= CHAT_ATTEMPT_LIMIT; attempt += 1) {
+      const request = chatRequest({ ...config, model }, wired, system);
+      let response: Response;
+      try {
+        response = await fetch(request.url, { ...request.init, signal: linked.signal });
+      } catch (error) {
+        if (linked.signal.aborted || attempt >= CHAT_ATTEMPT_LIMIT) {
+          throw error;
+        }
+        continue;
       }
-      return { ...parseChatResponse(config.provider, secondPayload), acceptedModel: accepted };
+      const payload = await readJson(response);
+      if (response.ok) {
+        const sent = catalogModelId(model);
+        const result = parseChatResponse(config.provider, payload);
+        const renamed = acceptedModel ?? (sent === model.trim() ? undefined : sent);
+        return renamed ? { ...result, acceptedModel: renamed } : result;
+      }
+      const detail = extractApiError(response.status, payload, config.provider);
+      const retry = chatRetry(response.status, detail, model, attempt);
+      if (retry?.kind === "model") {
+        acceptedModel = retry.model;
+        model = retry.model;
+        continue;
+      }
+      if (retry?.kind === "transient") {
+        continue;
+      }
+      throw new Error(detail);
     }
-    throw new Error(detail);
+    throw new Error("el proveedor no respondió");
+  } finally {
+    linked.cancel();
   }
-  const sent = catalogModelId(config.model);
-  const result = parseChatResponse(config.provider, payload);
-  return sent === config.model.trim() ? result : { ...result, acceptedModel: sent };
 }
 
 /** Lista real de modelos de la cuenta (`GET {base}/models`). */

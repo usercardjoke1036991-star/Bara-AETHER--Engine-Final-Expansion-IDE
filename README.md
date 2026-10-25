@@ -229,7 +229,7 @@ desde el kernel por IPC.
 | Proveedores | `web/src/ai/providers.ts` | Construcción de peticiones y análisis de respuestas (puras, sin red). |
 | Contexto | `web/src/ai/prompt.ts` | Prompt del sistema con el catálogo, el análisis y el ejemplo del kernel. |
 | Imágenes | `web/src/ai/images.ts` | Arrastrar/soltar, pegar y elegir; reducción a 1568 px y topes de tamaño. |
-| Autodiagnóstico | `web/src/ai/selfcheck.ts` | Once comprobaciones sin red: ajustes, peticiones, respuestas, prompt, imágenes. |
+| Autodiagnóstico | `web/src/ai/selfcheck.ts` | Doce comprobaciones sin red: ajustes, peticiones, respuestas, prompt, imágenes y el reintento del chat. |
 | Interfaz | `web/src/components/*.tsx` | `ChatPanel` (panel y conversación), `AiSettings` (ajustes), `AssistantText` (prosa y bloques de código). |
 
 * **Proveedores**: Anthropic (Messages API) y OpenAI (Chat Completions). La
@@ -241,9 +241,10 @@ desde el kernel por IPC.
   y «Olvidar» las borra. La clave nunca se incluye en un informe de error ni en
   la descripción del estado. `VITE_ANTHROPIC_API_KEY` / `VITE_OPENAI_API_KEY`
   (véase `.env.example`) existen **sólo para desarrollo** y quedan incrustadas
-  en el haz que sirve Vite: no son un mecanismo de custodia. Para un despliegue
-  real, apunte el campo «raíz de la API» a un proxy propio que firme las
-  peticiones.
+  en el haz que sirve Vite: no son un mecanismo de custodia. Sacarla a un
+  llavero del sistema queda fuera de este cliente. La raíz de la API puede ser
+  un subcamino de un host de la CSP (por ejemplo `https://api.deepseek.com/v1`).
+  Otro host no sale del WebView hasta que se añada a `connect-src`.
 * **Cómo llega el código al editor**: los bloques cercados (```) de cada
   respuesta se pueden copiar o enviar al editor con «usar en el editor». El
   bloque se **añade** al final del documento, nunca lo sustituye, y el kernel lo
@@ -263,7 +264,7 @@ cargo test   --workspace --locked                            # kernel + motor + 
 cargo clippy --workspace --all-targets --locked -- -D warnings  # política del CI: salida 0 y 0 avisos de rustc
                                                                 # (solo el aviso esperado del build.rs de Tauri)
 npm run typecheck                                           # tsc --noEmit
-npm run test:ai                                             # 11 comprobaciones del panel de IA, sin red
+npm run test:ai                                             # 12 comprobaciones del panel de IA, sin red
 npm run build                                               # tsc --noEmit && vite build -> web/dist
 ```
 
@@ -296,9 +297,13 @@ termina con salida 0.
   descubre `.cargo/config.toml` subiendo desde el CWD, nunca entrando en los
   directorios de los miembros). Con MSVC o `windres` disponible se usa el
   compilador de recursos normal y el parcheador es idempotente.
-* **CSP**: `tauri.conf.json` usa `"csp": null` (igual que la plantilla oficial)
-  para no romper el HMR de Vite en desarrollo. Endurecerla es un cambio de una
-  línea antes de publicar.
+* **CSP**: `tauri.conf.json` no usa `"csp": null`. En producción, `connect-src`
+  admite `'self'`, `ipc:`, `http://ipc.localhost`, `http://localhost:*`,
+  `http://127.0.0.1:*` y sólo `https://api.anthropic.com`,
+  `https://api.openai.com` y `https://api.deepseek.com`. No hay un esquema
+  `https:` suelto. `devCsp` añade el servidor de Vite (`http://localhost:1420`
+  y `ws://localhost:1420`) y los mismos tres orígenes. Las recetas cortan
+  `typecheck` a los 60 s y `cargo check` / `cargo test` a los 120 s.
 * **Perfil release**: se declara en el `Cargo.toml` del raíz del workspace
   (idéntico al de `BAR`); Cargo ignora el de los miembros no raíz a propósito.
 * **Iconos**: generados con `System.Drawing` (PNG 32/128/256/512, ICO

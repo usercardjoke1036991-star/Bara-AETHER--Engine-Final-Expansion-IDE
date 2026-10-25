@@ -43,8 +43,8 @@
 //! * `workspace_source_text(path)` — lee una fuente del proyecto (sólo
 //!   relativa) para saltar desde el grafo. No escribe.
 //! * `run_workspace_recipe(recipe)` — `check`, `test` o `typecheck`. El
-//!   proceso y los argumentos son literales; no hay shell. Cada receta
-//!   se corta a los 30 s.
+//!   proceso y los argumentos son literales; no hay shell. `typecheck`
+//!   (npm) se corta a los 60 s; `check` y `test` (cargo), a los 120 s.
 //! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque.
 //!   Sólo un `∅` se escribe, en la ruta relativa de la raíz activa.
 //! * `load_local_weights()` — diálogo del sistema para un `.gguf`. No recibe ruta.
@@ -1128,16 +1128,73 @@ mod ipc_boundary {
     }
 
     #[test]
-    fn la_csp_solo_admite_el_origen_local_y_los_dos_proveedores() {
+    fn la_csp_no_abre_https_generico() {
         let conf = include_str!("../tauri.conf.json");
         assert!(!conf.contains("\"csp\": null"));
-        assert!(conf.contains("https://api.anthropic.com"));
-        assert!(conf.contains("https://api.openai.com"));
-        assert!(conf.contains("script-src 'self'"));
+        for key in ["csp", "devCsp"] {
+            let value = csp_value(conf, key);
+            let connect = connect_src(value);
+            for token in connect.split_whitespace().skip(1) {
+                assert!(
+                    origen_https_concreto(token),
+                    "{key}: esquema https genérico en connect-src: {token}"
+                );
+            }
+        }
+        let production = csp_value(conf, "csp");
+        for host in [
+            "https://api.anthropic.com",
+            "https://api.openai.com",
+            "https://api.deepseek.com",
+        ] {
+            assert!(
+                production.contains(host),
+                "la CSP de producción no nombra {host}"
+            );
+        }
+        assert!(!origen_https_concreto("https:"));
+        assert!(!origen_https_concreto("https://"));
+        assert!(!origen_https_concreto("https://*"));
+        assert!(origen_https_concreto("https://api.deepseek.com"));
+        assert!(origen_https_concreto("ipc:"));
+        assert!(production.contains("script-src 'self'"));
         assert!(conf.contains("\"msi\""));
         assert!(conf.contains("\"nsis\""));
         let package = include_str!("../../package.json");
         assert!(package.contains("dist:windows"));
         assert!(package.contains("msi,nsis"));
+    }
+
+    /// Valor JSON de `"csp"` o `"devCsp"`. El archivo no es un esquema suelto.
+    fn csp_value<'a>(conf: &'a str, key: &str) -> &'a str {
+        let needle = format!("\"{key}\": \"");
+        let Some(at) = conf.find(&needle) else {
+            panic!("falta {key}");
+        };
+        let rest = &conf[at + needle.len()..];
+        let Some(end) = rest.find('"') else {
+            panic!("{key} sin cierre");
+        };
+        &rest[..end]
+    }
+
+    fn connect_src(csp: &str) -> &str {
+        csp.split(';')
+            .map(str::trim)
+            .find(|part| part.starts_with("connect-src "))
+            .unwrap_or_else(|| panic!("falta connect-src"))
+    }
+
+    /// `https://api.ejemplo.com` sí. `https:`, `https://` y `https://*` no.
+    /// Un token que no es https (ipc, localhost) pasa.
+    fn origen_https_concreto(token: &str) -> bool {
+        let Some(host) = token.strip_prefix("https:") else {
+            return true;
+        };
+        let Some(host) = host.strip_prefix("//") else {
+            return false;
+        };
+        let host = host.split(['/', ':', '?']).next().unwrap_or("");
+        !host.is_empty() && !host.contains('*') && host.contains('.')
     }
 }

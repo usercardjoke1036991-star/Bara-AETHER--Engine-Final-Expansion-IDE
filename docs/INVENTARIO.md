@@ -598,7 +598,7 @@ Monta el árbol React sobre `#root` (`const container = document.getElementById(
 | `prompt.ts` (129) | `MAX_DOCUMENT_CHARS = 4000` · `PromptContext` · `excerpt(source, max)`, `inventoryLine(analysis)`, `rootTable(catalogue)`, `liveContext(context)`, `baraSystemPrompt(context)` y los bloques `IDENTITY_RULES`, `ONTOLOGY_RULES` (autopoiesis: qué hacer con una raíz desconocida), `CONTRACT_RULES` (traducción desde lengua natural). El prompt **se construye con lo que el kernel dice** del documento vivo y del catálogo. |
 | `providers.ts` (338) | `WireMessage`, `MAX_WIRE_MESSAGES = 12`, `wireMessages(messages, limit)`, `normalizeBaseUrl`, `HttpRequest`, `anthropicBody`, `anthropicRequest`, `openAiBody`, `openAiRequest`, `chatRequest`, `extractApiError`, `usageOf`, `parseAnthropicResponse`, `parseOpenAiResponse`, `parseChatResponse`, `sendChat`, `listModels` |
 | `images.ts` (202) | `ACCEPTED_TYPES = [png, jpeg, webp, gif]` · `MAX_EDGE = 1568` · `MAX_PAYLOAD_BYTES = 4 MB` · `MAX_ATTACHMENTS = 6` · `attachmentId`, `base64Bytes`, `toDataUrl`, `splitDataUrl`, `formatBytes`, `acceptedFiles`, `prepareImage`, `prepareImages`, `filesFromDataTransfer` (+ privadas `readAsDataUrl`, `loadImage`, `drawScaled`: escala/redibuja en `<canvas>` para respetar el tope de 1568 px) |
-| `selfcheck.ts` (429) | `CheckResult`, `runSelfCheck()`, `summarize(results)`, `formatReport(results)`; interno `CHECKS: Check[]` con **11 comprobaciones** sin red (helpers `expect`, `memoryStore`, `readyConfig`, `fakeImage`, `userMessage`, `assistantMessage`) |
+| `selfcheck.ts` (429) | `CheckResult`, `runSelfCheck()`, `summarize(results)`, `formatReport(results)`; interno `CHECKS: Check[]` con **12 comprobaciones** sin red (helpers `expect`, `memoryStore`, `readyConfig`, `fakeImage`, `userMessage`, `assistantMessage`) |
 
 ### 6.6 Capa D — `web/scripts/ai-check.mjs` (40 líneas)
 
@@ -625,7 +625,7 @@ y **sale con código 1** si alguna comprobación falla. Cero dependencias nuevas
 |---|---|
 | `package.json` | Nombre `bara-ide-desktop`, `type: module`; scripts `dev` (vite), `build` (`tsc --noEmit && vite build`), `preview`, `typecheck` (`tsc --noEmit`), `test:ai` (`node scripts/ai-check.mjs`), `tauri`. Dependencias `@tauri-apps/api ^2`, `react ^19`, `react-dom ^19`; dev: `@tauri-apps/cli ^2`, `@types/node ^24`, `@types/react ^19`, `@types/react-dom ^19`, `@vitejs/plugin-react ^5`, `typescript ^5`, `vite ^7`. |
 | `vite.config.ts` | `root: "web"` (en `src/` vive Rust); `clearScreen: false`; servidor `port 1420`, `strictPort`, `host` de `TAURI_DEV_HOST`, HMR en `1421`, `watch.ignored: ["**/src-tauri/**"]`; build `outDir: "dist"`, `target: "chrome105"`, `sourcemap`/`minify` según `TAURI_ENV_DEBUG`. |
-| `tauri.conf.json` | `productName: "Bara IDE"`, `mainBinaryName: "bara-ide-desktop"`, v0.1.0, identificador `com.aetheromega.bara.ide`; build `beforeDevCommand: npm run dev`, `beforeBuildCommand: npm run build`, `devUrl: http://localhost:1420`, `frontendDist: ../web/dist`; ventana `main` «Bara IDE — AETHER‑Ω» 1180×760 (mín. 760×520), `resizable`, `center`; `security.csp: null`; bundle activo, `targets: "all"`, 5 iconos, copyright «AETHER‑Ω», categoría `DeveloperTool` + descripciones. |
+| `tauri.conf.json` | `productName: "Bara IDE"`, `mainBinaryName: "bara-ide-desktop"`, v0.1.0, identificador `com.aetheromega.bara.ide`; build `beforeDevCommand: npm run dev`, `beforeBuildCommand: npm run build`, `devUrl: http://localhost:1420`, `frontendDist: ../web/dist`; ventana `main` «Bara IDE — AETHER‑Ω» 1180×760 (mín. 760×520), `resizable`, `center`; `security.csp` con allowlist (Anthropic, OpenAI, DeepSeek; sin esquema `https:` suelto); bundle activo, `targets: "all"`, 5 iconos, copyright «AETHER‑Ω», categoría `DeveloperTool` + descripciones. |
 | `capabilities/default.json` | Ventana `main`, permiso `core:default` (los comandos propios del IDE no necesitan ACL). |
 | `.env.example` | `VITE_ANTHROPIC_API_KEY`, `VITE_OPENAI_API_KEY` — solo desarrollo, solo se leen en `npm run dev`; documenta que la clave de verdad se escribe en «Ajustes › IA». |
 
@@ -657,7 +657,7 @@ cargo run    -p bara-ide -- samples\genesis.bara             # CLI: --tokens | -
 
 # ── Interfaz ────────────────────────────────────────────────────────────────
 npm run typecheck       # tsc --noEmit
-npm run test:ai         # 11 comprobaciones del panel de IA, sin red
+npm run test:ai         # 12 comprobaciones del panel de IA, sin red
 npm run build           # tsc --noEmit && vite build -> web/dist
 npm run tauri dev       # ventana de escritorio (Vite en 1420 + backend Rust)
 npm run tauri build     # instalador (requiere enlazador MSVC o MinGW completo)

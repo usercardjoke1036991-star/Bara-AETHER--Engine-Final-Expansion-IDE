@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  chatSendGate,
   configProblems,
   defaultStore,
   describeConfig,
@@ -93,6 +94,7 @@ export default function ChatPanel({
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const storeAvailable = useMemo(() => defaultStore() !== null, []);
   const problems = configProblems(config);
+  const sendGate = chatSendGate(config, draft, pending, offline);
 
   // El contexto del sistema se recalcula sólo cuando cambia el kernel: el
   // prompt que viaja al proveedor es exactamente el que se puede inspeccionar.
@@ -133,7 +135,7 @@ export default function ChatPanel({
   /** Envía el turno actual al proveedor elegido. */
   const send = useCallback(async () => {
     const text = draft.trim();
-    if (text.length === 0 || pending) {
+    if (chatSendGate(config, text, pending, offline) !== null) {
       return;
     }
     const user: ChatMessage = {
@@ -237,6 +239,7 @@ export default function ChatPanel({
       setPending(false);
     }
   }, [attachments, autoApply, config, draft, messages, offline, onJudge, pending, system]);
+
 
   /** Cancela el turno en curso (el proveedor corta en cuanto se interrumpe). */
   const stop = useCallback(() => {
@@ -491,7 +494,7 @@ export default function ChatPanel({
             />
 
             <div className="row">
-              <button type="submit" disabled={pending || draft.trim().length === 0}>
+              <button type="submit" disabled={sendGate !== null} title={sendGate ?? "Enviar"}>
                 Enviar
               </button>
               {pending ? (

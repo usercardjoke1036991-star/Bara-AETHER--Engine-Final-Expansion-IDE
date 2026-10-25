@@ -87,7 +87,9 @@ export default function WorkspaceSidebar({
 
       {shelf && shelf.roots.length > 0 ? (
         <ul className="shelf">
-          {shelf.roots.map((slot) => (
+          {shelf.roots.map((slot) => {
+            const onlyRoot = shelf.roots.length <= 1;
+            return (
             <li key={slot.id}>
               <button
                 type="button"
@@ -105,9 +107,14 @@ export default function WorkspaceSidebar({
               </button>
               <button
                 type="button"
-                aria-label={`Cerrar ${slot.name}`}
-                disabled={loading}
+                className="shelf-close"
+                aria-label={onlyRoot ? `No se cierra la última carpeta (${slot.name})` : `Cerrar ${slot.name}`}
+                title={onlyRoot ? "La última carpeta del estante no se cierra" : "Cerrar carpeta"}
+                disabled={loading || onlyRoot}
                 onClick={() => {
+                  if (onlyRoot) {
+                    return;
+                  }
                   void workspaceCloseRoot(slot.id)
                     .then((next) => {
                       setShelf(next);
@@ -122,7 +129,8 @@ export default function WorkspaceSidebar({
                 ×
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : null}
       {shelfError ? <p className="error">{shelfError}</p> : null}
