@@ -21,6 +21,8 @@
 .env.*.local
 !.env.example
 
+**/__pycache__/
+
 # Caché del autodiagnóstico (`npm run test:ai`)
 /node_modules/.cache
 
