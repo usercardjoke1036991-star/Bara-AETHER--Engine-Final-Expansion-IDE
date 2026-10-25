@@ -42,11 +42,56 @@ jobs:
         test -f ../BAR/Cargo.toml
         test "$(readlink -f ../BAR)" = "$(readlink -f "$PWD/BAR-local")"
         echo "bara queda en $(readlink -f ../BAR)"
+    # Set de escritorio de Tauri v2 en Debian/Ubuntu
+    # (https://v2.tauri.app/start/prerequisites/). libwebkit2gtk-4.1-dev
+    # arrastra GTK 3, de modo que pkg-config resuelve gio-2.0, glib-2.0 y
+    # gdk-3.0. No hay paquetes de Android: el APK sigue fuera de esta puerta.
+    - name: Dependencias de sistema de Tauri
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.1-dev \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libxdo-dev \
+          libssl-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev
+    # El pin del kernel de arriba no se mueve aquí. Rust queda en 1.99.0,
+    # la misma versión con la que se empaqueta el escritorio de Windows.
+    - name: Instalar Rust 1.99.0
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      with:
+        toolchain: 1.99.0
+        components: clippy, rustfmt
     - name: Build
       run: cargo build --locked --verbose
     - name: Run tests
       run: cargo test --locked --verbose
+    # build.rs emite --exclude-all-symbols para todo target env=gnu, incluido
+    # Linux. rust-lld lo rechaza. El wrapper lo retira; el producto no cambia.
     - name: Escritorio Tauri
-      run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      env:
+        RUSTFLAGS: -C linker=${{ github.workspace }}/.github/linux-link.py
+      run: |
+        chmod +x .github/linux-link.py
+        cargo test --manifest-path src-tauri/Cargo.toml --locked
+    # El repo no es un workspace: el paquete de la raíz y el de src-tauri
+    # se comprueban por separado. Ninguno reformatea el kernel enlazado.
+    - name: rustfmt
+      run: |
+        cargo fmt --all -- --check
+        cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+    - name: clippy
+      env:
+        RUSTFLAGS: -C linker=${{ github.workspace }}/.github/linux-link.py
+      run: |
+        chmod +x .github/linux-link.py
+        cargo clippy --all-targets --locked -- -D warnings
+        cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+    # tsc y el autodiagnóstico no ejecutan el CLI de Tauri ni vite build.
+    # package.json no declara preinstall, install, postinstall ni prepare.
     - name: Frontend
-      run: npm ci && npm run typecheck && npm run test:ai
+      run: npm ci --ignore-scripts && npm run typecheck && npm run test:ai
