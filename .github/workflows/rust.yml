@@ -70,8 +70,14 @@ jobs:
       run: cargo build --locked --verbose
     - name: Run tests
       run: cargo test --locked --verbose
+    # build.rs emite --exclude-all-symbols para todo target env=gnu, incluido
+    # Linux. rust-lld lo rechaza. El wrapper lo retira; el producto no cambia.
     - name: Escritorio Tauri
-      run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      env:
+        RUSTFLAGS: -C linker=${{ github.workspace }}/.github/linux-link.py
+      run: |
+        chmod +x .github/linux-link.py
+        cargo test --manifest-path src-tauri/Cargo.toml --locked
     # El repo no es un workspace: el paquete de la raíz y el de src-tauri
     # se comprueban por separado. Ninguno reformatea el kernel enlazado.
     - name: rustfmt
@@ -79,7 +85,10 @@ jobs:
         cargo fmt --all -- --check
         cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
     - name: clippy
+      env:
+        RUSTFLAGS: -C linker=${{ github.workspace }}/.github/linux-link.py
       run: |
+        chmod +x .github/linux-link.py
         cargo clippy --all-targets --locked -- -D warnings
         cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
     - name: Frontend
