@@ -8,6 +8,7 @@
 // En Node no hay `window`, así que no se toca el DOM: la persistencia se prueba
 // con un almacén en memoria.
 
+import { analysisStillCurrent } from "../analysisGate";
 import {
   ANTHROPIC_BROWSER_HEADER,
   ANTHROPIC_VERSION,
@@ -489,6 +490,29 @@ const CHECKS: Check[] = [
       expect(temperatureRange("openai").max === 2, "OpenAI admite hasta 2");
       expect(temperatureRange("anthropic").max === 1, "Anthropic admite hasta 1");
       return `${body.model} · max_tokens ${body.max_tokens} · reintento deepseek-flash`;
+    },
+  },
+  {
+    name: "análisis · una respuesta vieja no pisa el documento activo",
+    run: () => {
+      const first = { generation: 1, text: "ברא", path: "a.bara" };
+      expect(
+        !analysisStillCurrent(first, 2, "ברא אור", "a.bara"),
+        "la generación vieja se publicó",
+      );
+      expect(
+        !analysisStillCurrent(first, 1, "ברא אור", "a.bara"),
+        "el texto nuevo recibió el análisis del viejo",
+      );
+      expect(
+        !analysisStillCurrent(first, 1, "ברא", "b.bara"),
+        "el cambio de documento no descartó el análisis",
+      );
+      expect(
+        analysisStillCurrent(first, 1, "ברא", "a.bara"),
+        "el análisis vigente se descartó",
+      );
+      return "generación, texto y ruta tienen que coincidir";
     },
   },
   // (fin de las comprobaciones registradas)
