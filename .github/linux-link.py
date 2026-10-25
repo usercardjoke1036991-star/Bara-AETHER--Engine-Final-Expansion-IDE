@@ -35,8 +35,11 @@ def main() -> None:
         arg = accepted(raw)
         if arg is not None:
             chosen.append(arg)
-    path = f"/tmp/bara-linux-link-{os.getpid()}.args"
-    with open(path, "w", encoding="ascii", newline="\n") as handle:
+    # Directorio del job, no un temporal público: Sonar marca /tmp.
+    base = os.environ.get("GITHUB_WORKSPACE") or os.getcwd()
+    path = os.path.join(base, f".linux-link-{os.getpid()}.args")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="ascii", newline="\n") as handle:
         handle.write("\n".join(chosen))
         if chosen:
             handle.write("\n")
