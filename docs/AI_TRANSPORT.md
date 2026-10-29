@@ -11,7 +11,8 @@ comandos Tauri `ai_exchange` y `ai_probe_connection`
   `ai_probe_connection` (DNS → TCP → TLS → HTTP GET `/models`).
 
 No hay `fetch` / `XMLHttpRequest` / `axios` hacia OpenAI, Anthropic ni DeepSeek
-desde el frontend.
+desde el frontend. El autodiagnóstico `test:ai` lo comprueba (cabecera
+`Authorization` ausente + puente `exchange` / `probeConnection`).
 
 ## TLS
 
