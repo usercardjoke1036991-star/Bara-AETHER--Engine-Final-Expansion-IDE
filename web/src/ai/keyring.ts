@@ -40,6 +40,31 @@ export interface ExchangeResult {
   body: string;
 }
 
+/** Paso de la sonda «Probar conexión». */
+export interface ProbeStep {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+/** Informe DNS → TCP → TLS → HTTP → modelos. */
+export interface ProbeReport {
+  ok: boolean;
+  steps: ProbeStep[];
+  models: string[];
+}
+
+/** Sonda el camino hasta el proveedor. La clave no viaja en el argumento. */
+export async function probeConnection(
+  provider: ProviderId,
+  baseUrl: string,
+): Promise<ProbeReport> {
+  return invoke<ProbeReport>("ai_probe_connection", {
+    provider,
+    baseUrl,
+  });
+}
+
 /**
  * Pide al proceso que llame al proveedor. La clave no va en este argumento.
  * `signal` corta la espera de la interfaz; el plazo del proceso es el suyo.

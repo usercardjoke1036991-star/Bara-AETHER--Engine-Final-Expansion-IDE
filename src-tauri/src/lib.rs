@@ -917,6 +917,28 @@ async fn ai_exchange(
     .map_err(|_| "la llamada al proveedor se interrumpió".to_string())?
 }
 
+/// Sonda DNS→TCP→TLS→HTTP→modelos. La clave no vuelve al WebView.
+#[tauri::command]
+async fn ai_probe_connection(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Mutex<secrets::Session>>,
+    provider: String,
+    base_url: String,
+) -> Result<ai_http::ProbeReport, String> {
+    window_guard::require(&window, window_guard::CHAT)?;
+    let secret = {
+        let session = state
+            .lock()
+            .map_err(|_| "el llavero está ocupado".to_string())?;
+        secrets::lookup(&session, &secrets::System, &provider)?
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(ai_http::probe_connection(&provider, &base_url, &secret))
+    })
+    .await
+    .map_err(|_| "la sonda se interrumpió".to_string())?
+}
+
 /// Diálogo de carpeta. `cancelado` es el contrato que la interfaz no pinta en rojo.
 /// Estado del proceso hijo: `activo`, `reiniciando` o `caído`.
 #[tauri::command]
@@ -1022,6 +1044,7 @@ pub fn run() {
             ai_key_exists,
             ai_key_delete,
             ai_exchange,
+            ai_probe_connection,
             kernel_host_status
         ])
         .run(tauri::generate_context!())
@@ -1063,6 +1086,7 @@ mod ipc_boundary {
         assert!(handler.contains("ai_key_exists"));
         assert!(handler.contains("ai_key_delete"));
         assert!(handler.contains("ai_exchange"));
+        assert!(handler.contains("ai_probe_connection"));
         assert!(handler.contains("kernel_host_status"));
         assert!(!handler.contains("read_source"));
         assert!(super::desk_spec("topology").is_some());

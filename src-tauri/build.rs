@@ -206,6 +206,7 @@ const APP_COMMANDS: &[&str] = &[
     "ai_key_exists",
     "ai_key_delete",
     "ai_exchange",
+    "ai_probe_connection",
     "kernel_host_status",
 ];
 
