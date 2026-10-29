@@ -20,8 +20,8 @@ import {
 } from "../ai/config";
 import { MAX_ATTACHMENTS, filesFromDataTransfer, formatBytes, prepareImages } from "../ai/images";
 import { baraSystemPrompt } from "../ai/prompt";
+import { deleteKey, inDesktop, keyExists, probeConnection, saveKey } from "../ai/keyring";
 import { listModels, sendChat } from "../ai/providers";
-import { deleteKey, inDesktop, keyExists, saveKey } from "../ai/keyring";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
@@ -412,6 +412,28 @@ export default function ChatPanel({
     }
   }, [config]);
 
+  /** Sonda DNS→TCP→TLS→HTTP→modelos (la clave no sale del proceso). */
+  const runProbe = useCallback(async () => {
+    setModelStatus("sonda…");
+    try {
+      const ready = await commitKey(config, setConfig, () => {
+        keyEpochRef.current += 1;
+      });
+      const report = await probeConnection(ready.provider, ready.baseUrl);
+      const line = report.steps
+        .map((step) => `${step.ok ? "OK" : "FALLO"} ${step.name}: ${step.detail}`)
+        .join(" · ");
+      setModelStatus(report.ok ? `sonda OK · ${report.models.length} modelos` : "sonda con fallos");
+      setNotice(line);
+      if (report.models.length > 0) {
+        setModels(report.models.map((id) => ({ id, label: id } as ModelInfo)));
+      }
+    } catch (error) {
+      setModelStatus(null);
+      setNotice(reasonOf(error));
+    }
+  }, [config]);
+
   /** Autodiagnóstico: las mismas comprobaciones que `npm run test:ai`. */
   const selfCheck = useCallback(() => {
     const results = runSelfCheck();
@@ -497,6 +519,9 @@ export default function ChatPanel({
             onForget={forget}
             onLoadModels={() => {
               void fetchModels();
+            }}
+            onProbe={() => {
+              void runProbe();
             }}
             onClose={() => setSettings(false)}
           />

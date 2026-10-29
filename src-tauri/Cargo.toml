@@ -42,7 +42,11 @@ serde_json = "1"
 keyring = { version = "3", default-features = false, features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 # HTTPS de los proveedores. La clave no sale del proceso.
-ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
+# rustls + almacén del SO (VPN/antivirus con CA en Windows) y webpki como reserva.
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+webpki-roots = "0.26"
 
 # Motor del IDE: la biblioteca `bara-ide` con la feature `serde` activada
 # (modelo serializable a JSON) y, tras ella, el kernel `bara` por ruta.

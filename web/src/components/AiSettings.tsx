@@ -37,6 +37,7 @@ export default function AiSettings({
   onSave,
   onForget,
   onLoadModels,
+  onProbe,
   onClose,
 }: {
   config: AiConfig;
@@ -48,6 +49,7 @@ export default function AiSettings({
   onSave: () => void;
   onForget: () => void;
   onLoadModels: () => void;
+  onProbe: () => void;
   onClose: () => void;
 }) {
   const problems = configProblems(config);
@@ -103,6 +105,9 @@ export default function AiSettings({
       <div className="row">
         <button type="button" disabled={busy} onClick={onLoadModels}>
           listar modelos
+        </button>
+        <button type="button" disabled={busy} onClick={onProbe}>
+          Probar conexión
         </button>
         <span className="grow" />
         <span className="muted">

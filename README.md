@@ -234,13 +234,14 @@ desde el kernel por IPC.
 | Proveedores | `web/src/ai/providers.ts` | Construcción de peticiones y análisis de respuestas (puras, sin red). |
 | Contexto | `web/src/ai/prompt.ts` | Prompt del sistema con el catálogo, el análisis y el ejemplo del kernel. |
 | Imágenes | `web/src/ai/images.ts` | Arrastrar/soltar, pegar y elegir; reducción a 1568 px y topes de tamaño. |
-| Autodiagnóstico | `web/src/ai/selfcheck.ts` | Trece comprobaciones sin red: ajustes, peticiones, respuestas, prompt, imágenes, el reintento del chat y el descarte del análisis viejo. |
+| Autodiagnóstico | `web/src/ai/selfcheck.ts` | Catorce comprobaciones sin red: ajustes, peticiones, respuestas, prompt, imágenes, transporte Rust, el reintento del chat y el descarte del análisis viejo. |
 | Interfaz | `web/src/components/*.tsx` | `ChatPanel` (panel y conversación), `AiSettings` (ajustes), `AssistantText` (prosa y bloques de código). |
 
 * **Proveedores**: Anthropic (Messages API) y OpenAI (Chat Completions, también
   DeepSeek). La petición la arma el WebView sin clave. El proceso añade la
-  cabecera y llama a la red. En la petición multimodal **la imagen precede al
-  texto**.
+  cabecera y llama a la red con **ureq + rustls** (almacén de certificados del
+  sistema; ver `docs/AI_TRANSPORT.md`). «Probar conexión» diagnostica
+  DNS→TCP→TLS→HTTP. En la petición multimodal **la imagen precede al texto**.
 * **Claves**: se escriben en «Ajustes › IA». El campo es un borrador: al
   guardar sale de la interfaz. «Recordar» las deja en el llavero del sistema
   (Credential Manager en Windows, Keychain en macOS, Secret Service en Linux).
@@ -268,7 +269,7 @@ cargo test   --workspace --locked                            # kernel + motor + 
 cargo clippy --workspace --all-targets --locked -- -D warnings  # política del CI: salida 0 y 0 avisos de rustc
                                                                 # (solo el aviso esperado del build.rs de Tauri)
 npm run typecheck                                           # tsc --noEmit
-npm run test:ai                                             # 13 comprobaciones del panel de IA, sin red
+npm run test:ai                                             # 14 comprobaciones del panel de IA, sin red
 npm run build                                               # tsc --noEmit && vite build -> web/dist
 ```
 
