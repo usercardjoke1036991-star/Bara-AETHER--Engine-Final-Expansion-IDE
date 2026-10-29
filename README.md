@@ -286,6 +286,37 @@ Estado medido en esta máquina con `cargo test --workspace --locked`: `bara`
 0 fallos. `cargo clippy --workspace --all-targets --locked -- -D warnings`
 termina con salida 0.
 
+## Compilar en Windows
+
+El target es `x86_64-pc-windows-gnu`. El transporte de IA usa **rustls** →
+crate **ring**, que necesita un compilador C real al construir.
+
+1. Instala **LLVM MinGW (UCRT)**, por ejemplo:
+   `winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e`
+   o descarga el zip desde
+   [mstorsjo/llvm-mingw](https://github.com/mstorsjo/llvm-mingw/releases)
+   y descomprímelo (p. ej. en `%USERPROFILE%\Downloads\llvm-mingw\…\bin`).
+2. Apunta el compilador de C **sin** poner ese `bin` delante del PATH del
+   enlazador de rustup (si lo pones primero, rompe `-lgcc`). En PowerShell,
+   antes de `cargo` / `npm run dist:windows`:
+
+```powershell
+$llvm = "$env:USERPROFILE\Downloads\llvm-mingw\llvm-mingw-*-ucrt-x86_64\bin"
+$llvm = (Resolve-Path $llvm).Path
+$sc = "$env:USERPROFILE\.rustup\toolchains\stable-x86_64-pc-windows-gnu\lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained"
+$env:CC  = Join-Path $llvm 'gcc.exe'
+$env:CXX = Join-Path $llvm 'g++.exe'
+$env:AR  = Join-Path $llvm 'llvm-ar.exe'
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = Join-Path $sc 'x86_64-w64-mingw32-gcc.exe'
+```
+
+3. **No uses** el stub `C:\mingw64\bin\gcc.cmd`: sólo sirve de preprocesador
+   para `windres` y **no** compila C. Con ese stub, `ring` falla con
+   `failed to find tool "gcc.exe"`.
+
+En CI (ubuntu-latest) `build-essential` aporta `gcc` y ring se compila sin
+pasos extra; el workflow no necesita MinGW.
+
 ## Notas
 
 * **Toolchain de Windows**: el árbol completo de Tauri v2 **verifica** y
