@@ -6,4 +6,5 @@ permissions = [
   "allow-ai-key-exists",
   "allow-ai-key-delete",
   "allow-ai-exchange",
+  "allow-ai-probe-connection",
 ]

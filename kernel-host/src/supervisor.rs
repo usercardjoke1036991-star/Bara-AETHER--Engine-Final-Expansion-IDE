@@ -372,6 +372,7 @@ fn spawn_child(
     }
     let mut command = Command::new(exe);
     new_group(&mut command);
+    hide_console(&mut command);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -409,7 +410,9 @@ fn spawn_child(
 pub fn terminate_tree(child: &mut Child) {
     let pid = child.id();
     if cfg!(windows) {
-        let _ = Command::new("taskkill")
+        let mut kill = Command::new("taskkill");
+        hide_console(&mut kill);
+        let _ = kill
             .args(["/F", "/T", "/PID", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -433,6 +436,20 @@ pub fn new_group(command: &mut Command) {
         command.process_group(0);
     }
     #[cfg(not(unix))]
+    {
+        let _ = command;
+    }
+}
+
+/// En Windows no abre consola (ni el sidecar ni `taskkill`).
+fn hide_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
     {
         let _ = command;
     }

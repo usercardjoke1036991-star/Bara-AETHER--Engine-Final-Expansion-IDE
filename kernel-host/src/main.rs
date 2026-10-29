@@ -1,7 +1,10 @@
 //! Bucle del sidecar. Una petición JSON por línea en stdin, una respuesta
 //! por línea en stdout. Lo que no es el protocolo va a stderr.
+//!
+//! Sin consola propia en Windows: el padre ya redirige stdin/stdout/stderr.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::io::{self, BufRead, Write};
 

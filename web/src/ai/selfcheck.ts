@@ -36,7 +36,7 @@ import {
   toDataUrl,
 } from "./images";
 import { baraSystemPrompt, excerpt, inventoryLine, MAX_DOCUMENT_CHARS, rootTable } from "./prompt";
-import { exchange, inDesktop } from "./keyring";
+import { exchange, inDesktop, probeConnection } from "./keyring";
 import {
   anthropicRequest,
   CHAT_ATTEMPT_LIMIT,
@@ -510,6 +510,7 @@ const CHECKS: Check[] = [
     name: "transporte · la IA sale por ai_exchange (Rust), no por fetch del WebView",
     run: () => {
       expect(typeof exchange === "function", "falta el puente invoke→ai_exchange");
+      expect(typeof probeConnection === "function", "falta el puente invoke→ai_probe_connection");
       expect(typeof inDesktop === "function", "falta el detector del escritorio");
       const config: AiConfig = {
         ...withProvider(readyConfig(), "openai"),
@@ -523,7 +524,7 @@ const CHECKS: Check[] = [
       );
       expect(typeof request.url === "string" && request.url.length > 0, "falta la URL del proveedor");
       // El cuerpo se construye en TS; el Bearer lo añade sólo Rust en ai_exchange.
-      return "openAiRequest sin Authorization · exchange=ai_exchange";
+      return "openAiRequest sin Authorization · exchange=ai_exchange · probe=ai_probe_connection";
     },
   },
   {
