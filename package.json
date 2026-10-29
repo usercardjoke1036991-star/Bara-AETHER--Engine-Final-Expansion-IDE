@@ -14,6 +14,9 @@
     "patch:resources": "python src-tauri/scripts/win-gnu-recursos.py --exe ../target/release/bara-ide-desktop.exe",
     "tauri": "tauri",
     "dev:win": "node scripts/free-port-1420.mjs && tauri dev",
+    "disk:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/disk-guard.ps1 -Analizar",
+    "disk:clean": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/disk-guard.ps1 -Limpiar -MinGB 10",
+    "predist:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/disk-guard.ps1 -Limpiar -MinGB 8",
     "dist:windows": "python src-tauri/scripts/stage-kernel-host.py --profile release && tauri build --bundles msi,nsis"
   },
   "dependencies": {
