@@ -54,6 +54,8 @@ export interface ZkGateView {
   checks: ZkCheckView[];
   /** Resumen textual del kernel para el log ontológico. */
   summary: string;
+  /** Siempre true: ZK didáctico/simulado, sin seguridad criptográfica real. */
+  didactic: boolean;
 }
 
 /** Informe de la fase 1 sobre el documento abierto. */
@@ -313,6 +315,8 @@ export interface MetalView {
   device: string;
   /** Etiqueta del dispositivo (`CPU`/`GPU`). */
   deviceLabel: string;
+  /** Siempre true: simulación didáctica, sin GPU/MMIO real. */
+  didactic: boolean;
   /** Instrucciones emitidas. */
   ops: number;
   /** Instrucciones proyectadas (recortadas a `MAX_INSTRUCTIONS`). */

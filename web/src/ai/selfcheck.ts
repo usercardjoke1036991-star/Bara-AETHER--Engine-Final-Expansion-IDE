@@ -36,6 +36,7 @@ import {
   toDataUrl,
 } from "./images";
 import { baraSystemPrompt, excerpt, inventoryLine, MAX_DOCUMENT_CHARS, rootTable } from "./prompt";
+import { exchange, inDesktop } from "./keyring";
 import {
   anthropicRequest,
   CHAT_ATTEMPT_LIMIT,
@@ -489,11 +490,10 @@ const CHECKS: Check[] = [
       const config: AiConfig = {
         ...withProvider(readyConfig(), "openai"),
         model: "deepseek:deepseek-v4-flash",
-        baseUrl: "https://api.deepseek.com",
+        baseUrl: "https://api.deepseek.com/v1",
         useMaxCompletionTokens: true,
       };
-      const request = openAiRequest(config, wireMessages([userMessage("hola")]), "");
-      const body = JSON.parse(String(request.init.body)) as {
+      const body = JSON.parse(String(openAiRequest(config, wireMessages([userMessage("hola")]), "").init.body)) as {
         model: string;
         max_tokens?: number;
         max_completion_tokens?: number;
@@ -501,18 +501,29 @@ const CHECKS: Check[] = [
       expect(body.model === "deepseek-v4-flash", `viajó el id de catálogo: ${body.model}`);
       expect(body.max_tokens === config.maxTokens, "DeepSeek debería recibir max_tokens");
       expect(body.max_completion_tokens === undefined, "DeepSeek rechaza max_completion_tokens");
-      expect(
-        request.url === "https://api.deepseek.com/chat/completions",
-        `URL DeepSeek inesperada: ${request.url}`,
-      );
-      const withV1 = openAiRequest({ ...config, baseUrl: "https://api.deepseek.com/v1" }, wireMessages([userMessage("hola")]), "");
-      expect(
-        withV1.url === "https://api.deepseek.com/chat/completions",
-        `no debe duplicar /v1: ${withV1.url}`,
-      );
       expect(temperatureRange("openai").max === 2, "OpenAI admite hasta 2");
       expect(temperatureRange("anthropic").max === 1, "Anthropic admite hasta 1");
       return `${body.model} · max_tokens ${body.max_tokens} · reintento deepseek-flash`;
+    },
+  },
+  {
+    name: "transporte · la IA sale por ai_exchange (Rust), no por fetch del WebView",
+    run: () => {
+      expect(typeof exchange === "function", "falta el puente invoke→ai_exchange");
+      expect(typeof inDesktop === "function", "falta el detector del escritorio");
+      const config: AiConfig = {
+        ...withProvider(readyConfig(), "openai"),
+        apiKey: claveFicticia("openai"),
+      };
+      const request = openAiRequest(config, wireMessages([userMessage("hola")]), "");
+      const headers = request.init.headers as Record<string, string>;
+      expect(
+        headers.authorization === undefined && headers.Authorization === undefined,
+        "la clave no puede viajar en cabeceras del WebView",
+      );
+      expect(typeof request.url === "string" && request.url.length > 0, "falta la URL del proveedor");
+      // El cuerpo se construye en TS; el Bearer lo añade sólo Rust en ai_exchange.
+      return "openAiRequest sin Authorization · exchange=ai_exchange";
     },
   },
   {

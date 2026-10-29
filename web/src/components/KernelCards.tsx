@@ -57,7 +57,12 @@ function mark(value: boolean): string {
 export function AutopoiesisCard({ report }: { report: AutopoiesisReport }) {
   return (
     <article className="kx-card">
-      <h3>Fase 1 · autopoiesis ⊤∧⊥ y puerta ZK</h3>
+      <h3>Fase 1 · autopoiesis ⊤∧⊥ y puerta ZK (didáctica)</h3>
+      <p className="muted">
+        La puerta ZK es una simulación didáctica: no es una prueba
+        zero-knowledge criptográficamente segura
+        {report.gate.didactic ? "" : " (marcador ausente)"}.
+      </p>
       <p className={report.certified ? "kx-ok" : "kx-warn"}>{report.verdict}</p>
       <table className="summary">
         <tbody>
@@ -413,9 +418,12 @@ export function MetalCard({
 }) {
   return (
     <article className="kx-card">
-      <h3>Fase 2 · Metal-IR y bypass del driver</h3>
+      <h3>Fase 2 · Metal-IR simulado (didáctico)</h3>
       <p className="muted">
         {view.label} · {view.signature}
+        {view.didactic
+          ? " · sin GPU/MMIO real"
+          : " · aviso: marcador didáctico ausente"}
       </p>
       <div className="row kx-controls">
         <label className="kx-field">
