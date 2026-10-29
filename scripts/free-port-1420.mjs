@@ -1,13 +1,25 @@
 #!/usr/bin/env node
 // Libera el puerto 1420 (Vite de `tauri dev`) si un proceso anterior lo retiene.
-// Windows: netstat + taskkill. Unix: lsof/fuser cuando existan.
+// Windows: netstat + taskkill con rutas fijas de System32 (sin PATH mutable).
+// Unix: lsof bajo /usr/bin|/bin.
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 const PORT = 1420;
 
+function windowsSystem32() {
+  const root = process.env.SystemRoot || "C:\\Windows";
+  return path.join(root, "System32");
+}
+
 function pidsOnWindows() {
-  const out = execSync("netstat -ano -p tcp", { encoding: "utf8" });
+  const sys = windowsSystem32();
+  const netstat = path.join(sys, "netstat.exe");
+  const out = execFileSync(netstat, ["-ano", "-p", "tcp"], {
+    encoding: "utf8",
+    env: { SystemRoot: process.env.SystemRoot || "C:\\Windows", PATH: sys },
+  });
   const pids = new Set();
   for (const line of out.split(/\r?\n/)) {
     if (!line.includes(`:${PORT}`) || !/\sLISTEN\s/i.test(line)) {
@@ -23,18 +35,23 @@ function pidsOnWindows() {
 }
 
 function pidsOnUnix() {
-  try {
-    const out = execSync(`lsof -tiTCP:${PORT} -sTCP:LISTEN`, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return out
-      .split(/\s+/)
-      .map((value) => Number(value))
-      .filter((pid) => Number.isInteger(pid) && pid > 0);
-  } catch {
-    return [];
+  const candidates = ["/usr/bin/lsof", "/bin/lsof"];
+  for (const lsof of candidates) {
+    try {
+      const out = execFileSync(lsof, [`-tiTCP:${PORT}`, "-sTCP:LISTEN"], {
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin" },
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      return out
+        .split(/\s+/)
+        .map((value) => Number(value))
+        .filter((pid) => Number.isInteger(pid) && pid > 0);
+    } catch {
+      // probar el siguiente candidato
+    }
   }
+  return [];
 }
 
 const pids = process.platform === "win32" ? pidsOnWindows() : pidsOnUnix();
@@ -46,7 +63,11 @@ if (pids.length === 0) {
 for (const pid of pids) {
   try {
     if (process.platform === "win32") {
-      execSync(`taskkill /PID ${pid} /F`, { stdio: "ignore" });
+      const sys = windowsSystem32();
+      execFileSync(path.join(sys, "taskkill.exe"), ["/PID", String(pid), "/F"], {
+        stdio: "ignore",
+        env: { SystemRoot: process.env.SystemRoot || "C:\\Windows", PATH: sys },
+      });
     } else {
       process.kill(pid, "SIGTERM");
     }
