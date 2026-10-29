@@ -189,6 +189,8 @@ interface BaraEditorProps {
   revealToken: number;
   /** El padre guarda el texto en la pestaña y lo reanaliza. */
   onChange: (next: string) => void;
+  /** Persistencia Ctrl/Cmd+S (el atajo del navegador no basta dentro de CodeMirror). */
+  onSave?: () => void;
   /** Línea 1-based del cursor, para insertar un parche en ese sitio. */
   onCursor?: (line: number) => void;
 }
@@ -200,15 +202,18 @@ export default function BaraEditor({
   revealLine,
   revealToken,
   onChange,
+  onSave,
   onCursor,
 }: BaraEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const onSaveRef = useRef(onSave);
   const onCursorRef = useRef(onCursor);
   const pathRef = useRef(path);
   const generationRef = useRef(0);
   onChangeRef.current = onChange;
+  onSaveRef.current = onSave;
   onCursorRef.current = onCursor;
   pathRef.current = path;
 
@@ -278,7 +283,17 @@ export default function BaraEditor({
           ghostField,
           lineNumbers(),
           history(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of([
+            {
+              key: "Mod-s",
+              run: () => {
+                onSaveRef.current?.();
+                return true;
+              },
+            },
+            ...defaultKeymap,
+            ...historyKeymap,
+          ]),
           baraLanguage,
           syntaxHighlighting(baraHighlight),
           baraTheme,

@@ -545,8 +545,15 @@ export default function App() {
       if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
         return;
       }
+      // `event.code` (Digit1) sobrevive a teclados ES donde Alt+1 no produce key="1".
       const recipe: RecipeName | null =
-        event.key === "1" ? "check" : event.key === "2" ? "test" : event.key === "3" ? "typecheck" : null;
+        event.code === "Digit1" || event.key === "1"
+          ? "check"
+          : event.code === "Digit2" || event.key === "2"
+            ? "test"
+            : event.code === "Digit3" || event.key === "3"
+              ? "typecheck"
+              : null;
       if (recipe === null || vista !== "main") {
         return;
       }
@@ -874,6 +881,9 @@ export default function App() {
                 revealLine={reveal !== null && reveal.path === activePath ? reveal.line : null}
                 revealToken={reveal?.token ?? 0}
                 onChange={updateActiveSource}
+                onSave={() => {
+                  void saveActive();
+                }}
                 onCursor={(line) => {
                   cursorLineRef.current = line;
                 }}

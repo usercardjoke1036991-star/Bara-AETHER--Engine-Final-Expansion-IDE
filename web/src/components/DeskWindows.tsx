@@ -16,6 +16,7 @@ import {
   workspaceReadDocument,
   workspaceRoots,
   workspaceTree,
+  workspaceWriteDocument,
   type WorkspaceEntry,
   type WorkspaceShelf,
   type WorkspaceTree,
@@ -152,11 +153,15 @@ function AiDesk() {
   const [tree, setTree] = useState<WorkspaceTree | null>(null);
   const [shelf, setShelf] = useState<WorkspaceShelf | null>(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [documentName, setDocumentName] = useState("<asistencia>");
   const [documentSource, setDocumentSource] = useState("");
+  const [savedSource, setSavedSource] = useState("");
   const [videoName, setVideoName] = useState<string | null>(null);
   const [mediaNote, setMediaNote] = useState<string | null>(null);
+  const dirty =
+    documentName.endsWith(".bara") && documentSource !== savedSource && !documentName.startsWith("<");
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -190,6 +195,7 @@ function AiDesk() {
       .then((document) => {
         setDocumentName(document.path);
         setDocumentSource(document.source);
+        setSavedSource(document.source);
         setError(null);
       })
       .catch((reason: unknown) => setError(describeError(reason)));
@@ -205,10 +211,37 @@ function AiDesk() {
       .then((text) => {
         setDocumentName(file.name);
         setDocumentSource(text);
+        setSavedSource(text);
         setError(null);
       })
       .catch((reason: unknown) => setError(describeError(reason)));
   }
+
+  const saveDocument = useCallback(() => {
+    if (!dirty) {
+      return;
+    }
+    setSaving(true);
+    workspaceWriteDocument(documentName, documentSource)
+      .then((document) => {
+        setDocumentSource(document.source);
+        setSavedSource(document.source);
+        setError(null);
+      })
+      .catch((reason: unknown) => setError(describeError(reason)))
+      .finally(() => setSaving(false));
+  }, [dirty, documentName, documentSource]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveDocument();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [saveDocument]);
 
   return (
     <div className="desk-split">
@@ -289,6 +322,25 @@ function AiDesk() {
       </aside>
       <section className="desk-chat">
         <div className="desk-media">
+          <div className="row">
+            <span className="status" title={documentName}>
+              {documentName}
+              {dirty ? " · sin guardar" : ""}
+            </span>
+            <span className="grow" />
+            <button type="button" disabled={!dirty || saving} onClick={saveDocument}>
+              {saving ? "Guardando…" : "Guardar"}
+            </button>
+          </div>
+          {documentName.endsWith(".bara") ? (
+            <textarea
+              className="desk-source"
+              value={documentSource}
+              spellCheck={false}
+              aria-label="Documento .bara de contexto"
+              onChange={(event) => setDocumentSource(event.target.value)}
+            />
+          ) : null}
           <label>
             Fragmento de código
             <input

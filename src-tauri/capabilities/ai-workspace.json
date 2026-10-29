@@ -10,6 +10,7 @@
     "allow-workspace-roots",
     "allow-workspace-tree",
     "allow-workspace-read-document",
+    "allow-workspace-write-document",
     "allow-workspace-open-dialog",
     "allow-workspace-activate",
     "allow-workspace-close-root",

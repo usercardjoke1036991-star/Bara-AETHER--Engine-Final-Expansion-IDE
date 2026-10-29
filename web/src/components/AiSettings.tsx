@@ -108,8 +108,8 @@ export default function AiSettings({
         <span className="muted">
           {config.hasKey
             ? config.rememberKey
-              ? "en el llavero"
-              : "en esta sesión"
+              ? "clave en llavero"
+              : "clave en esta sesión"
             : "sin clave"}
         </span>
       </div>

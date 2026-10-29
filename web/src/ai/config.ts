@@ -309,7 +309,7 @@ export function configProblems(config: AiConfig): string[] {
 export function describeConfig(config: AiConfig): string {
   const where = config.hasKey || config.apiKey.trim()
     ? config.rememberKey
-      ? "en el llavero"
+      ? "en llavero"
       : "sólo en esta sesión"
     : "sin clave";
   const model = config.model.trim() || "(sin modelo)";

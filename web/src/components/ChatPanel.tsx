@@ -21,7 +21,7 @@ import {
 import { MAX_ATTACHMENTS, filesFromDataTransfer, formatBytes, prepareImages } from "../ai/images";
 import { baraSystemPrompt } from "../ai/prompt";
 import { listModels, sendChat } from "../ai/providers";
-import { deleteKey, keyExists, saveKey } from "../ai/keyring";
+import { deleteKey, inDesktop, keyExists, saveKey } from "../ai/keyring";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
@@ -44,13 +44,27 @@ function reasonOf(error: unknown): string {
 async function commitKey(
   config: AiConfig,
   setConfig: (config: AiConfig) => void,
+  bumpEpoch?: () => void,
 ): Promise<AiConfig> {
   const draft = config.apiKey.trim();
   if (!draft) {
-    return config;
+    // Sin borrador: confirma si el proceso ya tiene clave (llavero o sesión).
+    const has = inDesktop() ? await keyExists(config.provider) : config.hasKey;
+    const next = { ...config, apiKey: "", hasKey: has };
+    setConfig(next);
+    return next;
   }
   await saveKey(config.provider, draft, config.rememberKey);
-  const next = { ...config, apiKey: "", hasKey: true };
+  bumpEpoch?.();
+  const has = inDesktop() ? await keyExists(config.provider) : true;
+  if (!has) {
+    throw new Error(
+      config.rememberKey
+        ? "el llavero no conservó la clave; revisa el Credential Manager"
+        : "la sesión del proceso no tiene la clave tras Guardar",
+    );
+  }
+  const next = { ...config, apiKey: "", hasKey: true, rememberKey: config.rememberKey };
   saveConfig(next);
   setConfig(next);
   return next;
@@ -89,12 +103,14 @@ export default function ChatPanel({
   const [config, setConfig] = useState<AiConfig>(() => loadConfig());
   useEffect(() => {
     let cancel = false;
+    const epoch = keyEpochRef.current;
     void (async () => {
       const peeked = peekStoredSecret();
       if (peeked) {
         try {
           await saveKey(peeked.provider, peeked.secret, true);
           stripStoredSecret();
+          keyEpochRef.current += 1;
           if (!cancel) {
             setConfig((current) => ({
               ...current,
@@ -109,7 +125,7 @@ export default function ChatPanel({
       }
       try {
         const has = await keyExists(config.provider);
-        if (!cancel) {
+        if (!cancel && epoch === keyEpochRef.current) {
           setConfig((current) =>
             current.provider === config.provider ? { ...current, hasKey: has } : current,
           );
@@ -146,6 +162,8 @@ export default function ChatPanel({
 
   const abortRef = useRef<AbortController | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
+  /** Generación del llavero: invalida lecturas `keyExists` anteriores a un Guardar. */
+  const keyEpochRef = useRef(0);
   const storeAvailable = useMemo(() => defaultStore() !== null, []);
   const problems = configProblems(config);
   const sendGate = chatSendGate(config, draft, pending, offline);
@@ -227,7 +245,14 @@ export default function ChatPanel({
         ]);
         return;
       }
-      const result = await sendChat(await commitKey(config, setConfig), history, system, controller.signal);
+      const result = await sendChat(
+        await commitKey(config, setConfig, () => {
+          keyEpochRef.current += 1;
+        }),
+        history,
+        system,
+        controller.signal,
+      );
       if (result.acceptedModel && result.acceptedModel !== config.model) {
         const next = { ...config, model: result.acceptedModel };
         setConfig(next);
@@ -322,12 +347,16 @@ export default function ChatPanel({
   const persist = useCallback(() => {
     void (async () => {
       try {
-        const next = await commitKey(config, setConfig);
+        const next = await commitKey(config, setConfig, () => {
+          keyEpochRef.current += 1;
+        });
         const saved = saveConfig(next);
         setNotice(
           saved
             ? next.hasKey
-              ? "Ajustes guardados. La clave quedó en el proceso."
+              ? next.rememberKey
+                ? "Ajustes guardados. Clave en llavero."
+                : "Ajustes guardados. Clave sólo en esta sesión."
               : "Ajustes guardados."
             : "No se pudo guardar: el almacén del navegador no está disponible.",
         );
@@ -357,9 +386,26 @@ export default function ChatPanel({
   const fetchModels = useCallback(async () => {
     setModelStatus("consultando…");
     try {
-      const list = await listModels(config);
+      const ready = await commitKey(config, setConfig, () => {
+        keyEpochRef.current += 1;
+      });
+      const list = await listModels(ready);
       setModels(list);
       setModelStatus(`${list.length} modelos`);
+      if (list.length > 0) {
+        setConfig((current) => {
+          const stillValid = list.some((model) => model.id === current.model.trim());
+          if (stillValid) {
+            return current;
+          }
+          const preferred =
+            list.find((model) => /flash/i.test(model.id)) ??
+            list.find((model) => /deepseek/i.test(model.id)) ??
+            list[0];
+          return { ...current, model: preferred.id };
+        });
+      }
+      setNotice(null);
     } catch (error) {
       setModelStatus(null);
       setNotice(reasonOf(error));

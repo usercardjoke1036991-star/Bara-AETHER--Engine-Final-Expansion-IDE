@@ -417,7 +417,7 @@ fn workspace_write_document(
     source: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    window_guard::require(&window, window_guard::MAIN)?;
+    window_guard::require(&window, window_guard::WRITE)?;
     workspace::write(&state.get()?, &path, &source)
 }
 
@@ -1158,7 +1158,8 @@ mod ipc_boundary {
                 assert!(has_llavero, "la asistencia necesita el llavero");
                 assert!(!has_receta, "la asistencia no lanza recetas");
                 assert!(!has_github, "la asistencia no clona");
-                assert!(!has_write, "la asistencia no escribe .bara");
+                // A3: Ctrl+S / edición en el escritorio de asistencia.
+                assert!(has_write, "la asistencia debe poder guardar el workspace");
             }
             if label == "main" {
                 assert!(has_llavero && has_receta && has_github && has_write);

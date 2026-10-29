@@ -489,10 +489,11 @@ const CHECKS: Check[] = [
       const config: AiConfig = {
         ...withProvider(readyConfig(), "openai"),
         model: "deepseek:deepseek-v4-flash",
-        baseUrl: "https://api.deepseek.com/v1",
+        baseUrl: "https://api.deepseek.com",
         useMaxCompletionTokens: true,
       };
-      const body = JSON.parse(String(openAiRequest(config, wireMessages([userMessage("hola")]), "").init.body)) as {
+      const request = openAiRequest(config, wireMessages([userMessage("hola")]), "");
+      const body = JSON.parse(String(request.init.body)) as {
         model: string;
         max_tokens?: number;
         max_completion_tokens?: number;
@@ -500,6 +501,15 @@ const CHECKS: Check[] = [
       expect(body.model === "deepseek-v4-flash", `viajó el id de catálogo: ${body.model}`);
       expect(body.max_tokens === config.maxTokens, "DeepSeek debería recibir max_tokens");
       expect(body.max_completion_tokens === undefined, "DeepSeek rechaza max_completion_tokens");
+      expect(
+        request.url === "https://api.deepseek.com/chat/completions",
+        `URL DeepSeek inesperada: ${request.url}`,
+      );
+      const withV1 = openAiRequest({ ...config, baseUrl: "https://api.deepseek.com/v1" }, wireMessages([userMessage("hola")]), "");
+      expect(
+        withV1.url === "https://api.deepseek.com/chat/completions",
+        `no debe duplicar /v1: ${withV1.url}`,
+      );
       expect(temperatureRange("openai").max === 2, "OpenAI admite hasta 2");
       expect(temperatureRange("anthropic").max === 1, "Anthropic admite hasta 1");
       return `${body.model} · max_tokens ${body.max_tokens} · reintento deepseek-flash`;
