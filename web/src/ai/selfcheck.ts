@@ -36,6 +36,7 @@ import {
   toDataUrl,
 } from "./images";
 import { baraSystemPrompt, excerpt, inventoryLine, MAX_DOCUMENT_CHARS, rootTable } from "./prompt";
+import { exchange, inDesktop } from "./keyring";
 import {
   anthropicRequest,
   CHAT_ATTEMPT_LIMIT,
@@ -503,6 +504,26 @@ const CHECKS: Check[] = [
       expect(temperatureRange("openai").max === 2, "OpenAI admite hasta 2");
       expect(temperatureRange("anthropic").max === 1, "Anthropic admite hasta 1");
       return `${body.model} · max_tokens ${body.max_tokens} · reintento deepseek-flash`;
+    },
+  },
+  {
+    name: "transporte · la IA sale por ai_exchange (Rust), no por fetch del WebView",
+    run: () => {
+      expect(typeof exchange === "function", "falta el puente invoke→ai_exchange");
+      expect(typeof inDesktop === "function", "falta el detector del escritorio");
+      const config: AiConfig = {
+        ...withProvider(readyConfig(), "openai"),
+        apiKey: claveFicticia("openai"),
+      };
+      const request = openAiRequest(config, wireMessages([userMessage("hola")]), "");
+      const headers = request.init.headers as Record<string, string>;
+      expect(
+        headers.authorization === undefined && headers.Authorization === undefined,
+        "la clave no puede viajar en cabeceras del WebView",
+      );
+      expect(typeof request.url === "string" && request.url.length > 0, "falta la URL del proveedor");
+      // El cuerpo se construye en TS; el Bearer lo añade sólo Rust en ai_exchange.
+      return "openAiRequest sin Authorization · exchange=ai_exchange";
     },
   },
   {

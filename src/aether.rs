@@ -133,6 +133,9 @@ pub struct ZkGateView {
     pub checks: Vec<ZkCheckView>,
     /// Resumen textual del kernel para el log ontológico.
     pub summary: String,
+    /// Siempre `true`: la puerta ZK del núcleo es **didáctica/simulada**,
+    /// no una prueba zero-knowledge criptográficamente segura.
+    pub didactic: bool,
 }
 
 impl ZkGateView {
@@ -155,6 +158,7 @@ impl ZkGateView {
                 })
                 .collect(),
             summary: certificate.summary.clone(),
+            didactic: true,
         }
     }
 }
@@ -1025,6 +1029,8 @@ pub struct MetalView {
     pub device: String,
     /// Etiqueta del dispositivo (`CPU`/`GPU`).
     pub device_label: &'static str,
+    /// Siempre `true`: Metal-IR es **simulación didáctica** (sin GPU/MMIO real).
+    pub didactic: bool,
     /// Instrucciones emitidas.
     pub ops: usize,
     /// Instrucciones proyectadas (recortadas a [`MAX_INSTRUCTIONS`]).
@@ -1107,6 +1113,7 @@ pub fn metal_program(source: &str, device: &str) -> MetalView {
         label: program.label.clone(),
         device: device.label().to_lowercase(),
         device_label: device.label(),
+        didactic: true,
         ops: program.ops.len(),
         instructions: program
             .ops
@@ -1564,8 +1571,9 @@ mod tests {
         );
         assert_eq!(
             claves(&informe["gate"]),
-            "challenge,checks,commitments,constraints,label,publicInputs,summary,verified"
+            "challenge,checks,commitments,constraints,didactic,label,publicInputs,summary,verified"
         );
+        assert_eq!(informe["gate"]["didactic"], true);
         if let Some(chequeo) = informe["gate"]["checks"]
             .as_array()
             .and_then(|chequeos| chequeos.first())
@@ -1622,8 +1630,9 @@ mod tests {
         let metal = serde_json::to_value(metal_program(DOCUMENTO, "gpu")).expect("metal serializa");
         assert_eq!(
             claves(&metal),
-            "allocated,avoidedSyscalls,barriers,bypass,bypassedSyscalls,capacity,descriptor,device,deviceLabel,dispatch,dispatchCycles,dispatchLanes,dispatchOccupancy,instructions,label,lanes,latencySavedNs,layoutBytes,mmioBase,occupancy,ops,pressure,ranges,registers,ringEntries,signature,spillBytes,spilled,truncated,waves,wordCount,words"
+            "allocated,avoidedSyscalls,barriers,bypass,bypassedSyscalls,capacity,descriptor,device,deviceLabel,didactic,dispatch,dispatchCycles,dispatchLanes,dispatchOccupancy,instructions,label,lanes,latencySavedNs,layoutBytes,mmioBase,occupancy,ops,pressure,ranges,registers,ringEntries,signature,spillBytes,spilled,truncated,waves,wordCount,words"
         );
+        assert_eq!(metal["didactic"], true);
         assert_eq!(
             claves(&metal["instructions"][0]),
             "barrier,cycles,describe,dst,imm,laneMask,lanes,latency,opcode,origin,src,word"
