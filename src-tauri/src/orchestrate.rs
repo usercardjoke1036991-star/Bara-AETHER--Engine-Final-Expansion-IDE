@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use bara::autopoietic::BelnapValue;
 use bara::log_lattice::{observe_log_line, status_key};
+use bara_kernel_host::{new_group, terminate_tree};
 use serde::Serialize;
 
 /// `npm run typecheck` no debería pasar de un minuto.
@@ -190,43 +191,6 @@ fn drain_pipe(pipe: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>> {
         }
         buf
     })
-}
-
-/// Mata el proceso lanzado y los que haya creado (npm/node, rustc).
-///
-/// Windows: `taskkill /F /T /PID`. Unix: el hijo es líder de grupo
-/// ([`new_group`]) y `kill -KILL` apunta a ese grupo. El PID es el que
-/// acaba de crear este proceso, no una cadena del WebView.
-fn terminate_tree(child: &mut std::process::Child) {
-    let pid = child.id();
-    if cfg!(windows) {
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    } else {
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{pid}")])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-/// En Unix el hijo abre su propio grupo para poder matar a rustc/node con él.
-fn new_group(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = command;
-    }
 }
 
 /// Espera `limit`. Si el hijo sigue vivo, mata su árbol y devuelve lo ya leído.

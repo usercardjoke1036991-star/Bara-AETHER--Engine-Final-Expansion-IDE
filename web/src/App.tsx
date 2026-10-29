@@ -7,6 +7,7 @@ import {
   belnapLattice,
   describeError,
   kernelCatalogue,
+  kernelHostStatus,
   oracleConverse,
   oracleReset,
   oracleStatus,
@@ -93,6 +94,12 @@ class PanelGuard extends Component<
   }
 }
 
+function kernelTone(label: string): "ok" | "wait" | "down" {
+  if (label === "activo") return "ok";
+  if (label === "caído") return "down";
+  return "wait";
+}
+
 export default function App() {
   /** Documentos abiertos; el activo se proyecta a `source`/`origin`. */
   const [tabs, setTabs] = useState<EditorTab[]>([]);
@@ -100,6 +107,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [catalogue, setCatalogue] = useState<RootEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [kernelPill, setKernelPill] = useState("…");
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
@@ -142,6 +150,28 @@ export default function App() {
 
   useEffect(() => {
     void currentVista().then(setVista);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let stop: (() => void) | undefined;
+    void (async () => {
+      try {
+        const current = await kernelHostStatus();
+        if (alive) setKernelPill(current);
+        const unlisten = await listen<string>("kernel-host", (event) => {
+          if (alive) setKernelPill(event.payload);
+        });
+        if (alive) stop = unlisten;
+        else unlisten();
+      } catch {
+        if (alive) setKernelPill("caído");
+      }
+    })();
+    return () => {
+      alive = false;
+      stop?.();
+    };
   }, []);
 
   const activeTab = useMemo(
@@ -686,6 +716,7 @@ export default function App() {
       <header className="bar">
         <h1>Bara IDE</h1>
         <span className="tag">kernel v0.1.0-kernel · Shoresh</span>
+        <span className={`kernel-pill kernel-pill-${kernelTone(kernelPill)}`}>kernel {kernelPill}</span>
         <span className="grow" />
         <span className="status">
           {importing

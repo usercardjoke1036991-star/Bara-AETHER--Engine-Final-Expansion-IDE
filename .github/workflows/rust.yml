@@ -70,6 +70,12 @@ jobs:
       run: cargo build --locked --verbose
     - name: Run tests
       run: cargo test --locked --verbose
+    - name: Proceso del kernel
+      run: |
+        cargo test --manifest-path kernel-host/Cargo.toml --features faults --locked
+        cargo clippy --manifest-path kernel-host/Cargo.toml --all-targets --features faults --locked -- -D warnings
+        cargo fmt --manifest-path kernel-host/Cargo.toml --all -- --check
+        python3 src-tauri/scripts/stage-kernel-host.py --profile debug
     # build.rs emite --exclude-all-symbols para todo target env=gnu, incluido
     # Linux. rust-lld lo rechaza. El wrapper lo retira; el producto no cambia.
     - name: Escritorio Tauri
@@ -84,6 +90,7 @@ jobs:
       run: |
         cargo fmt --all -- --check
         cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+        cargo fmt --manifest-path kernel-host/Cargo.toml --all -- --check
     - name: clippy
       env:
         RUSTFLAGS: -C linker=${{ github.workspace }}/.github/linux-link.py

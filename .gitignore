@@ -7,6 +7,9 @@
 /target
 /src-tauri/gen/schemas
 
+# Sidecar del kernel: lo genera scripts/stage-kernel-host.py antes de empaquetar.
+/src-tauri/binaries/
+
 # Contenedor Android (Gradle): se versiona el proyecto, no sus artefactos.
 /src-tauri/gen/android/.gradle
 /src-tauri/gen/android/build

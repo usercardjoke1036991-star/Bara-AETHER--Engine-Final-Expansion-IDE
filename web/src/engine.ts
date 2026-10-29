@@ -286,3 +286,8 @@ export function belnapEvaluate(
 ): Promise<BelnapEvaluation> {
   return invoke<BelnapEvaluation>("belnap_evaluate", { truth, falsity });
 }
+
+/** Estado del proceso hijo: `activo`, `reiniciando` o `caído`. */
+export function kernelHostStatus(): Promise<string> {
+  return invoke<string>("kernel_host_status");
+}

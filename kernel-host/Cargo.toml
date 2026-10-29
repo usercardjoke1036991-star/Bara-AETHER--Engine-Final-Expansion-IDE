@@ -1,0 +1,27 @@
+# Proceso hijo del kernel. El IDE lo supervisa; un pánico aquí no es un pánico
+# del proceso de Tauri. Sin red, sin shells y sin `unsafe`.
+[package]
+name = "bara-kernel-host"
+version = "0.5.0"
+edition = "2021"
+description = "Sidecar del kernel Bara para el IDE"
+license = "MIT"
+publish = false
+
+# Las ops `fault-*` existen sólo en las pruebas. El instalador no las activa.
+[features]
+faults = []
+
+[dependencies]
+bara = { path = "../../BAR" }
+bara-ide = { path = "..", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+bara-ide = { path = "..", features = ["serde"] }
+serde_json = "1"
+
+[[bin]]
+name = "bara-kernel-host"
+path = "src/main.rs"

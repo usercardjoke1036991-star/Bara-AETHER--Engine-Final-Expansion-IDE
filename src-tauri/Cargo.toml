@@ -48,8 +48,8 @@ ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
 # (modelo serializable a JSON) y, tras ella, el kernel `bara` por ruta.
 bara-ide = { path = "..", features = ["serde"] }
 
-# Enlace directo al kernel para el Cockpit de telemetría: los comandos
-# `get_system_manifest`, `get_neural_frame`, `get_flight_recorder_logs` y
-# `transmute_input` consumen `bara::ide_bridge`, `bara::neural_bridge`,
-# `bara::flight_recorder` y `bara::transmuter` sin intermediarios.
+# Proceso hijo del kernel. El escritorio lo supervisa; no ejecuta el núcleo.
+bara-kernel-host = { path = "../kernel-host" }
+
+# Enlace directo al kernel para clasificar las líneas de las recetas.
 bara = { path = "../../BAR" }
