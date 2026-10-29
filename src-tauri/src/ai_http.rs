@@ -192,18 +192,20 @@ certificación raíz de confianza» — no hace falta apagar la VPN)"
 pub fn mensaje_http(status: u16, body: &str) -> Option<String> {
     let lower = body.to_ascii_lowercase();
     match status {
-        401 => Some(if lower.contains("key") || lower.contains("auth") || !body.is_empty() {
-            format!(
-                "clave inválida (HTTP 401){}",
-                if body.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", body.chars().take(200).collect::<String>())
-                }
-            )
-        } else {
-            "clave inválida (HTTP 401): el proveedor rechazó la autenticación".to_string()
-        }),
+        401 => Some(
+            if lower.contains("key") || lower.contains("auth") || !body.is_empty() {
+                format!(
+                    "clave inválida (HTTP 401){}",
+                    if body.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", body.chars().take(200).collect::<String>())
+                    }
+                )
+            } else {
+                "clave inválida (HTTP 401): el proveedor rechazó la autenticación".to_string()
+            },
+        ),
         402 => Some(
             "saldo insuficiente (HTTP 402): la cuenta del proveedor no tiene crédito".to_string(),
         ),
@@ -481,7 +483,12 @@ pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeRe
                 }
             }
             models.sort();
-            let preview = models.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
+            let preview = models
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
             steps.push(ProbeStep {
                 name: "modelos".to_string(),
                 ok: !models.is_empty(),
@@ -571,15 +578,11 @@ mod tests {
         assert!(mensaje_http(401, "invalid api key")
             .unwrap_or_default()
             .contains("clave inválida"));
-        assert!(mensaje_http(402, "")
-            .unwrap_or_default()
-            .contains("saldo"));
+        assert!(mensaje_http(402, "").unwrap_or_default().contains("saldo"));
         assert!(mensaje_http(404, "model not found")
             .unwrap_or_default()
             .contains("404"));
-        assert!(mensaje_http(429, "")
-            .unwrap_or_default()
-            .contains("límite"));
+        assert!(mensaje_http(429, "").unwrap_or_default().contains("límite"));
     }
 
     /// VPN encendida: `BARA_LIVE_TLS=1 cargo test -p bara-ide-desktop --lib deepseek_tls -- --ignored --nocapture`
@@ -600,7 +603,11 @@ mod tests {
         );
         match err {
             Ok(result) => {
-                eprintln!("HTTP {}: {}", result.status, result.body.chars().take(120).collect::<String>());
+                eprintln!(
+                    "HTTP {}: {}",
+                    result.status,
+                    result.body.chars().take(120).collect::<String>()
+                );
                 assert!(
                     result.status == 401 || (200..300).contains(&result.status),
                     "tras TLS se esperaba 401 o 2xx, no {}",
