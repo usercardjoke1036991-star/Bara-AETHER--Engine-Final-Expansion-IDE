@@ -128,6 +128,9 @@ mod secrets;
 // Transporte de los proveedores. El destino es una lista cerrada.
 mod ai_http;
 
+// Segunda capa de permisos: etiqueta de la ventana frente a lista fija.
+mod window_guard;
+
 /// Pide una operación al proceso del kernel y devuelve el JSON ya firmado.
 fn kernel_call(kernel: &KernelHost, op: &str, args: Value) -> Result<Value, String> {
     kernel.call(op, args)
@@ -227,9 +230,11 @@ fn get_workspace_topology_graph(
 /// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
 #[tauri::command]
 async fn run_workspace_recipe(
+    window: tauri::WebviewWindow,
     recipe: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<orchestrate::RecipeReport, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
     let name = recipe.trim().to_string();
     if name.len() > 16 {
         return Err("la receta no está en el catálogo cerrado".to_string());
@@ -246,6 +251,7 @@ async fn run_workspace_recipe(
 /// Juzga un bloque del asistente. La carpeta es la activa; `path` no la cambia.
 #[tauri::command]
 fn judge_auto_patch(
+    window: tauri::WebviewWindow,
     path: String,
     line: u32,
     host: String,
@@ -253,6 +259,7 @@ fn judge_auto_patch(
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
     kernel_call(
         &kernel,
         "judge_patch",
@@ -335,10 +342,12 @@ fn idle_proposal(slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>) -> Result
 /// Escribe la optimización si el archivo sigue en `∅`.
 #[tauri::command]
 fn idle_apply(
+    window: tauri::WebviewWindow,
     slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::IDLE_APPLY)?;
     let notice = match slot.lock() {
         Ok(guard) => guard.current(),
         Err(_) => return Err("el reposo no está disponible".to_string()),
@@ -403,10 +412,12 @@ fn workspace_read_document(
 /// Guarda un `.bara` relativo a la raíz activa y devuelve el documento persistido.
 #[tauri::command]
 fn workspace_write_document(
+    window: tauri::WebviewWindow,
     path: String,
     source: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
     workspace::write(&state.get()?, &path, &source)
 }
 
@@ -816,11 +827,13 @@ async fn workspace_open_dialog(
 /// workspace activo y el árbol ya viene sin `target/`, `node_modules/` ni `.git/`.
 #[tauri::command]
 async fn github_clone(
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     url: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceTree, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
     // Validar antes de abrir el diálogo: una URL mala no pide carpeta.
     let _ = import::github_remote(&url)?;
     let parent = pick_folder(&app, "Carpeta donde clonar el repositorio")?;
@@ -838,11 +851,13 @@ async fn github_clone(
 /// Guarda la clave del proveedor. `remember` la deja en el llavero del sistema.
 #[tauri::command]
 fn ai_key_save(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, Mutex<secrets::Session>>,
     provider: String,
     secret: String,
     remember: bool,
 ) -> Result<(), String> {
+    window_guard::require(&window, window_guard::CHAT)?;
     let mut session = state
         .lock()
         .map_err(|_| "el llavero está ocupado".to_string())?;
@@ -852,9 +867,11 @@ fn ai_key_save(
 /// `true` si hay clave. El secreto no viaja en la respuesta.
 #[tauri::command]
 fn ai_key_exists(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, Mutex<secrets::Session>>,
     provider: String,
 ) -> Result<bool, String> {
+    window_guard::require(&window, window_guard::CHAT)?;
     let session = state
         .lock()
         .map_err(|_| "el llavero está ocupado".to_string())?;
@@ -864,9 +881,11 @@ fn ai_key_exists(
 /// Borra la clave de la sesión y del llavero.
 #[tauri::command]
 fn ai_key_delete(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, Mutex<secrets::Session>>,
     provider: String,
 ) -> Result<(), String> {
+    window_guard::require(&window, window_guard::CHAT)?;
     let mut session = state
         .lock()
         .map_err(|_| "el llavero está ocupado".to_string())?;
@@ -876,12 +895,14 @@ fn ai_key_delete(
 /// Llama al proveedor. La clave la pone este proceso; la respuesta ya viene limpia.
 #[tauri::command]
 async fn ai_exchange(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, Mutex<secrets::Session>>,
     provider: String,
     url: String,
     method: String,
     body: Option<String>,
 ) -> Result<ai_http::Exchange, String> {
+    window_guard::require(&window, window_guard::CHAT)?;
     let secret = {
         let session = state
             .lock()
@@ -1081,6 +1102,76 @@ mod ipc_boundary {
                 !signature.contains("root:"),
                 "{name} no puede aceptar una raíz del WebView"
             );
+        }
+    }
+
+    #[test]
+    fn las_capabilities_acotan_ventana_a_ventana() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&dir).expect("capabilities") {
+            let entry = entry.expect("entrada");
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("leer");
+            assert!(
+                !text.contains("\"*\""),
+                "{} no puede usar comodines",
+                path.display()
+            );
+            assert!(
+                !text.contains("shell:"),
+                "{} no puede abrir el plugin shell",
+                path.display()
+            );
+            let value: serde_json::Value = serde_json::from_str(&text).expect("json");
+            let windows = value["windows"]
+                .as_array()
+                .expect("windows")
+                .iter()
+                .map(|item| item.as_str().expect("label").to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(windows.len(), 1, "{}: una sola ventana", path.display());
+            let label = windows[0].as_str();
+            assert!(seen.insert(label.to_string()), "ventana duplicada: {label}");
+            let permissions = value["permissions"]
+                .as_array()
+                .expect("permissions")
+                .iter()
+                .map(|item| item.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            let has = |id: &str| permissions.iter().any(|item| item == id);
+            let has_llavero =
+                has("llavero") || has("allow-ai-key-save") || has("allow-ai-exchange");
+            let has_receta = has("recetas") || has("allow-run-workspace-recipe");
+            let has_github = has("github") || has("allow-github-clone");
+            let has_write = has("allow-workspace-write-document") || has("archivos");
+            if label == "topology" || label == "autopoiesis" || label == "telemetry" {
+                assert!(!has_llavero, "{label} no toca el llavero");
+                assert!(!has_receta, "{label} no lanza recetas");
+                assert!(!has_github, "{label} no clona");
+                assert!(!has_write, "{label} no escribe el workspace");
+            }
+            if label == "ai-workspace" {
+                assert!(has_llavero, "la asistencia necesita el llavero");
+                assert!(!has_receta, "la asistencia no lanza recetas");
+                assert!(!has_github, "la asistencia no clona");
+                assert!(!has_write, "la asistencia no escribe .bara");
+            }
+            if label == "main" {
+                assert!(has_llavero && has_receta && has_github && has_write);
+            }
+        }
+        for expected in [
+            "main",
+            "topology",
+            "autopoiesis",
+            "telemetry",
+            "ai-workspace",
+        ] {
+            assert!(seen.contains(expected), "falta capability de {expected}");
         }
     }
 

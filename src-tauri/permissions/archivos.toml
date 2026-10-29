@@ -1,0 +1,19 @@
+[[set]]
+identifier = "archivos"
+description = "Jaula de carpetas, lectura, escritura, diálogo de carpeta y reposo"
+permissions = [
+  "allow-read-document",
+  "allow-workspace-default-root",
+  "allow-workspace-tree",
+  "allow-workspace-read-document",
+  "allow-workspace-write-document",
+  "allow-workspace-open-dialog",
+  "allow-workspace-roots",
+  "allow-workspace-activate",
+  "allow-workspace-close-root",
+  "allow-workspace-source-text",
+  "allow-judge-auto-patch",
+  "allow-idle-proposal",
+  "allow-idle-apply",
+  "allow-idle-dismiss",
+]

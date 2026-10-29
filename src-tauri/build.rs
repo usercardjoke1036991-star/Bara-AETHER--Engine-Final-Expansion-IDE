@@ -143,6 +143,77 @@ fn lanzar_parcheador(exe: &Path) {
     let _ = command.spawn();
 }
 
+/// Comandos del IDE. Al listarlos aquí, Tauri deja de abrirlos a todas las
+/// ventanas y genera `allow-*` / `deny-*` para las capabilities.
+const APP_COMMANDS: &[&str] = &[
+    "analyze_source",
+    "analyze_file",
+    "kernel_catalogue",
+    "sample_genesis",
+    "read_document",
+    "workspace_default_root",
+    "workspace_tree",
+    "workspace_read_document",
+    "workspace_write_document",
+    "workspace_open_dialog",
+    "workspace_roots",
+    "workspace_activate",
+    "workspace_close_root",
+    "open_desk_window",
+    "transmute_workspace",
+    "inspect_media_dialog",
+    "github_clone",
+    "shoresh_translate",
+    "oracle_converse",
+    "oracle_status",
+    "oracle_turns",
+    "oracle_reset",
+    "temporal_deltas",
+    "temporal_rollback",
+    "belnap_lattice",
+    "belnap_evaluate",
+    "autopoiesis",
+    "quantum_native",
+    "mesh_sync",
+    "metal_ir",
+    "temporal_timeline",
+    "fractal_memory",
+    "fractal_plan",
+    "visual_catalogue",
+    "visual_sample",
+    "visual_build",
+    "visual_compose",
+    "visual_emit",
+    "visual_emit_composed",
+    "bridge_manifest",
+    "bridge_snapshot",
+    "get_system_manifest",
+    "get_neural_frame",
+    "get_flight_recorder_logs",
+    "transmute_input",
+    "get_local_completions",
+    "get_workspace_topology_graph",
+    "workspace_source_text",
+    "run_workspace_recipe",
+    "judge_auto_patch",
+    "load_local_weights",
+    "local_complete",
+    "transmute_global",
+    "idle_proposal",
+    "idle_apply",
+    "idle_dismiss",
+    "ai_key_save",
+    "ai_key_exists",
+    "ai_key_delete",
+    "ai_exchange",
+    "kernel_host_status",
+];
+
+fn app_attributes() -> tauri_build::Attributes {
+    tauri_build::Attributes::new()
+        .app_manifest(tauri_build::AppManifest::new().commands(APP_COMMANDS))
+}
+
 fn main() {
     let objetivo_gnu = env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|entorno| entorno == "gnu");
 
@@ -167,7 +238,7 @@ fn main() {
         } else {
             // Icono inexistente => `tauri-build` devuelve Err *antes* de
             // invocar al compilador de recursos ausente (que haría panicar).
-            let atributos = tauri_build::Attributes::new().windows_attributes(
+            let atributos = app_attributes().windows_attributes(
                 tauri_build::WindowsAttributes::new()
                     .window_icon_path("__sin_compilador_de_recursos__.ico"),
             );
@@ -192,5 +263,7 @@ fn main() {
         }
     }
 
-    tauri_build::build()
+    if let Err(error) = tauri_build::try_build(app_attributes()) {
+        panic!("tauri-build: {error}");
+    }
 }

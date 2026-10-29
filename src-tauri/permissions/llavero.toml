@@ -1,0 +1,9 @@
+[[set]]
+identifier = "llavero"
+description = "Claves del sistema y transporte de los proveedores. Nadie lee el secreto en claro."
+permissions = [
+  "allow-ai-key-save",
+  "allow-ai-key-exists",
+  "allow-ai-key-delete",
+  "allow-ai-exchange",
+]

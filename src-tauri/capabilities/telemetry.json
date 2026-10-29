@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "telemetry",
+  "description": "Cockpit de telemetría: manifiesto, marco, caja negra y reposo",
+  "windows": ["telemetry"],
+  "permissions": [
+    "core:default",
+    "allow-get-system-manifest",
+    "allow-get-neural-frame",
+    "allow-get-flight-recorder-logs",
+    "allow-transmute-input",
+    "allow-autopoiesis",
+    "allow-idle-proposal",
+    "allow-idle-apply",
+    "allow-idle-dismiss"
+  ]
+}
