@@ -6,7 +6,10 @@
 /// Ventanas que alojan el chat y pueden tocar el llavero o `ai_exchange`.
 pub const CHAT: &[&str] = &["main", "ai-workspace"];
 
-/// Sólo la ventana principal escribe, clona, lanza recetas o abre escritorios.
+/// Escritura de documentos `.bara` del workspace (principal y asistencia).
+pub const WRITE: &[&str] = &["main", "ai-workspace"];
+
+/// Sólo la ventana principal clona, lanza recetas o abre escritorios.
 pub const MAIN: &[&str] = &["main"];
 
 /// El aviso de reposo se confirma desde el cockpit (principal o telemetría).
@@ -35,7 +38,14 @@ mod tests {
     }
 
     #[test]
-    fn la_escritura_y_las_recetas_quedan_en_main() {
+    fn la_escritura_cubre_main_y_asistencia() {
+        assert!(super::WRITE.contains(&"main"));
+        assert!(super::WRITE.contains(&"ai-workspace"));
+        assert!(!super::WRITE.contains(&"topology"));
+    }
+
+    #[test]
+    fn las_recetas_y_el_clon_quedan_en_main() {
         assert_eq!(super::MAIN, &["main"]);
         assert!(!super::MAIN.contains(&"ai-workspace"));
     }

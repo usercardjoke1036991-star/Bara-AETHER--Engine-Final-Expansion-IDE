@@ -226,6 +226,43 @@ export function anthropicRequest(
   };
 }
 
+/** ¿La raíz apunta a DeepSeek (oficial o con `/v1`)? */
+export function isDeepSeekRoot(baseUrl: string): boolean {
+  try {
+    return new URL(normalizeBaseUrl(baseUrl, PROVIDER_ENDPOINTS.openai)).hostname === "api.deepseek.com";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Raíz OpenAI-compatible lista para concatenar `/chat/completions` o `/models`.
+ *
+ * DeepSeek acepta `https://api.deepseek.com` **sin** `/v1` (docs oficiales).
+ * Si el usuario guardó `…/v1`, se conserva una sola vez: nunca `…/v1/v1/…`.
+ * OpenAI oficial sigue yendo a `https://api.openai.com/v1`.
+ */
+export function openAiCompatibleRoot(baseUrl: string): string {
+  const fallback = PROVIDER_ENDPOINTS.openai;
+  let root = normalizeBaseUrl(baseUrl, fallback);
+  try {
+    const url = new URL(root);
+    if (url.hostname === "api.deepseek.com") {
+      // Quita un `/v1` final sobrante; la petición añade `/chat/completions`.
+      if (url.pathname === "/v1" || url.pathname === "/v1/") {
+        url.pathname = "";
+      }
+      return stripTrailingSlashes(url.toString());
+    }
+    if (url.hostname === "api.openai.com" && (url.pathname === "" || url.pathname === "/")) {
+      return PROVIDER_ENDPOINTS.openai;
+    }
+  } catch {
+    return root;
+  }
+  return root;
+}
+
 /** Cuerpo de una petición a `chat/completions` (OpenAI y compatibles). */
 export function openAiBody(
   config: AiConfig,
@@ -250,14 +287,8 @@ export function openAiBody(
   };
   // Los modelos de razonamiento de OpenAI exigen `max_completion_tokens`.
   // DeepSeek rechaza ese campo y sólo acepta `max_tokens`.
-  const root = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS.openai);
-  let host = "";
-  try {
-    host = new URL(root).hostname;
-  } catch {
-    host = "";
-  }
-  if (config.useMaxCompletionTokens && host !== "api.deepseek.com") {
+  const deepseek = isDeepSeekRoot(config.baseUrl);
+  if (config.useMaxCompletionTokens && !deepseek) {
     body.max_completion_tokens = config.maxTokens;
   } else {
     body.max_tokens = config.maxTokens;
@@ -274,7 +305,7 @@ export function openAiRequest(
   messages: WireMessage[],
   system: string,
 ): HttpRequest {
-  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS.openai);
+  const base = openAiCompatibleRoot(config.baseUrl);
   return {
     url: `${base}/chat/completions`,
     init: {
@@ -300,10 +331,9 @@ export function chatRequest(
 
 /** Mensaje de error legible de un proveedor, sin filtrar nunca la clave. */
 export function extractApiError(status: number, payload: unknown, provider: ProviderId): string {
-  const name = provider === "anthropic" ? "Anthropic" : "OpenAI";
-  const http = status === 0 ? "sin respuesta del servidor" : `HTTP ${status}`;
+  const name = provider === "anthropic" ? "Anthropic" : "OpenAI/compatible";
   const shape = payload as
-    | { error?: { message?: unknown } | string; message?: unknown }
+    | { error?: { message?: unknown; code?: unknown; type?: unknown } | string; message?: unknown }
     | null;
   let detail = "";
   if (shape && typeof shape === "object") {
@@ -315,6 +345,24 @@ export function extractApiError(status: number, payload: unknown, provider: Prov
       detail = shape.message;
     }
   }
+  const lower = detail.toLowerCase();
+  if (status === 401 || lower.includes("invalid api key") || lower.includes("authentication")) {
+    return detail
+      ? `clave inválida (HTTP 401): ${detail}`
+      : "clave inválida (HTTP 401): el proveedor rechazó la autenticación";
+  }
+  if (status === 404 || (lower.includes("model") && lower.includes("not found"))) {
+    return detail
+      ? `modelo no encontrado (HTTP 404): ${detail}`
+      : "modelo no encontrado (HTTP 404)";
+  }
+  if (status === 408 || status === 504) {
+    return "tiempo de espera agotado al hablar con el proveedor";
+  }
+  if (status === 0) {
+    return detail || "sin respuesta del servidor";
+  }
+  const http = `HTTP ${status}`;
   return detail ? `${name} (${http}): ${detail}` : `${name} respondió ${http} sin detalle`;
 }
 
@@ -489,7 +537,10 @@ export async function sendChat(
 
 /** Lista real de modelos de la cuenta (`GET {base}/models`). La clave la pone el proceso. */
 export async function listModels(config: AiConfig, signal?: AbortSignal): Promise<ModelInfo[]> {
-  const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS[config.provider]);
+  const base =
+    config.provider === "openai"
+      ? openAiCompatibleRoot(config.baseUrl)
+      : normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS[config.provider]);
   const response = await exchange(config.provider, `${base}/models`, "GET", undefined, signal);
   let payload: unknown = null;
   try {

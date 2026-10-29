@@ -417,7 +417,7 @@ fn workspace_write_document(
     source: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    window_guard::require(&window, window_guard::MAIN)?;
+    window_guard::require(&window, window_guard::WRITE)?;
     workspace::write(&state.get()?, &path, &source)
 }
 
