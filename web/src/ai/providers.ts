@@ -14,11 +14,11 @@
 //    base64; por eso también funciona con servidores compatibles locales.
 
 import {
-  ANTHROPIC_BROWSER_HEADER,
   ANTHROPIC_VERSION,
   PROVIDER_ENDPOINTS,
   stripTrailingSlashes,
 } from "./config";
+import { exchange } from "./keyring";
 import type {
   AiConfig,
   ChatMessage,
@@ -219,9 +219,7 @@ export function anthropicRequest(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": config.apiKey.trim(),
         "anthropic-version": ANTHROPIC_VERSION,
-        [ANTHROPIC_BROWSER_HEADER]: "true",
       },
       body: JSON.stringify(anthropicBody(config, messages, system)),
     },
@@ -283,7 +281,6 @@ export function openAiRequest(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${config.apiKey.trim()}`,
       },
       body: JSON.stringify(openAiBody(config, messages, system)),
     },
@@ -397,15 +394,6 @@ export function parseChatResponse(provider: ProviderId, payload: unknown): ChatR
     : parseOpenAiResponse(payload);
 }
 
-/** Cuerpo JSON de una respuesta, tolerando cuerpos vacíos o no-JSON. */
-async function readJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Envía la conversación al proveedor activo y normaliza la respuesta.
  *
@@ -453,24 +441,36 @@ export async function sendChat(
     let acceptedModel: string | undefined;
     for (let attempt = 1; attempt <= CHAT_ATTEMPT_LIMIT; attempt += 1) {
       const request = chatRequest({ ...config, model }, wired, system);
-      let response: Response;
+      let status = 0;
+      let payload: unknown = null;
       try {
-        response = await fetch(request.url, { ...request.init, signal: linked.signal });
+        const response = await exchange(
+          config.provider,
+          request.url,
+          "POST",
+          String(request.init.body ?? ""),
+          linked.signal,
+        );
+        status = response.status;
+        try {
+          payload = response.body ? JSON.parse(response.body) : null;
+        } catch {
+          payload = null;
+        }
       } catch (error) {
         if (linked.signal.aborted || attempt >= CHAT_ATTEMPT_LIMIT) {
           throw error;
         }
         continue;
       }
-      const payload = await readJson(response);
-      if (response.ok) {
+      if (status >= 200 && status < 300) {
         const sent = catalogModelId(model);
         const result = parseChatResponse(config.provider, payload);
         const renamed = acceptedModel ?? (sent === model.trim() ? undefined : sent);
         return renamed ? { ...result, acceptedModel: renamed } : result;
       }
-      const detail = extractApiError(response.status, payload, config.provider);
-      const retry = chatRetry(response.status, detail, model, attempt);
+      const detail = extractApiError(status, payload, config.provider);
+      const retry = chatRetry(status, detail, model, attempt);
       if (retry?.kind === "model") {
         acceptedModel = retry.model;
         model = retry.model;
@@ -487,23 +487,17 @@ export async function sendChat(
   }
 }
 
-/** Lista real de modelos de la cuenta (`GET {base}/models`). */
+/** Lista real de modelos de la cuenta (`GET {base}/models`). La clave la pone el proceso. */
 export async function listModels(config: AiConfig, signal?: AbortSignal): Promise<ModelInfo[]> {
   const base = normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS[config.provider]);
-  const anthropic = config.provider === "anthropic";
-  const response = await fetch(`${base}/models`, {
-    method: "GET",
-    headers: anthropic
-      ? {
-          "x-api-key": config.apiKey.trim(),
-          "anthropic-version": ANTHROPIC_VERSION,
-          [ANTHROPIC_BROWSER_HEADER]: "true",
-        }
-      : { authorization: `Bearer ${config.apiKey.trim()}` },
-    signal,
-  });
-  const payload = await readJson(response);
-  if (!response.ok) {
+  const response = await exchange(config.provider, `${base}/models`, "GET", undefined, signal);
+  let payload: unknown = null;
+  try {
+    payload = response.body ? JSON.parse(response.body) : null;
+  } catch {
+    payload = null;
+  }
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(extractApiError(response.status, payload, config.provider));
   }
   const body = payload as { data?: unknown } | null;

@@ -10,7 +10,6 @@
 
 import { analysisStillCurrent } from "../analysisGate";
 import {
-  ANTHROPIC_BROWSER_HEADER,
   ANTHROPIC_VERSION,
   DEFAULT_CONFIG,
   PROVIDER_ENDPOINTS,
@@ -22,7 +21,9 @@ import {
   forgetConfig,
   loadConfig,
   maskSecret,
+  peekStoredSecret,
   saveConfig,
+  stripStoredSecret,
   temperatureRange,
   withProvider,
   type KeyValueStore,
@@ -93,7 +94,7 @@ function claveFicticia(marca: string): string {
 
 /** Configuración lista para enviar (clave ficticia). */
 function readyConfig(): AiConfig {
-  return { ...DEFAULT_CONFIG, apiKey: claveFicticia("autocomprobacion") };
+  return { ...DEFAULT_CONFIG, apiKey: claveFicticia("autocomprobacion"), hasKey: true };
 }
 
 /** Adjunto de mentira con la forma real de una imagen normalizada. */
@@ -149,39 +150,47 @@ const CHECKS: Check[] = [
         configProblems(DEFAULT_CONFIG).length === 1,
         "sin clave debe haber exactamente un problema (la clave)",
       );
-      const blocked = chatSendGate({ ...readyConfig(), apiKey: "" }, "hola", false, false);
+      const blocked = chatSendGate(
+        { ...readyConfig(), apiKey: "", hasKey: false },
+        "hola",
+        false,
+        false,
+      );
       expect(blocked !== null && blocked.includes("clave"), "Enviar salió sin clave");
       expect(chatSendGate(readyConfig(), "hola", false, true) === null, "offline no exige clave");
       expect(
         chatSendGate({ ...readyConfig(), temperature: 9 }, "hola", false, false) !== null,
         "una temperatura fuera de rango no bloqueó Enviar",
       );
-      return `fábrica: ${describeConfig(DEFAULT_CONFIG).replace(/clave .*? \(/, "clave oculta (")}`;
+      return `fábrica: ${describeConfig(DEFAULT_CONFIG)}`;
     },
   },
   {
-    name: "config · la clave sólo se guarda si se pide recordarla",
+    name: "config · la clave no se queda en el almacén",
     run: () => {
       const store = memoryStore();
-      const efímera: AiConfig = { ...readyConfig(), rememberKey: false };
-      expect(saveConfig(efímera, store), "no se pudo escribir la configuración");
+      const legacy = JSON.stringify({ ...readyConfig(), rememberKey: true });
+      store.setItem(STORAGE_KEY, legacy);
+      const peeked = peekStoredSecret(store);
+      expect(peeked?.secret === readyConfig().apiKey, "no se leyó la clave vieja");
+      expect(stripStoredSecret(store), "no se pudo migrar el almacén");
+      expect(store.getItem(STORAGE_KEY)?.includes(readyConfig().apiKey) === false, "la clave sigue en el almacén");
+      expect(loadConfig(store).apiKey === "", "la clave volvió al cargar");
+      expect(saveConfig({ ...readyConfig(), rememberKey: true }, store), "no se pudo guardar");
       expect(
-        store.getItem(STORAGE_KEY)?.includes(efímera.apiKey) === false,
-        "la clave viajó al almacén sin permiso",
+        store.getItem(STORAGE_KEY)?.includes(readyConfig().apiKey) === false,
+        "un guardado nuevo escribió la clave",
       );
-      const recordada: AiConfig = { ...readyConfig(), rememberKey: true };
-      expect(saveConfig(recordada, store), "no se pudo reescribir la configuración");
-      expect(loadConfig(store).apiKey === recordada.apiKey, "no se recuperó la clave recordada");
       expect(forgetConfig(store), "no se pudo olvidar la configuración");
-      expect(loadConfig(store).apiKey === "", "la clave sobrevivió al olvido");
-      return "efímera no persiste · recordada sí · olvidar la borra";
+      expect(peekStoredSecret(store) === null, "olvidar dejó una clave");
+      return "el almacén no conserva la clave · la copia vieja se extrae y se borra";
     },
   },
   {
     name: "config · cambiar de proveedor no hereda la clave",
     run: () => {
       const cambiada = withProvider(readyConfig(), "openai");
-      expect(cambiada.apiKey === "", "la clave de Anthropic se filtró a OpenAI");
+      expect(cambiada.hasKey === false, "el otro proveedor heredó el indicio de clave");
       expect(cambiada.baseUrl === PROVIDER_ENDPOINTS.openai, "raíz de API incorrecta");
       expect(cambiada.model === PROVIDER_MODEL_PRESETS.openai[0], "modelo por defecto incorrecto");
       const store = memoryStore();
@@ -211,11 +220,12 @@ const CHECKS: Check[] = [
       const config = readyConfig();
       const line = describeConfig(config);
       expect(!line.includes(config.apiKey), "la línea de estado contiene la clave");
+      expect(line.includes("en esta sesión"), "no dice dónde está la clave");
       const masked = maskSecret(config.apiKey);
       expect(masked.includes("•"), "el enmascarado no oculta el centro");
       expect(!masked.includes(config.apiKey.slice(4, -4)), "el enmascarado deja ver el centro");
       expect(maskSecret("") === "(sin clave)", "sin clave debería decirlo");
-      return `${line.replace(config.apiKey.slice(4, -4), "…")} · máscara ${masked}`;
+      return `${line} · máscara ${masked}`;
     },
   },
   {
@@ -233,9 +243,12 @@ const CHECKS: Check[] = [
         "la raíz escrita no viaja en la petición",
       );
       expect(chatRequest(config, messages, "SISTEMA").url === request.url, "el selector falla");
-      expect(headers["x-api-key"] === config.apiKey, "falta la cabecera x-api-key");
+      expect(headers["x-api-key"] === undefined, "la clave no puede salir en la petición del WebView");
       expect(headers["anthropic-version"] === ANTHROPIC_VERSION, "falta la versión de la API");
-      expect(headers[ANTHROPIC_BROWSER_HEADER] === "true", "falta la autorización para navegador");
+      expect(
+        headers["anthropic-dangerous-direct-browser-access"] === undefined,
+        "el proceso no habla como un navegador",
+      );
       const body = JSON.parse(String(request.init.body)) as {
         model: string;
         max_tokens: number;
@@ -276,7 +289,7 @@ const CHECKS: Check[] = [
           "http://127.0.0.1:11434/v1/chat/completions",
         "la raíz local no viaja en la petición",
       );
-      expect(headers.authorization === `Bearer ${config.apiKey}`, "falta la autorización Bearer");
+      expect(headers.authorization === undefined, "la clave no puede salir en la petición del WebView");
       const body = JSON.parse(String(request.init.body)) as {
         max_completion_tokens?: number;
         max_tokens?: number;

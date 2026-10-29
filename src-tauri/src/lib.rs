@@ -144,6 +144,12 @@ mod global_transmute;
 // Hilo de reposo. Propone una redundancia; no escribe hasta el cockpit.
 mod idle_worker;
 
+// Claves de API: sesión o llavero del sistema. El WebView no las lee.
+mod secrets;
+
+// Transporte de los proveedores. El destino es una lista cerrada.
+mod ai_http;
+
 /// Analiza una fuente *Shoresh* con el kernel. Total: no puede fallar.
 #[tauri::command]
 fn analyze_source(source: String) -> Analysis {
@@ -890,6 +896,67 @@ async fn github_clone(
     Ok(tree)
 }
 
+/// Guarda la clave del proveedor. `remember` la deja en el llavero del sistema.
+#[tauri::command]
+fn ai_key_save(
+    state: tauri::State<'_, Mutex<secrets::Session>>,
+    provider: String,
+    secret: String,
+    remember: bool,
+) -> Result<(), String> {
+    let mut session = state
+        .lock()
+        .map_err(|_| "el llavero está ocupado".to_string())?;
+    secrets::save(&mut session, &secrets::System, &provider, &secret, remember)
+}
+
+/// `true` si hay clave. El secreto no viaja en la respuesta.
+#[tauri::command]
+fn ai_key_exists(
+    state: tauri::State<'_, Mutex<secrets::Session>>,
+    provider: String,
+) -> Result<bool, String> {
+    let session = state
+        .lock()
+        .map_err(|_| "el llavero está ocupado".to_string())?;
+    secrets::exists(&session, &secrets::System, &provider)
+}
+
+/// Borra la clave de la sesión y del llavero.
+#[tauri::command]
+fn ai_key_delete(
+    state: tauri::State<'_, Mutex<secrets::Session>>,
+    provider: String,
+) -> Result<(), String> {
+    let mut session = state
+        .lock()
+        .map_err(|_| "el llavero está ocupado".to_string())?;
+    secrets::delete(&mut session, &secrets::System, &provider)
+}
+
+/// Llama al proveedor. La clave la pone este proceso; la respuesta ya viene limpia.
+#[tauri::command]
+async fn ai_exchange(
+    state: tauri::State<'_, Mutex<secrets::Session>>,
+    provider: String,
+    url: String,
+    method: String,
+    body: Option<String>,
+) -> Result<ai_http::Exchange, String> {
+    let secret = {
+        let session = state
+            .lock()
+            .map_err(|_| "el llavero está ocupado".to_string())?;
+        secrets::lookup(&session, &secrets::System, &provider)?
+    };
+    let payload = body.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        ai_http::exchange(&provider, &url, &method, &payload, &secret)
+    })
+    .await
+    .map_err(|_| "la llamada al proveedor se interrumpió".to_string())?
+}
+
 /// Diálogo de carpeta. `cancelado` es el contrato que la interfaz no pinta en rojo.
 fn pick_folder(app: &tauri::AppHandle, title: &str) -> Result<std::path::PathBuf, String> {
     use tauri_plugin_dialog::DialogExt;
@@ -907,7 +974,7 @@ fn pick_folder(app: &tauri::AppHandle, title: &str) -> Result<std::path::PathBuf
     workspace::resolve_root(&path.display().to_string())
 }
 
-/// Arranca la ventana del IDE con los cincuenta y seis comandos registrados.
+/// Arranca la ventana del IDE con los sesenta comandos registrados.
 ///
 /// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
 /// instancia por ventana, detrás del cerrojo que guarda [`with_session`].
@@ -924,6 +991,7 @@ pub fn run() {
         .manage(Mutex::new(completion::CompletionCache::new()))
         .manage(Mutex::new(local_infer::LocalSlot::new()))
         .manage(Mutex::new(idle_worker::IdleSlot::new()))
+        .manage(Mutex::new(secrets::Session::default()))
         .setup(|app| {
             idle_worker::start(app.handle().clone());
             Ok(())
@@ -984,7 +1052,11 @@ pub fn run() {
             transmute_global,
             idle_proposal,
             idle_apply,
-            idle_dismiss
+            idle_dismiss,
+            ai_key_save,
+            ai_key_exists,
+            ai_key_delete,
+            ai_exchange
         ])
         .run(tauri::generate_context!())
     {
@@ -1023,6 +1095,10 @@ mod ipc_boundary {
         assert!(handler.contains("idle_proposal"));
         assert!(handler.contains("idle_apply"));
         assert!(handler.contains("idle_dismiss"));
+        assert!(handler.contains("ai_key_save"));
+        assert!(handler.contains("ai_key_exists"));
+        assert!(handler.contains("ai_key_delete"));
+        assert!(handler.contains("ai_exchange"));
         assert!(!handler.contains("read_source"));
         assert!(super::desk_spec("topology").is_some());
         assert!(super::desk_spec("ai-workspace").is_some());
@@ -1148,10 +1224,11 @@ mod ipc_boundary {
             "https://api.deepseek.com",
         ] {
             assert!(
-                production.contains(host),
-                "la CSP de producción no nombra {host}"
+                !production.contains(host),
+                "el WebView no llama a {host}; lo hace el proceso"
             );
         }
+        assert!(!production.contains("https:"));
         assert!(!origen_https_concreto("https:"));
         assert!(!origen_https_concreto("https://"));
         assert!(!origen_https_concreto("https://*"));
