@@ -1,10 +1,7 @@
 // Ajustes del cliente de IA.
 //
-// Componente controlado: la configuración vive en `ChatPanel` (una sola fuente
-// de verdad) y aquí sólo se edita. La clave se pinta enmascarada y se revela a
-// petición, nunca por defecto.
-
-import { useState } from "react";
+// La clave tecleada es un borrador. Al guardar sale de esta pantalla y queda
+// en el proceso. Desde aquí no se puede volver a leer.
 
 import {
   DEFAULT_CONFIG,
@@ -15,7 +12,6 @@ import {
   configProblems,
   temperatureRange,
   describeConfig,
-  maskSecret,
   withProvider,
 } from "../ai/config";
 import type { AiConfig, ModelInfo, ProviderId } from "../ai/types";
@@ -54,7 +50,6 @@ export default function AiSettings({
   onLoadModels: () => void;
   onClose: () => void;
 }) {
-  const [reveal, setReveal] = useState(false);
   const problems = configProblems(config);
   const presets = PROVIDER_MODEL_PRESETS[config.provider];
   const heat = temperatureRange(config.provider);
@@ -96,24 +91,27 @@ export default function AiSettings({
       <label className="ai-field">
         <span>Clave de API</span>
         <input
-          type={reveal ? "text" : "password"}
+          type="password"
           spellCheck={false}
           autoComplete="off"
-          placeholder={config.apiKey ? maskSecret(config.apiKey) : "sk-…"}
+          placeholder="sk-…"
           value={config.apiKey}
           onChange={(event) => onChange({ ...config, apiKey: event.target.value })}
         />
       </label>
 
       <div className="row">
-        <button type="button" onClick={() => setReveal(!reveal)}>
-          {reveal ? "ocultar" : "mostrar"}
-        </button>
         <button type="button" disabled={busy} onClick={onLoadModels}>
           listar modelos
         </button>
         <span className="grow" />
-        <span className="muted">{maskSecret(config.apiKey) || "sin clave"}</span>
+        <span className="muted">
+          {config.hasKey
+            ? config.rememberKey
+              ? "en el llavero"
+              : "en esta sesión"
+            : "sin clave"}
+        </span>
       </div>
 
       <label className="ai-field">
@@ -185,9 +183,9 @@ export default function AiSettings({
           onChange={(event) => onChange({ ...config, rememberKey: event.target.checked })}
         />
         <span>
-          recordar la clave en este equipo{" "}
+          recordar la clave en el llavero de este equipo{" "}
           <span className="muted">
-            (sin marcar, la clave vive sólo en esta sesión del WebView)
+            (sin marcar, la clave vive sólo en esta sesión del proceso)
           </span>
         </span>
       </label>

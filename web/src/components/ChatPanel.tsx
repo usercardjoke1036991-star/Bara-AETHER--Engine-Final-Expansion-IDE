@@ -14,11 +14,14 @@ import {
   describeConfig,
   forgetConfig,
   loadConfig,
+  peekStoredSecret,
   saveConfig,
+  stripStoredSecret,
 } from "../ai/config";
 import { MAX_ATTACHMENTS, filesFromDataTransfer, formatBytes, prepareImages } from "../ai/images";
 import { baraSystemPrompt } from "../ai/prompt";
 import { listModels, sendChat } from "../ai/providers";
+import { deleteKey, keyExists, saveKey } from "../ai/keyring";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
@@ -35,6 +38,22 @@ function newId(): string {
 /** Detalle legible de cualquier fallo. */
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Manda el borrador al proceso y lo quita de la interfaz. */
+async function commitKey(
+  config: AiConfig,
+  setConfig: (config: AiConfig) => void,
+): Promise<AiConfig> {
+  const draft = config.apiKey.trim();
+  if (!draft) {
+    return config;
+  }
+  await saveKey(config.provider, draft, config.rememberKey);
+  const next = { ...config, apiKey: "", hasKey: true };
+  saveConfig(next);
+  setConfig(next);
+  return next;
 }
 
 export interface ChatPanelProps {
@@ -68,6 +87,41 @@ export default function ChatPanel({
   onJudge,
 }: ChatPanelProps) {
   const [config, setConfig] = useState<AiConfig>(() => loadConfig());
+  useEffect(() => {
+    let cancel = false;
+    void (async () => {
+      const peeked = peekStoredSecret();
+      if (peeked) {
+        try {
+          await saveKey(peeked.provider, peeked.secret, true);
+          stripStoredSecret();
+          if (!cancel) {
+            setConfig((current) => ({
+              ...current,
+              apiKey: "",
+              hasKey: current.provider === peeked.provider ? true : current.hasKey,
+              rememberKey: current.provider === peeked.provider ? true : current.rememberKey,
+            }));
+          }
+        } catch {
+          // Si el llavero no acepta la clave, el almacén viejo se queda intacto.
+        }
+      }
+      try {
+        const has = await keyExists(config.provider);
+        if (!cancel) {
+          setConfig((current) =>
+            current.provider === config.provider ? { ...current, hasKey: has } : current,
+          );
+        }
+      } catch {
+        // Sin escritorio no hay llavero: el panel sigue sin clave.
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [config.provider]);
   const [settings, setSettings] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -173,7 +227,7 @@ export default function ChatPanel({
         ]);
         return;
       }
-      const result = await sendChat(config, history, system, controller.signal);
+      const result = await sendChat(await commitKey(config, setConfig), history, system, controller.signal);
       if (result.acceptedModel && result.acceptedModel !== config.model) {
         const next = { ...config, model: result.acceptedModel };
         setConfig(next);
@@ -264,24 +318,40 @@ export default function ChatPanel({
     }
   }, []);
 
-  /** Persiste los ajustes (la clave sólo si se pidió recordarla). */
+  /** Persiste los ajustes. Si hay borrador, pasa al llavero y sale de la interfaz. */
   const persist = useCallback(() => {
-    const saved = saveConfig(config);
-    setNotice(
-      saved
-        ? "Ajustes guardados."
-        : "No se pudo guardar: el almacén del navegador no está disponible.",
-    );
+    void (async () => {
+      try {
+        const next = await commitKey(config, setConfig);
+        const saved = saveConfig(next);
+        setNotice(
+          saved
+            ? next.hasKey
+              ? "Ajustes guardados. La clave quedó en el proceso."
+              : "Ajustes guardados."
+            : "No se pudo guardar: el almacén del navegador no está disponible.",
+        );
+      } catch (error) {
+        setNotice(reasonOf(error));
+      }
+    })();
   }, [config]);
 
-  /** Vuelve a la configuración de arranque (fábrica + entorno). */
+  /** Borra ajustes y la clave del llavero. */
   const forget = useCallback(() => {
-    forgetConfig();
-    setConfig(loadConfig());
-    setModels([]);
-    setModelStatus(null);
-    setNotice("Ajustes olvidados: se vuelve a los valores de fábrica y del entorno.");
-  }, []);
+    void (async () => {
+      try {
+        await deleteKey(config.provider);
+      } catch (error) {
+        setNotice(reasonOf(error));
+      }
+      forgetConfig();
+      setConfig({ ...loadConfig(), hasKey: false });
+      setModels([]);
+      setModelStatus(null);
+      setNotice("Ajustes olvidados. La clave ya no está en el llavero.");
+    })();
+  }, [config.provider]);
 
   /** Lista real de modelos de la cuenta (requiere una clave válida). */
   const fetchModels = useCallback(async () => {

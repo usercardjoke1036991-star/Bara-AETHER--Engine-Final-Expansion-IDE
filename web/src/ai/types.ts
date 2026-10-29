@@ -41,21 +41,23 @@ export interface ChatMessage {
 /**
  * Configuración del cliente de IA.
  *
- * La clave del usuario **nunca** sale de este equipo salvo en la cabecera de la
- * petición al proveedor que el propio usuario haya elegido.
+ * La clave del usuario no vuelve al WebView. La guarda el proceso, en el
+ * llavero del sistema o en la memoria de esta sesión.
  */
 export interface AiConfig {
   provider: ProviderId;
   model: string;
   apiKey: string;
-  /** Raíz de la API: permite proxies, pasarelas o servidores locales. */
+  /** Hay clave en el llavero o en la sesión del proceso. No es el secreto. */
+  hasKey: boolean;
+  /** Raíz de la API: permite los hosts de la lista o un servidor local. */
   baseUrl: string;
   maxTokens: number;
   /** `null` = no enviar el parámetro (deja el valor del proveedor). */
   temperature: number | null;
   /** OpenAI: enviar `max_completion_tokens` en lugar de `max_tokens`. */
   useMaxCompletionTokens: boolean;
-  /** Persistir la clave en el navegador; si no, sólo vive en esta sesión. */
+  /** Persistir la clave en el llavero del sistema; si no, sólo en esta sesión del proceso. */
   rememberKey: boolean;
 }
 

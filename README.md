@@ -225,26 +225,26 @@ desde el kernel por IPC.
 | Pieza | Archivo | Qué hace |
 | --- | --- | --- |
 | Contrato | `web/src/ai/types.ts` | Tipos puros (`AiConfig`, `ChatMessage`, `ImageAttachment`…). |
-| Ajustes | `web/src/ai/config.ts` | Fábrica → almacén del navegador → entorno; enmascarado y validación. |
+| Ajustes | `web/src/ai/config.ts` | Fábrica y almacén sin secreto; validación de la raíz. |
+| Llavero | `web/src/ai/keyring.ts` | Guardar, existir y borrar. El secreto no vuelve. |
 | Proveedores | `web/src/ai/providers.ts` | Construcción de peticiones y análisis de respuestas (puras, sin red). |
 | Contexto | `web/src/ai/prompt.ts` | Prompt del sistema con el catálogo, el análisis y el ejemplo del kernel. |
 | Imágenes | `web/src/ai/images.ts` | Arrastrar/soltar, pegar y elegir; reducción a 1568 px y topes de tamaño. |
 | Autodiagnóstico | `web/src/ai/selfcheck.ts` | Trece comprobaciones sin red: ajustes, peticiones, respuestas, prompt, imágenes, el reintento del chat y el descarte del análisis viejo. |
 | Interfaz | `web/src/components/*.tsx` | `ChatPanel` (panel y conversación), `AiSettings` (ajustes), `AssistantText` (prosa y bloques de código). |
 
-* **Proveedores**: Anthropic (Messages API) y OpenAI (Chat Completions). La
-  cabecera `anthropic-dangerous-direct-browser-access` es obligatoria para que
-  un WebView pueda hablar con Anthropic; en la petición multimodal **la imagen
-  precede al texto** (es el orden que exige el contrato).
-* **Claves**: se escriben en «Ajustes › IA». Por defecto viven **sólo en la
-  sesión**; marcar «recordar la clave» las guarda en el almacén del navegador,
-  y «Olvidar» las borra. La clave nunca se incluye en un informe de error ni en
-  la descripción del estado. `VITE_ANTHROPIC_API_KEY` / `VITE_OPENAI_API_KEY`
-  (véase `.env.example`) existen **sólo para desarrollo** y quedan incrustadas
-  en el haz que sirve Vite: no son un mecanismo de custodia. Sacarla a un
-  llavero del sistema queda fuera de este cliente. La raíz de la API puede ser
-  un subcamino de un host de la CSP (por ejemplo `https://api.deepseek.com/v1`).
-  Otro host no sale del WebView hasta que se añada a `connect-src`.
+* **Proveedores**: Anthropic (Messages API) y OpenAI (Chat Completions, también
+  DeepSeek). La petición la arma el WebView sin clave. El proceso añade la
+  cabecera y llama a la red. En la petición multimodal **la imagen precede al
+  texto**.
+* **Claves**: se escriben en «Ajustes › IA». El campo es un borrador: al
+  guardar sale de la interfaz. «Recordar» las deja en el llavero del sistema
+  (Credential Manager en Windows, Keychain en macOS, Secret Service en Linux).
+  Sin esa marca viven sólo en la memoria del proceso. «Olvidar» las borra de
+  los dos sitios. Una clave que todavía estuviera en `localStorage` se mueve
+  al llavero y se borra del WebView. No hay variables `VITE_*` de clave: el
+  haz no puede llevar un secreto. La raíz tiene que ser uno de los tres hosts
+  oficiales o HTTP en la máquina local; otro host no sale del proceso.
 * **Cómo llega el código al editor**: los bloques cercados (```) de cada
   respuesta se pueden copiar o enviar al editor con «usar en el editor». El
   bloque se **añade** al final del documento, nunca lo sustituye, y el kernel lo

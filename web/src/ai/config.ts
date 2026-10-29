@@ -1,15 +1,8 @@
-// Configuración del cliente de IA: valores por defecto, variables de entorno y
-// persistencia **opcional** de la clave.
+// Configuración del cliente de IA: valores por defecto y persistencia sin secreto.
 //
-// Orden de prioridad de la clave:
-//   1. lo que el usuario escriba en el panel (memoria de la sesión);
-//   2. la copia guardada en el navegador, **sólo** si activó «recordar»;
-//   3. las variables `VITE_*` del entorno de desarrollo.
-//
-// Aviso honesto que el panel repite al usuario: un WebView no puede proteger una
-// clave frente a quien controle la máquina o inyecte código en la página. Por eso
-// el IDE (a) no recuerda la clave salvo que se le pida, (b) sólo llama a una
-// raíz http(s) que el usuario pueda leer y (c) nunca imprime la clave en errores ni logs.
+// La clave no se guarda en este almacén. Si una copia vieja todavía la tiene,
+// `peekStoredSecret` la entrega una vez para migrarla al llavero y
+// `stripStoredSecret` la borra. El proceso es quien la conserva.
 
 import type { AiConfig, ProviderId } from "./types";
 
@@ -28,12 +21,6 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   openai: "OpenAI o compatible (Chat Completions · visión)",
 };
 
-/** Variables de entorno que la interfaz acepta como clave (sólo desarrollo). */
-export const PROVIDER_ENV_KEYS: Record<ProviderId, string> = {
-  anthropic: "VITE_ANTHROPIC_API_KEY",
-  openai: "VITE_OPENAI_API_KEY",
-};
-
 /**
  * Modelos sugeridos. Se toman de los ejemplos de la documentación oficial y
  * **no** se dan por válidos: el panel ofrece «Detectar modelos», que consulta
@@ -47,7 +34,7 @@ export const PROVIDER_MODEL_PRESETS: Record<ProviderId, string[]> = {
 /** Versión de la Messages API que habla este cliente. */
 export const ANTHROPIC_VERSION = "2023-06-01";
 
-/** Cabecera que autoriza a la API de Anthropic a responder a un navegador. */
+/** Cabecera histórica de Anthropic. El proceso ya no la envía: no habla un navegador. */
 export const ANTHROPIC_BROWSER_HEADER = "anthropic-dangerous-direct-browser-access";
 
 /** Configuración de fábrica (Anthropic y sin clave: la pone el usuario). */
@@ -55,6 +42,7 @@ export const DEFAULT_CONFIG: AiConfig = {
   provider: "anthropic",
   model: PROVIDER_MODEL_PRESETS.anthropic[0],
   apiKey: "",
+  hasKey: false,
   baseUrl: PROVIDER_ENDPOINTS.anthropic,
   maxTokens: 2048,
   temperature: null,
@@ -90,18 +78,6 @@ export function defaultStore(): KeyValueStore | null {
   } catch {
     return null;
   }
-}
-
-/** Lee una variable `VITE_*` sin romper en entornos sin `import.meta.env`. */
-export function envValue(name: string): string {
-  const meta = import.meta as ImportMeta & { env?: Record<string, unknown> };
-  const value = meta.env ? meta.env[name] : undefined;
-  return typeof value === "string" ? value : "";
-}
-
-/** Clave del entorno adecuada al proveedor activo. */
-export function envKeyFor(provider: ProviderId): string {
-  return envValue(PROVIDER_ENV_KEYS[provider]).trim();
 }
 
 /** Convierte cualquier JSON leído del almacén en una configuración válida. */
@@ -153,10 +129,10 @@ export function loadStoredConfig(
   }
 }
 
-/** Configuración de arranque: fábrica + almacén + entorno. */
+/** Configuración de arranque. La clave guardada no entra en el objeto. */
 export function loadConfig(store: KeyValueStore | null = defaultStore()): AiConfig {
   const stored = loadStoredConfig(store);
-  const config: AiConfig = { ...DEFAULT_CONFIG, ...(stored ?? {}) };
+  const config: AiConfig = { ...DEFAULT_CONFIG, ...(stored ?? {}), apiKey: "", hasKey: false };
   if (!isApiRoot(config.baseUrl)) {
     config.baseUrl = PROVIDER_ENDPOINTS[config.provider];
   } else if (
@@ -167,13 +143,32 @@ export function loadConfig(store: KeyValueStore | null = defaultStore()): AiConf
     // recibía 404 y el panel decía que el proveedor no la reconocía.
     config.baseUrl = PROVIDER_ENDPOINTS.anthropic;
   }
-  if (!config.apiKey) {
-    config.apiKey = envKeyFor(config.provider);
-  }
   return config;
 }
 
-/** Guarda la configuración; la clave sólo se escribe si se pidió recordarla. */
+/** Clave que una copia vieja del almacén todavía tiene, si la hay. */
+export function peekStoredSecret(
+  store: KeyValueStore | null = defaultStore(),
+): { provider: ProviderId; secret: string } | null {
+  const stored = loadStoredConfig(store);
+  const secret = stored?.apiKey?.trim() ?? "";
+  if (!secret) {
+    return null;
+  }
+  return { provider: stored?.provider === "openai" ? "openai" : "anthropic", secret };
+}
+
+/** Borra la clave del almacén sin tocar el resto de los ajustes. */
+export function stripStoredSecret(store: KeyValueStore | null = defaultStore()): boolean {
+  const stored = loadStoredConfig(store);
+  if (!stored?.apiKey) {
+    return true;
+  }
+  const config = loadConfig(store);
+  return saveConfig({ ...config, ...stored, apiKey: "", hasKey: false, rememberKey: true }, store);
+}
+
+/** Guarda la configuración. La clave no se escribe nunca. */
 export function saveConfig(
   config: AiConfig,
   store: KeyValueStore | null = defaultStore(),
@@ -182,7 +177,7 @@ export function saveConfig(
     return false;
   }
   try {
-    const persistible: AiConfig = { ...config, apiKey: config.rememberKey ? config.apiKey : "" };
+    const persistible: AiConfig = { ...config, apiKey: "" };
     store.setItem(STORAGE_KEY, JSON.stringify(persistible));
     return true;
   } catch {
@@ -211,13 +206,14 @@ export function withProvider(config: AiConfig, provider: ProviderId): AiConfig {
   return {
     ...config,
     provider,
-    apiKey: envKeyFor(provider),
+    apiKey: "",
+    hasKey: false,
     model: PROVIDER_MODEL_PRESETS[provider][0],
     baseUrl: PROVIDER_ENDPOINTS[provider],
   };
 }
 
-/** Clave enmascarada para poder mostrarla sin revelarla. */
+/** Clave enmascarada. Sirve para un borrador que el usuario acaba de teclear. */
 export function maskSecret(secret: string): string {
   const value = secret.trim();
   if (!value) {
@@ -289,7 +285,7 @@ export function configProblems(config: AiConfig): string[] {
   if (!config.model.trim()) {
     problems.push("Falta el modelo: escríbelo o usa «Detectar modelos».");
   }
-  if (!config.apiKey.trim()) {
+  if (!config.hasKey && !config.apiKey.trim()) {
     problems.push("Falta la clave de API del proveedor activo.");
   }
   if (!isApiRoot(config.baseUrl)) {
@@ -309,9 +305,13 @@ export function configProblems(config: AiConfig): string[] {
   return problems;
 }
 
-/** Línea de estado legible para el encabezado del panel. */
+/** Línea de estado. No incluye el secreto. */
 export function describeConfig(config: AiConfig): string {
-  const where = config.rememberKey ? "guardada en el navegador" : "sólo en esta sesión";
+  const where = config.hasKey || config.apiKey.trim()
+    ? config.rememberKey
+      ? "en el llavero"
+      : "sólo en esta sesión"
+    : "sin clave";
   const model = config.model.trim() || "(sin modelo)";
-  return `${PROVIDER_LABELS[config.provider]} · ${model} · clave ${maskSecret(config.apiKey)} (${where})`;
+  return `${PROVIDER_LABELS[config.provider]} · ${model} · clave ${where}`;
 }
