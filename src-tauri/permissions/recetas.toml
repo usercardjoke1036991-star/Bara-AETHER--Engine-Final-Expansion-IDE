@@ -1,0 +1,4 @@
+[[set]]
+identifier = "recetas"
+description = "Ejecución de check, test o typecheck. Sin shell."
+permissions = ["allow-run-workspace-recipe"]

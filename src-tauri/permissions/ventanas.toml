@@ -1,0 +1,9 @@
+[[set]]
+identifier = "ventanas"
+description = "Abrir o enfocar una ventana registrada del IDE"
+permissions = ["allow-open-desk-window"]
+
+[[set]]
+identifier = "medios"
+description = "Inspección de imagen o video elegidos en el diálogo del sistema"
+permissions = ["allow-inspect-media-dialog"]

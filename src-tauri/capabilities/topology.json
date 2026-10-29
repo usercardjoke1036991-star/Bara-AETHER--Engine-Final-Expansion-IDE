@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "topology",
+  "description": "Grafo topológico y propagación de identificadores",
+  "windows": ["topology"],
+  "permissions": [
+    "core:default",
+    "allow-get-workspace-topology-graph",
+    "allow-transmute-global"
+  ]
+}

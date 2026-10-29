@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "autopoiesis",
+  "description": "Ledger de autopoiesis sobre un documento de ejemplo",
+  "windows": ["autopoiesis"],
+  "permissions": [
+    "core:default",
+    "allow-sample-genesis",
+    "allow-autopoiesis"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Ventana principal: editor, consola, paneles, chat embebido, recetas y clon",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "kernel",
+    "archivos",
+    "llavero",
+    "recetas",
+    "ventanas",
+    "github"
+  ]
+}

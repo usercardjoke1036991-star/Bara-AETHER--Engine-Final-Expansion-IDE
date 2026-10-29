@@ -1,0 +1,4 @@
+[[set]]
+identifier = "github"
+description = "Clonar un repositorio de github.com en la carpeta elegida"
+permissions = ["allow-github-clone"]
