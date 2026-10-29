@@ -13,16 +13,17 @@ clona el kernel en un commit fijo y crea ese enlace.
 ## Arquitectura (una sola dirección, cero duplicación)
 
 ```
-web/  (React + TS)  --IPC-->  src-tauri/  -->  bara-ide (lib)  -->  bara (kernel)
- interfaz gráfica             comandos           modelo de análisis       lexer Shoresh
-                              #[tauri::command]   (serializable)           congelado
+web/  (React + TS)  --IPC-->  src-tauri/  -->  bara-kernel-host  -->  bara (kernel)
+ interfaz gráfica             supervisor          proceso hijo              lexer Shoresh
+                              #[tauri::command]   JSON por stdin/stdout     congelado
 ```
 
 | Capa | Crate / carpeta | Responsabilidad |
 | --- | --- | --- |
 | Kernel | `../BAR` (miembro `BAR`) | Lexer *Shoresh*, tipos `Token` / `TokenKind` / `Keyword`. **No se toca.** |
 | Motor | `bara-ide` (lib + CLI) | Proyecta el lexer a un modelo de documento (`Analysis`). Cero dependencias externas salvo la *feature* `serde` opcional. |
-| Backend | `bara-ide/src-tauri` (`bara-ide-desktop`) | Comandos Tauri que devuelven el modelo como JSON. |
+| Backend | `bara-ide/src-tauri` (`bara-ide-desktop`) | Comandos Tauri. El kernel corre en el proceso hijo. |
+| Proceso | `bara-ide/kernel-host` (`bara-kernel-host`) | Sidecar: una operación JSON por línea, sin red ni shell. |
 | Interfaz | `bara-ide/web` | React 19 + Vite 7 + TypeScript 5. |
 
 ## Estructura
@@ -41,6 +42,9 @@ bara-ide/
 │   ├── bridge.rs           puente FASE 5: manifiesto e instantánea de `bara::ide_bridge`
 │   └── main.rs             CLI histórica: `--tokens` / `--summary` / `--help` / `--version`
 ├── samples/genesis.bara    documento Shoresh de ejemplo (embebido en el binario)
+├── kernel-host/            proceso hijo del kernel (`bara-kernel-host`)
+│   ├── Cargo.toml
+│   └── src/{lib,dispatch,supervisor,main}.rs
 ├── package.json            front-end (React, Vite, TS) + CLI de Tauri
 ├── vite.config.ts          Vite sirve `web/` (en `src/` vive Rust)
 ├── tsconfig.json

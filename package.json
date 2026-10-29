@@ -10,9 +10,10 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:ai": "node web/scripts/ai-check.mjs",
+    "stage:kernel-host": "python src-tauri/scripts/stage-kernel-host.py --profile release",
     "patch:resources": "python src-tauri/scripts/win-gnu-recursos.py --exe ../target/release/bara-ide-desktop.exe",
     "tauri": "tauri",
-    "dist:windows": "tauri build --bundles msi,nsis"
+    "dist:windows": "python src-tauri/scripts/stage-kernel-host.py --profile release && tauri build --bundles msi,nsis"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

@@ -58,6 +58,26 @@ body,
   font-size: 0.8rem;
 }
 
+.kernel-pill {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.kernel-pill-ok {
+  color: #b7e3c2;
+}
+
+.kernel-pill-wait {
+  color: #e6d39a;
+}
+
+.kernel-pill-down {
+  color: var(--error);
+}
+
 .grow {
   flex: 1;
 }

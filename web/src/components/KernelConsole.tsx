@@ -16,7 +16,7 @@ interface KernelConsoleProps {
   busy: boolean;
   lattice: BelnapLattice | null;
   current: ObservationView | null;
-  /** Envía la línea al oráculo en proceso (`oracle_converse`), no a un shell. */
+  /** Envía la línea al oráculo del proceso hijo (`oracle_converse`), no a un shell. */
   onSubmit: (line: string) => void;
   /** Lanza una receta del catálogo cerrado. */
   onRecipe: (recipe: RecipeName) => void;
@@ -25,8 +25,8 @@ interface KernelConsoleProps {
 /**
  * Consola inferior del kernel.
  *
- * No abre una PTY ni un intérprete del sistema: cada línea entra al mismo
- * oráculo que el REPL (`bara::repl::Oracle`). Así un turno no puede salir
+ * No abre una PTY ni un intérprete del sistema: cada línea entra al oráculo
+ * del proceso hijo (`bara::repl::Oracle`). Así un turno no puede salir
  * de la jaula de rutas ni lanzar un proceso arbitrario.
  */
 export default function KernelConsole({

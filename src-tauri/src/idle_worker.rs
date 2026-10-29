@@ -1,19 +1,14 @@
-//! Hilo de reposo. Duerme entre pasadas y sólo lee la carpeta activa.
-//! No escribe: la transmutación la confirma el cockpit. Un cerrojo envenenado
-//! se ignora y el hilo sigue en la siguiente pausa.
+//! Propuesta de reposo. La pasada la dispara el escritorio; aquí sólo se
+//! calcula y, si el cockpit confirma, se escribe. No abre shells.
 
 #![forbid(unsafe_code)]
-
-use std::thread;
-use std::time::Duration;
 
 use bara::idle_audit;
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
-use tauri::Manager;
 
 use crate::graph;
-use crate::workspace::{self, ActiveWorkspace};
+use crate::workspace;
 
 /// Aviso que el cockpit muestra sin tapar el editor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -22,65 +17,6 @@ pub struct IdleNotice {
     pub path: String,
     pub name: String,
     pub message: String,
-}
-
-#[derive(Debug, Default)]
-pub struct IdleSlot {
-    notice: Option<IdleNotice>,
-}
-
-impl IdleSlot {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn current(&self) -> Option<IdleNotice> {
-        self.notice.clone()
-    }
-
-    pub fn clear(&mut self) {
-        self.notice = None;
-    }
-
-    fn store(&mut self, notice: IdleNotice) {
-        if self.notice.is_none() {
-            self.notice = Some(notice);
-        }
-    }
-}
-
-/// Arranca un solo hilo. Cada pasada espera cinco segundos antes de leer.
-pub fn start(handle: tauri::AppHandle) {
-    let _ = thread::Builder::new()
-        .name("bara-idle".to_string())
-        .spawn(move || loop {
-            thread::sleep(Duration::from_secs(5));
-            scan_once(&handle);
-        });
-}
-
-fn scan_once(handle: &tauri::AppHandle) {
-    let workspace = handle.state::<ActiveWorkspace>();
-    let Ok(root) = workspace.get() else {
-        return;
-    };
-    let slot = handle.state::<std::sync::Mutex<IdleSlot>>();
-    let pending = slot.lock().ok().and_then(|guard| guard.current()).is_some();
-    if pending {
-        if seek(&root).is_none() {
-            let locked = slot.lock();
-            if let Ok(mut guard) = locked {
-                guard.clear();
-            }
-        }
-        return;
-    }
-    let Some(notice) = seek(&root) else {
-        return;
-    };
-    if let Ok(mut guard) = slot.lock() {
-        guard.store(notice);
-    };
 }
 
 /// Primera redundancia limpia de la carpeta, con el mismo tope de archivos que el grafo.

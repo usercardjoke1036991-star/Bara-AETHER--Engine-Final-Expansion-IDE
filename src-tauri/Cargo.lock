@@ -100,6 +100,7 @@ version = "0.5.0"
 dependencies = [
  "bara",
  "bara-ide",
+ "bara-kernel-host",
  "keyring",
  "serde",
  "serde_json",
@@ -107,6 +108,16 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "ureq",
+]
+
+[[package]]
+name = "bara-kernel-host"
+version = "0.5.0"
+dependencies = [
+ "bara",
+ "bara-ide",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

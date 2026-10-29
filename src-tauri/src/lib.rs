@@ -101,21 +101,14 @@
 
 #![forbid(unsafe_code)]
 
-use bara_ide::{
-    Analysis, AutopoiesisReport, BelnapEvaluation, BelnapLattice, DeltaView, FractalMemoryView,
-    MeshView, MetalView, QuantumView, RootEntry, Session, SessionStatus, TimelineView, Translation,
-    TurnResult, TurnView, VisualBuildView, VisualCatalogueView, VisualEmission,
-};
+use bara_ide::SAMPLE_GENESIS;
+use bara_kernel_host::{workspace, KernelHost};
+use serde_json::{json, Value};
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
-// Cockpit de telemetría: comandos de sólo lectura sobre `bara` + transmutador
-// con estado cognitivo local a la ventana. Ver `src/telemetry.rs`.
-mod telemetry;
-
-// Explorador y almacén del workspace: enumeración recursiva y acceso a
-// documentos `.bara` confinados a una raíz canónica. Ver `src/workspace.rs`.
-mod workspace;
+// Explorador y almacén del workspace: la jaula vive en el crate del sidecar
+// y este proceso la usa para los archivos. El kernel no corre aquí.
 
 // Clonado de GitHub: URL allowlist y `git clone` sin shell. Ver `src/import.rs`.
 mod import;
@@ -123,26 +116,11 @@ mod import;
 // Cota de 32 MiB para archivos multimedia elegidos en el diálogo nativo.
 mod media;
 
-// Autocompletado local: catálogo Shoresh, carta de la carpeta y malla. Sin red.
-mod completion;
-
-// Grafo topológico de la carpeta activa. Sin red y sin raíz impuesta.
-mod graph;
-
 // Recetas de un clic. El proceso vive aquí, fuera del slice del handler.
 mod orchestrate;
 
-// Veto de Belnap del modo autónomo. Escribe sólo con veredicto ∅.
-mod auto_apply;
-
-// GGUF local y respuesta hermética. Sin red y sin FFI.
-mod local_infer;
-
-// Renombre trans-archivo. Escribe sólo si la red no contiene ⊤∧⊥.
-mod global_transmute;
-
-// Hilo de reposo. Propone una redundancia; no escribe hasta el cockpit.
-mod idle_worker;
+// Hilo de reposo. La propuesta la calcula el proceso del kernel.
+mod idle_loop;
 
 // Claves de API: sesión o llavero del sistema. El WebView no las lee.
 mod secrets;
@@ -150,10 +128,27 @@ mod secrets;
 // Transporte de los proveedores. El destino es una lista cerrada.
 mod ai_http;
 
-/// Analiza una fuente *Shoresh* con el kernel. Total: no puede fallar.
+/// Pide una operación al proceso del kernel y devuelve el JSON ya firmado.
+fn kernel_call(kernel: &KernelHost, op: &str, args: Value) -> Result<Value, String> {
+    kernel.call(op, args)
+}
+
+fn kernel_text(kernel: &KernelHost, op: &str, args: Value) -> Result<String, String> {
+    match kernel_call(kernel, op, args)? {
+        Value::String(text) => Ok(text),
+        _ => Err("el kernel devolvió una respuesta que no es texto".to_string()),
+    }
+}
+
+fn scope_args(workspace: &workspace::ActiveWorkspace) -> Result<Value, String> {
+    let (scope, folder_id) = folder_of(workspace)?;
+    Ok(json!({ "scope": scope, "folderId": folder_id }))
+}
+
+/// Analiza una fuente *Shoresh* en el proceso del kernel.
 #[tauri::command]
-fn analyze_source(source: String) -> Analysis {
-    bara_ide::analyze(&source)
+fn analyze_source(source: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "analyze", json!({ "source": source }))
 }
 
 /// Analiza un `.bara` de la raíz activa. Fuera de esa jaula no hay lectura.
@@ -161,29 +156,31 @@ fn analyze_source(source: String) -> Analysis {
 fn analyze_file(
     path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<Analysis, String> {
-    workspace::read(&state.get()?, &path).map(|document| bara_ide::analyze(&document.source))
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    let document = workspace::read(&state.get()?, &path)?;
+    kernel_call(&kernel, "analyze", json!({ "source": document.source }))
 }
 
 /// Catálogo de raíces semánticas conocidas por el kernel.
 #[tauri::command]
-fn kernel_catalogue() -> Vec<RootEntry> {
-    bara_ide::catalogue()
+fn kernel_catalogue(kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "catalogue", json!({}))
 }
 
 /// Documento *Shoresh* de ejemplo, embebido en el binario en tiempo de
 /// compilación (no depende del directorio de trabajo).
 #[tauri::command]
 fn sample_genesis() -> String {
-    bara_ide::SAMPLE_GENESIS.to_string()
+    SAMPLE_GENESIS.to_string()
 }
 
 /// Traduce lengua natural a *Shoresh* con el léxico del kernel: el panel de IA
 /// muestra así el programa canónico que el propio núcleo compilaría, sin
 /// duplicar el diccionario en TypeScript.
 #[tauri::command]
-fn shoresh_translate(text: String) -> Translation {
-    bara_ide::translate(&text)
+fn shoresh_translate(text: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "translate", json!({ "text": text }))
 }
 
 /// Texto de un `.bara` confinado a la raíz activa del workspace.
@@ -208,18 +205,23 @@ fn get_local_completions(
     prefix: String,
     path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
-    cache: tauri::State<'_, Mutex<completion::CompletionCache>>,
-) -> Result<Vec<completion::LocalCompletion>, String> {
-    completion::answer(line, &prefix, &path, &state, &cognition, &cache)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    let root = state.get()?;
+    kernel_call(
+        &kernel,
+        "complete",
+        json!({ "line": line, "prefix": prefix, "path": path, "root": root }),
+    )
 }
 
 /// Grafo de la carpeta activa: nodos, aristas y distancia topológica.
 #[tauri::command]
 fn get_workspace_topology_graph(
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<graph::WorkspaceTopology, String> {
-    graph::build(&state.get()?)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(&kernel, "topology", json!({ "root": state.get()? }))
 }
 
 /// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
@@ -249,16 +251,27 @@ fn judge_auto_patch(
     host: String,
     patch: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<auto_apply::AutoApplyReport, String> {
-    auto_apply::judge(&state.get()?, &path, line, &host, &patch)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "judge_patch",
+        json!({
+            "root": state.get()?,
+            "path": path,
+            "line": line,
+            "host": host,
+            "patch": patch,
+        }),
+    )
 }
 
 /// Elige un `.gguf` en el diálogo del sistema y guarda sólo su cabecera.
 #[tauri::command]
 async fn load_local_weights(
     app: tauri::AppHandle,
-    slot: tauri::State<'_, Mutex<local_infer::LocalSlot>>,
-) -> Result<local_infer::WeightView, String> {
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let picked = app
@@ -276,29 +289,22 @@ async fn load_local_weights(
             return Err("la selección no es un archivo local".to_string());
         }
     };
-    let model = local_infer::load_file(&path)?;
-    let view = local_infer::WeightView::from(&model);
-    match slot.lock() {
-        Ok(mut guard) => guard.install(model),
-        Err(_) => return Err("el modelo local no está disponible".to_string()),
-    }
-    Ok(view)
+    let path = path
+        .to_str()
+        .ok_or_else(|| "la ruta de los pesos no es unicode".to_string())?
+        .to_string();
+    let kernel = (*kernel).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        kernel.call("load_weights", json!({ "path": path }))
+    })
+    .await
+    .map_err(|_| "la carga de pesos se interrumpió".to_string())?
 }
 
 /// Resuelve un prompt con los pesos locales. No abre la red.
 #[tauri::command]
-fn local_complete(
-    prompt: String,
-    slot: tauri::State<'_, Mutex<local_infer::LocalSlot>>,
-) -> Result<local_infer::LocalReply, String> {
-    let model = match slot.lock() {
-        Ok(guard) => guard
-            .card()
-            .cloned()
-            .ok_or_else(|| "no hay pesos locales cargados".to_string())?,
-        Err(_) => return Err("el modelo local no está disponible".to_string()),
-    };
-    Ok(local_infer::complete(&model, &prompt))
+fn local_complete(prompt: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "local_complete", json!({ "prompt": prompt }))
 }
 
 /// Propaga un identificador por el grafo de la carpeta activa.
@@ -308,17 +314,20 @@ fn transmute_global(
     from: String,
     to: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<global_transmute::GlobalReport, String> {
-    global_transmute::propagate(&state.get()?, &path, &from, &to)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "transmute_global",
+        json!({ "root": state.get()?, "path": path, "from": from, "to": to }),
+    )
 }
 
 /// Aviso del hilo de reposo. Vacío si no hay una optimización limpia.
 #[tauri::command]
-fn idle_proposal(
-    slot: tauri::State<'_, Mutex<idle_worker::IdleSlot>>,
-) -> Result<Option<idle_worker::IdleNotice>, String> {
+fn idle_proposal(slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>) -> Result<Value, String> {
     match slot.lock() {
-        Ok(guard) => Ok(guard.current()),
+        Ok(guard) => Ok(guard.current().unwrap_or(Value::Null)),
         Err(_) => Err("el reposo no está disponible".to_string()),
     }
 }
@@ -326,17 +335,27 @@ fn idle_proposal(
 /// Escribe la optimización si el archivo sigue en `∅`.
 #[tauri::command]
 fn idle_apply(
-    slot: tauri::State<'_, Mutex<idle_worker::IdleSlot>>,
+    slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<bool, String> {
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
     let notice = match slot.lock() {
         Ok(guard) => guard.current(),
         Err(_) => return Err("el reposo no está disponible".to_string()),
     };
     let Some(notice) = notice else {
-        return Ok(false);
+        return Ok(Value::Bool(false));
     };
-    let wrote = idle_worker::apply(&state.get()?, &notice)?;
+    let wrote = kernel_call(
+        &kernel,
+        "idle_apply",
+        json!({
+            "root": state.get()?,
+            "path": notice.get("path").and_then(Value::as_str).unwrap_or(""),
+            "name": notice.get("name").and_then(Value::as_str).unwrap_or(""),
+            "message": notice.get("message").and_then(Value::as_str).unwrap_or(""),
+        }),
+    )?;
     if let Ok(mut guard) = slot.lock() {
         guard.clear();
     }
@@ -345,7 +364,7 @@ fn idle_apply(
 
 /// Descarta el aviso sin tocar el disco.
 #[tauri::command]
-fn idle_dismiss(slot: tauri::State<'_, Mutex<idle_worker::IdleSlot>>) -> Result<(), String> {
+fn idle_dismiss(slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>) -> Result<(), String> {
     match slot.lock() {
         Ok(mut guard) => {
             guard.clear();
@@ -391,317 +410,257 @@ fn workspace_write_document(
     workspace::write(&state.get()?, &path, &source)
 }
 
-/// Suelta la malla y el oráculo de una carpeta. La usan el cierre y la expulsión LRU.
-fn release_folder(
-    cognition: &Mutex<telemetry::CognitiveShelf>,
-    sessions: &Mutex<telemetry::OracleShelf>,
-    path: &str,
-) {
-    if let Ok(mut mesh) = cognition.lock() {
-        mesh.forget(path);
-    }
-    if let Ok(mut oracle) = sessions.lock() {
-        oracle.forget(path);
-    }
+/// Suelta la malla y el oráculo de una carpeta en el proceso del kernel.
+fn release_folder(kernel: &KernelHost, path: &str) {
+    let _ = kernel.call("forget_scope", json!({ "scope": path }));
 }
 
 /// Instala una raíz ya validada por el diálogo o por el clon y purga la expulsada.
-fn adopt_root(
-    state: &workspace::ActiveWorkspace,
-    cognition: &Mutex<telemetry::CognitiveShelf>,
-    sessions: &Mutex<telemetry::OracleShelf>,
-    root: String,
-) {
+fn adopt_root(state: &workspace::ActiveWorkspace, kernel: &KernelHost, root: String) {
     if let Some(evicted) = state.set(root) {
-        release_folder(cognition, sessions, &evicted);
+        release_folder(kernel, &evicted);
     }
-}
-
-/// Ejecuta una operación sobre la sesión de la carpeta activa.
-fn with_oracle<T>(
-    shelf: &tauri::State<'_, Mutex<telemetry::OracleShelf>>,
-    scope: &str,
-    action: impl FnOnce(&mut Session) -> T,
-) -> Result<T, String> {
-    match shelf.lock() {
-        Ok(mut guard) => Ok(action(guard.session(scope))),
-        Err(_) => Err("sesión del oráculo no disponible (cerrojo envenenado)".to_string()),
-    }
-}
-
-fn stamp(status: &mut SessionStatus, folder_id: &str) {
-    status.workspace_id = folder_id.to_string();
 }
 
 /// Conversa un turno con el oráculo de la carpeta activa.
 #[tauri::command]
 fn oracle_converse(
     input: String,
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<TurnResult, String> {
-    let (scope, folder_id) = folder_of(&workspace)?;
-    let from = bara::flight_recorder::mark();
-    let mut turn = with_oracle(&sessions, &scope, |session| session.converse(&input))?;
-    let to = bara::flight_recorder::mark();
-    if let Ok(mut shelf) = cognition.lock() {
-        shelf.note_span(&scope, from, to);
-    }
-    stamp(&mut turn.status, &folder_id);
-    Ok(turn)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    let mut args = scope_args(&workspace)?;
+    args["input"] = Value::String(input);
+    kernel_call(&kernel, "oracle_converse", args)
 }
 
 /// Estado de la sesión de la carpeta activa.
 #[tauri::command]
 fn oracle_status(
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<SessionStatus, String> {
-    let (scope, folder_id) = folder_of(&workspace)?;
-    let mut status = with_oracle(&sessions, &scope, |session| session.status())?;
-    stamp(&mut status, &folder_id);
-    Ok(status)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(&kernel, "oracle_status", scope_args(&workspace)?)
 }
 
 /// Turnos conversados en la sesión de la carpeta activa, en orden.
 #[tauri::command]
 fn oracle_turns(
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<Vec<TurnView>, String> {
-    let (scope, _) = folder_of(&workspace)?;
-    with_oracle(&sessions, &scope, |session| session.turns())
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(&kernel, "oracle_turns", scope_args(&workspace)?)
 }
 
 /// Cierra la sesión de la carpeta activa y devuelve el estado virgen.
 #[tauri::command]
 fn oracle_reset(
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<SessionStatus, String> {
-    let (scope, folder_id) = folder_of(&workspace)?;
-    let mut status = with_oracle(&sessions, &scope, |session| {
-        session.reset();
-        session.status()
-    })?;
-    stamp(&mut status, &folder_id);
-    Ok(status)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(&kernel, "oracle_reset", scope_args(&workspace)?)
 }
 
 /// Diario temporal `Δ⁻¹` de la carpeta activa.
 #[tauri::command]
 fn temporal_deltas(
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<Vec<DeltaView>, String> {
-    let (scope, _) = folder_of(&workspace)?;
-    with_oracle(&sessions, &scope, |session| session.deltas())
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(&kernel, "temporal_deltas", scope_args(&workspace)?)
 }
 
 /// Control temporal: rebobina `Δ⁻¹` hasta `marker` en la carpeta activa.
 #[tauri::command]
 fn temporal_rollback(
     marker: u64,
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
-) -> Result<TurnResult, String> {
-    let (scope, folder_id) = folder_of(&workspace)?;
-    let from = bara::flight_recorder::mark();
-    let mut turn = with_oracle(&sessions, &scope, |session| session.rollback(marker))?;
-    let to = bara::flight_recorder::mark();
-    if let Ok(mut shelf) = cognition.lock() {
-        shelf.note_span(&scope, from, to);
-    }
-    stamp(&mut turn.status, &folder_id);
-    Ok(turn)
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    let mut args = scope_args(&workspace)?;
+    args["marker"] = json!(marker);
+    kernel_call(&kernel, "temporal_rollback", args)
 }
 
 /// Biláttice de Belnap completa, tal como la calcula el kernel.
-///
-/// Total por construcción: ninguna entrada puede hacerla fallar, así que no
-/// devuelve `Result` ni entra en pánico.
 #[tauri::command]
-fn belnap_lattice() -> BelnapLattice {
-    bara_ide::belnap_lattice()
+fn belnap_lattice(kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "belnap_lattice", json!({}))
 }
 
 /// Clasifica un par `(⊤, ⊥)` con la lógica de Belnap del kernel.
 #[tauri::command]
-fn belnap_evaluate(truth: f64, falsity: f64) -> BelnapEvaluation {
-    bara_ide::belnap_evaluate(truth, falsity)
+fn belnap_evaluate(
+    truth: f64,
+    falsity: f64,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "belnap_evaluate",
+        json!({ "truth": truth, "falsity": falsity }),
+    )
 }
 
 /// **Fase 1** — autopoiesis del AST, valencia de Belnap y puerta ZK.
-///
-/// Total: cualquier texto produce un informe (sin raíces desconocidas el
-/// mutador queda en generación 0 y la puerta certifica los invariantes).
 #[tauri::command]
-fn autopoiesis(source: String) -> AutopoiesisReport {
-    bara_ide::autopoiesis(&source)
+fn autopoiesis(source: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "autopoiesis", json!({ "source": source }))
 }
 
 /// **Fase 2** — banco cuántico nativo del documento.
 #[tauri::command]
-fn quantum_native(source: String) -> QuantumView {
-    bara_ide::quantum_register(&source)
+fn quantum_native(source: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "quantum", json!({ "source": source }))
 }
 
 /// **Fase 2** — sincroniza la malla holográfica y proyecta sus nudos.
-///
-/// `peers` y `rounds` los acota el propio panel de `bara-ide`: la interfaz no
-/// puede provocar una sincronización desmedida.
 #[tauri::command]
-fn mesh_sync(source: String, peers: usize, rounds: usize, threaded: bool) -> MeshView {
-    bara_ide::mesh_status(&source, peers, rounds, threaded)
+fn mesh_sync(
+    source: String,
+    peers: usize,
+    rounds: usize,
+    threaded: bool,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "mesh",
+        json!({ "source": source, "peers": peers, "rounds": rounds, "threaded": threaded }),
+    )
 }
 
 /// **Fase 2** — baja el documento a Metal‑IR para el dispositivo pedido.
-///
-/// `device` es opcional (`"cpu"` por defecto): cualquier otro valor que no
-/// nombre la GPU se resuelve como CPU, sin fallar.
 #[tauri::command]
-fn metal_ir(source: String, device: Option<String>) -> MetalView {
-    bara_ide::metal_program(&source, device.as_deref().unwrap_or("cpu"))
+fn metal_ir(
+    source: String,
+    device: Option<String>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "metal",
+        json!({ "source": source, "device": device.unwrap_or_else(|| "cpu".to_string()) }),
+    )
 }
 
 /// **Fase 2** — diario `Δ⁻¹` del documento y cumbre de su pila de estados.
 #[tauri::command]
-fn temporal_timeline(source: String) -> TimelineView {
-    bara_ide::timeline(&source)
+fn temporal_timeline(
+    source: String,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(&kernel, "timeline", json!({ "source": source }))
 }
 
 /// **Fase 3** — reparto áureo/Fibonacci de la memoria del documento.
 #[tauri::command]
-fn fractal_memory(source: String) -> FractalMemoryView {
-    bara_ide::fractal_memory(&source)
+fn fractal_memory(source: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "fractal_memory", json!({ "source": source }))
 }
 
 /// **Fase 3** — reparto áureo de una lista de anchos arbitraria.
-///
-/// Total: una lista vacía o desmedida se acota dentro del panel (el reparto
-/// siempre respeta su cota superior de Fibonacci).
 #[tauri::command]
-fn fractal_plan(widths: Vec<usize>) -> FractalMemoryView {
-    bara_ide::fractal_plan(&widths)
+fn fractal_plan(widths: Vec<usize>, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "fractal_plan", json!({ "widths": widths }))
 }
 
 /// Contrato del *Visual Builder*: clases, tipos y cotas del lienzo.
-///
-/// Total: el vocabulario lo sirve el kernel, de modo que el panel no repite ni
-/// un literal del contrato.
 #[tauri::command]
-fn visual_catalogue() -> VisualCatalogueView {
-    bara_ide::visual_catalogue()
+fn visual_catalogue(kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "visual_catalogue", json!({}))
 }
 
 /// Lienzo de ejemplo del kernel, para el editor del panel.
 #[tauri::command]
-fn visual_sample() -> String {
-    bara_ide::visual_sample()
+fn visual_sample(kernel: tauri::State<'_, KernelHost>) -> Result<String, String> {
+    kernel_text(&kernel, "visual_sample", json!({}))
 }
 
 /// Traduce, valida y **firma** un lienzo JSON estricto.
-///
-/// `Err` legible (nunca un aborto) cuando el lienzo incumple el contrato: una
-/// clave desconocida, un tipo fuera del catálogo o una referencia hacia delante
-/// invalidan el lienzo entero en vez de compilarse a medias.
 #[tauri::command]
-fn visual_build(blueprint: String) -> Result<VisualBuildView, String> {
-    bara_ide::visual_build(&blueprint)
+fn visual_build(blueprint: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "visual_build", json!({ "blueprint": blueprint }))
 }
 
 /// Compone varios lienzos en un único ADN firmado.
-///
-/// El orden de `blueprints` es significativo: fija la etiqueta firmada (la del
-/// primero, con sufijo `:compuesto`) y la raíz de Merkle del conjunto.
 #[tauri::command]
-fn visual_compose(blueprints: Vec<String>) -> Result<VisualBuildView, String> {
-    bara_ide::visual_compose(&blueprints)
+fn visual_compose(
+    blueprints: Vec<String>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "visual_compose",
+        json!({ "blueprints": blueprints }),
+    )
 }
 
 /// Reconstruye el lienzo en el kernel y sólo entonces entrega el `.bara`.
-///
-/// La interfaz no puede llevar al editor el texto que tenía en memoria: este
-/// comando vuelve a traducir, exige `verified` y un sello de 32 bytes, y
-/// rechaza el documento si algo de eso falla.
 #[tauri::command]
-fn visual_emit(blueprint: String) -> Result<VisualEmission, String> {
-    bara_ide::visual_emit(&blueprint)
+fn visual_emit(blueprint: String, kernel: tauri::State<'_, KernelHost>) -> Result<Value, String> {
+    kernel_call(&kernel, "visual_emit", json!({ "blueprint": blueprint }))
 }
 
 /// Emisión de una composición: mismo sello, el orden de los lienzos importa.
 #[tauri::command]
-fn visual_emit_composed(blueprints: Vec<String>) -> Result<VisualEmission, String> {
-    bara_ide::visual_emit_composed(&blueprints)
+fn visual_emit_composed(
+    blueprints: Vec<String>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "visual_emit_composed",
+        json!({ "blueprints": blueprints }),
+    )
 }
 
 /// **Fase 5** — contrato canónico del puente kernel → IDE.
-///
-/// Devuelve el JSON de `bara::ide_bridge::Manifest::canon` sin recomillar: el
-/// panel lo guarda al conectar y compara después la huella de cada instantánea
-/// para detectar cualquier deriva de esquema sin leer estado del núcleo.
 #[tauri::command]
-fn bridge_manifest() -> String {
-    bara_ide::bridge_manifest()
+fn bridge_manifest(kernel: tauri::State<'_, KernelHost>) -> Result<String, String> {
+    kernel_text(&kernel, "bridge_manifest", json!({}))
 }
 
 /// **Fase 5** — instantánea de sólo lectura del kernel sobre el documento.
-///
-/// El texto del editor entra por la pasarela de burbujas y el sistema
-/// inmunitario adaptativo lo escanea; el JSON devuelto es exactamente el que
-/// publica `bara::ide_bridge::Snapshot::capture` (claves fijas en *snake_case*).
-/// `Err` legible si el puente rechaza una sección: el panel nunca pinta una
-/// instantánea a medias.
 #[tauri::command]
-fn bridge_snapshot(source: String) -> Result<String, String> {
-    bara_ide::bridge_snapshot(&source)
+fn bridge_snapshot(source: String, kernel: tauri::State<'_, KernelHost>) -> Result<String, String> {
+    kernel_text(&kernel, "bridge_snapshot", json!({ "source": source }))
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-// Cockpit de telemetría (FASE 6) — `src/telemetry.rs`
-// ─────────────────────────────────────────────────────────────────────────
-// Todos los comandos devuelven `Result<String, String>` y pasan por
-// `telemetry::guarded`: en debug, un pánico inesperado del backend se convierte
-// en un error IPC. El perfil release aborta, así que ahí la guarda no alcanza.
 
 /// Manifiesto ontológico canónico + huella de identidad del puente.
 #[tauri::command]
-fn get_system_manifest() -> Result<String, String> {
-    telemetry::guarded(telemetry::system_manifest)
+fn get_system_manifest(kernel: tauri::State<'_, KernelHost>) -> Result<String, String> {
+    kernel_text(&kernel, "system_manifest", json!({}))
 }
 
-/// Marco cognitivo completo (`NeuralFrame::json`): inferencia, censo de Belnap,
-/// memoria a largo plazo y vista semántica *Shoresh* (`NeuralIT`).
+/// Marco cognitivo completo (`NeuralFrame::json`).
 #[tauri::command]
 fn get_neural_frame(
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
 ) -> Result<String, String> {
-    let scope = cognitive_scope(&workspace)?;
-    telemetry::guarded(|| telemetry::neural_frame(&cognition, &scope))
+    kernel_text(&kernel, "neural_frame", scope_args(&workspace)?)
 }
 
 /// Volcado de la caja negra limitado a los tramos de la carpeta activa.
 #[tauri::command]
 fn get_flight_recorder_logs(
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
 ) -> Result<String, String> {
-    let (scope, folder_id) = folder_of(&workspace)?;
-    telemetry::guarded(|| telemetry::flight_recorder_logs(&cognition, &scope, &folder_id))
+    kernel_text(&kernel, "flight_logs", scope_args(&workspace)?)
 }
 
 /// Transmuta código/texto externo, lo audita y lo indexa si es admisible.
 #[tauri::command(rename_all = "snake_case")]
 fn transmute_input(
     source_code: String,
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
 ) -> Result<String, String> {
-    let scope = cognitive_scope(&workspace)?;
-    telemetry::guarded(|| telemetry::transmute_input(&cognition, &scope, &source_code))
+    let mut args = scope_args(&workspace)?;
+    args["source"] = Value::String(source_code);
+    kernel_text(&kernel, "transmute_input", args)
 }
 
 /// Ventanas de escritorio que el IDE sabe abrir. El identificador es la
@@ -786,11 +745,10 @@ fn workspace_activate(
 fn workspace_close_root(
     id: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceShelf, String> {
     let (path, shelf) = state.release(id.trim())?;
-    release_folder(&cognition, &sessions, &path);
+    release_folder(&kernel, &path);
     Ok(shelf)
 }
 
@@ -798,30 +756,13 @@ fn workspace_close_root(
 #[tauri::command]
 fn transmute_workspace(
     workspace: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
 ) -> Result<String, String> {
-    let root = workspace.get()?;
-    let project = bara::transmute_engine::transmute_workspace_dir(std::path::Path::new(&root))?;
-    let distance = if project.topology.nearest == u16::MAX {
-        serde_json::Value::Null
-    } else {
-        serde_json::json!(project.topology.nearest)
-    };
-    Ok(serde_json::json!({
-        "archivos": project.files,
-        "archivos_omitidos": project.omitted_files,
-        "trozos": project.chunks,
-        "sentencias": project.statements,
-        "nodos": project.nodes.len(),
-        "nodos_omitidos": project.omitted_nodes,
-        "cohesion_mili": project.topology.cohesion_milli,
-        "solapes": project.topology.overlaps,
-        "distancia": distance,
-        "alerta": project.topology.alert,
-        "foco": project.topology.focus.as_str(),
-        "vecino": project.topology.neighbor.as_str(),
-        "lenguajes": project.languages,
-    })
-    .to_string())
+    kernel_text(
+        &kernel,
+        "transmute_workspace",
+        json!({ "root": workspace.get()? }),
+    )
 }
 
 /// Elige un archivo multimedia en el diálogo del sistema y aplica la cota de 32 MiB.
@@ -860,12 +801,11 @@ async fn inspect_media_dialog(app: tauri::AppHandle) -> Result<media::MediaInspe
 async fn workspace_open_dialog(
     app: tauri::AppHandle,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceTree, String> {
     let folder = pick_folder(&app, "Abrir carpeta del workspace")?;
     let tree = workspace::tree(&folder.display().to_string())?;
-    adopt_root(&state, &cognition, &sessions, tree.root.clone());
+    adopt_root(&state, &kernel, tree.root.clone());
     Ok(tree)
 }
 
@@ -879,8 +819,7 @@ async fn github_clone(
     app: tauri::AppHandle,
     url: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
-    cognition: tauri::State<'_, Mutex<telemetry::CognitiveShelf>>,
-    sessions: tauri::State<'_, Mutex<telemetry::OracleShelf>>,
+    kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceTree, String> {
     // Validar antes de abrir el diálogo: una URL mala no pide carpeta.
     let _ = import::github_remote(&url)?;
@@ -892,7 +831,7 @@ async fn github_clone(
     .await
     .map_err(|_| "el clon se interrumpió".to_string())??;
     let tree = workspace::tree(&cloned.display().to_string())?;
-    adopt_root(&state, &cognition, &sessions, tree.root.clone());
+    adopt_root(&state, &kernel, tree.root.clone());
     Ok(tree)
 }
 
@@ -958,6 +897,12 @@ async fn ai_exchange(
 }
 
 /// Diálogo de carpeta. `cancelado` es el contrato que la interfaz no pinta en rojo.
+/// Estado del proceso hijo: `activo`, `reiniciando` o `caído`.
+#[tauri::command]
+fn kernel_host_status(kernel: tauri::State<'_, KernelHost>) -> String {
+    kernel.status().label().to_string()
+}
+
 fn pick_folder(app: &tauri::AppHandle, title: &str) -> Result<std::path::PathBuf, String> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -974,26 +919,25 @@ fn pick_folder(app: &tauri::AppHandle, title: &str) -> Result<std::path::PathBuf
     workspace::resolve_root(&path.display().to_string())
 }
 
-/// Arranca la ventana del IDE con los sesenta comandos registrados.
-///
-/// La sesión del oráculo vive en el estado gestionado por Tauri: una sola
-/// instancia por ventana, detrás del cerrojo que guarda [`with_session`].
-/// Los comandos de la fase AETHER‑Ω, los del constructor visual y los del
-/// puente son funciones puras sobre el texto del editor: no tocan la sesión ni
-/// comparten estado.
+/// Arranca la ventana del IDE. El kernel corre en un proceso hijo.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let kernel = KernelHost::boot();
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(Mutex::new(telemetry::OracleShelf::new()))
-        .manage(Mutex::new(telemetry::CognitiveShelf::new()))
+        .manage(kernel)
         .manage(workspace::ActiveWorkspace::bootstrap())
-        .manage(Mutex::new(completion::CompletionCache::new()))
-        .manage(Mutex::new(local_infer::LocalSlot::new()))
-        .manage(Mutex::new(idle_worker::IdleSlot::new()))
+        .manage(Mutex::new(idle_loop::IdleBridge::new()))
         .manage(Mutex::new(secrets::Session::default()))
         .setup(|app| {
-            idle_worker::start(app.handle().clone());
+            let handle = app.handle().clone();
+            app.state::<KernelHost>().listen(move |status| {
+                let _ = handle.emit("kernel-host", status);
+            });
+            let _ = app
+                .handle()
+                .emit("kernel-host", app.state::<KernelHost>().status().label());
+            idle_loop::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1056,7 +1000,8 @@ pub fn run() {
             ai_key_save,
             ai_key_exists,
             ai_key_delete,
-            ai_exchange
+            ai_exchange,
+            kernel_host_status
         ])
         .run(tauri::generate_context!())
     {
@@ -1067,8 +1012,6 @@ pub fn run() {
 
 #[cfg(test)]
 mod ipc_boundary {
-    use std::sync::Mutex;
-
     #[test]
     fn la_cli_y_la_pty_no_entran_en_el_handler() {
         let src = include_str!("lib.rs");
@@ -1099,6 +1042,7 @@ mod ipc_boundary {
         assert!(handler.contains("ai_key_exists"));
         assert!(handler.contains("ai_key_delete"));
         assert!(handler.contains("ai_exchange"));
+        assert!(handler.contains("kernel_host_status"));
         assert!(!handler.contains("read_source"));
         assert!(super::desk_spec("topology").is_some());
         assert!(super::desk_spec("ai-workspace").is_some());
@@ -1141,69 +1085,6 @@ mod ipc_boundary {
     }
 
     #[test]
-    fn la_novena_carpeta_olvida_la_malla_y_el_oraculo() {
-        let workspace = super::workspace::ActiveWorkspace::empty();
-        let cognition = Mutex::new(super::telemetry::CognitiveShelf::new());
-        let sessions = Mutex::new(super::telemetry::OracleShelf::new());
-        let mut paths = Vec::new();
-        for index in 0..super::workspace::ROOT_CAP {
-            let dir =
-                std::env::temp_dir().join(format!("bara-olvido-{index}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("directorio");
-            let path = super::workspace::resolve_root(dir.to_str().expect("utf-8"))
-                .expect("canon")
-                .display()
-                .to_string();
-            super::adopt_root(&workspace, &cognition, &sessions, path.clone());
-            paths.push((dir, path));
-        }
-        {
-            let mut mesh = cognition.lock().expect("malla");
-            mesh.note_span(&paths[0].1, 1, 2);
-            mesh.note_span(&paths[1].1, 3, 4);
-        }
-        {
-            let mut oracle = sessions.lock().expect("oráculo");
-            let _ = oracle.session(&paths[1].1).converse("hola");
-            assert!(!oracle.session(&paths[1].1).turns().is_empty());
-        }
-        super::adopt_root(&workspace, &cognition, &sessions, paths[0].1.clone());
-        let extra_dir =
-            std::env::temp_dir().join(format!("bara-olvido-extra-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&extra_dir);
-        std::fs::create_dir_all(&extra_dir).expect("extra");
-        let extra = super::workspace::resolve_root(extra_dir.to_str().expect("utf-8"))
-            .expect("canon")
-            .display()
-            .to_string();
-        super::adopt_root(&workspace, &cognition, &sessions, extra);
-        assert!(
-            cognition
-                .lock()
-                .expect("malla")
-                .spans_of(&paths[1].1)
-                .is_empty(),
-            "la carpeta expulsada debe perder la malla"
-        );
-        assert!(!cognition
-            .lock()
-            .expect("malla")
-            .spans_of(&paths[0].1)
-            .is_empty());
-        assert!(sessions
-            .lock()
-            .expect("oráculo")
-            .session(&paths[1].1)
-            .turns()
-            .is_empty());
-        for (dir, _) in paths {
-            let _ = std::fs::remove_dir_all(dir);
-        }
-        let _ = std::fs::remove_dir_all(extra_dir);
-    }
-
-    #[test]
     fn la_csp_no_abre_https_generico() {
         let conf = include_str!("../tauri.conf.json");
         assert!(!conf.contains("\"csp\": null"));
@@ -1237,6 +1118,7 @@ mod ipc_boundary {
         assert!(production.contains("script-src 'self'"));
         assert!(conf.contains("\"msi\""));
         assert!(conf.contains("\"nsis\""));
+        assert!(conf.contains("binaries/bara-kernel-host"));
         let package = include_str!("../../package.json");
         assert!(package.contains("dist:windows"));
         assert!(package.contains("msi,nsis"));
