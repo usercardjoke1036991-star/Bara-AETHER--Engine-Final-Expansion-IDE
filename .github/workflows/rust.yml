@@ -89,7 +89,7 @@ jobs:
     - name: cargo-deny (licencias y advisories)
       run: |
         cargo install cargo-deny --locked --version 0.20.2
-        cargo deny check --all-features
+        cargo deny --all-features check
     - name: cargo-audit
       run: |
         cargo install cargo-audit --locked --version 0.21.2
