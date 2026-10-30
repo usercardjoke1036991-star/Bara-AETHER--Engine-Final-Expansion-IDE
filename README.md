@@ -332,7 +332,8 @@ El inspector web de Tauri **no** va en los builds por defecto (tampoco en
 
 El crate `bara` ya **no** depende de un `../BAR` hermano suelto. Los
 `Cargo.toml` (raíz, `kernel-host/`, `src-tauri/`) apuntan al repositorio del
-kernel con un `rev` SHA concreto. Se eligió **dependencia git fijada** (no
+kernel con un `rev` SHA concreto (hoy el tip de `dev` tras el merge de
+`fix/judge-patch-lexicon`). Se eligió **dependencia git fijada** (no
 submódulo) porque:
 
 1. el CI y cualquier clon del IDE resuelven el mismo commit sin junctions;
@@ -340,9 +341,27 @@ submódulo) porque:
 3. el secreto `KERNEL_READ_TOKEN` sigue sirviendo si el kernel es privado
    (`git`/`cargo` autenticados en el workflow).
 
-Para iterar en local contra un checkout hermano, puedes añadir un
+### Local vs CI (doble resolución)
+
+En esta máquina, `C:\Users\Vexor\Downloads\Cargo.toml` declara un
+`[workspace]` que incluye `BAR` y `bara-ide`. Cargo, al subir directorios,
+trata ese manifiesto como raíz: **en local** `bara` se resuelve por
+**path** (`../BAR`), aunque el `Cargo.toml` del IDE pida `git + rev`.
+**En CI** no existe ese workspace padre, así que manda el pin git.
+
+Cómo unificarlo (propuesta, **sin aplicar**):
+
+1. Quitar `bara-ide` / `bara-ide/src-tauri` / `bara-ide/kernel-host` del
+   workspace de `Downloads`, dejando el IDE como repo autónomo; o
+2. Declarar `[workspace]` propio en la raíz del IDE (rompe el workspace
+   anidado actual); o
+3. Mantener el dual a propósito y regenerar `Cargo.lock` del IDE con el
+   padre renombrado temporalmente (como en CI) cuando se mueva el `rev`.
+
+Para iterar en local contra un checkout hermano sin tocar el workspace
+padre, también vale un
 `[patch."https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git"]`
-con `bara = { path = "../BAR" }` sin subirlo al remoto.
+con `bara = { path = "../BAR" }` **sin subirlo** al remoto.
 
 ## Notas
 

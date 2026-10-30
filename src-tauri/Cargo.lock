@@ -106,7 +106,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "bara"
 version = "0.5.0"
-source = "git+https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git?rev=0db6304065e018fddfec7e2378e43d2abe82465d#0db6304065e018fddfec7e2378e43d2abe82465d"
+source = "git+https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git?rev=fa3d308552f3cc69ccdab8f141d56399e35c2ff6#fa3d308552f3cc69ccdab8f141d56399e35c2ff6"
 
 [[package]]
 name = "bara-ide"

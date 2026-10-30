@@ -13,7 +13,7 @@ publish = false
 faults = []
 
 [dependencies]
-bara = { git = "https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git", rev = "0db6304065e018fddfec7e2378e43d2abe82465d" }
+bara = { git = "https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git", rev = "fa3d308552f3cc69ccdab8f141d56399e35c2ff6" }
 bara-ide = { path = "..", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
