@@ -1078,6 +1078,32 @@ function TranslationBox({
 }) {
   const roots = result.roots.length > 0 ? `raíces: ${result.roots.join(" ")}` : "sin raíces";
   const extra = result.synthesized > 0 ? ` · ${result.synthesized} sintetizada(s)` : "";
+  const [verified, setVerified] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setVerified(false);
+    if (!result.program.trim()) {
+      return () => {
+        alive = false;
+      };
+    }
+    void import("../baraVerify")
+      .then(({ verifyBaraBlock }) => verifyBaraBlock(result.program))
+      .then((status) => {
+        if (alive) {
+          setVerified(status === "verified");
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setVerified(false);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [result.program]);
 
   return (
     <div className="ai-code">
@@ -1085,9 +1111,10 @@ function TranslationBox({
         <span className="muted">
           Shoresh · {roots}
           {extra}
+          {result.program ? (verified ? " · verificado" : " · no verificado") : ""}
         </span>
         <span className="grow" />
-        {result.program ? (
+        {result.program && verified ? (
           <button type="button" onClick={() => onUseCode(result.program)}>
             usar en el editor
           </button>

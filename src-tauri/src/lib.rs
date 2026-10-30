@@ -551,10 +551,11 @@ fn workspace_write_document(
     app: tauri::AppHandle,
     path: String,
     source: String,
+    expected_hash: Option<String>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
     window_guard::require(&window, window_guard::WRITE)?;
-    let document = workspace::write(&state.get()?, &path, &source)?;
+    let document = workspace::write(&state.get()?, &path, &source, expected_hash.as_deref())?;
     emit_workspace_file_changed(&app, &document.path);
     Ok(document)
 }
@@ -1427,8 +1428,8 @@ mod ipc_boundary {
                 assert!(has_llavero, "la asistencia necesita el llavero");
                 assert!(!has_receta, "la asistencia no lanza recetas");
                 assert!(!has_github, "la asistencia no clona");
-                // A3: Ctrl+S / edición en el escritorio de asistencia.
-                assert!(has_write, "la asistencia debe poder guardar el workspace");
+                // A2: Asistencia no escribe a disco; solo adjuntos al chat principal.
+                assert!(!has_write, "la asistencia no guarda el workspace");
             }
             if label == "main" {
                 assert!(has_llavero && has_receta && has_github && has_write);

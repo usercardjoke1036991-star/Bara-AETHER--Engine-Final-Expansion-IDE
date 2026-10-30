@@ -55,7 +55,12 @@ pub fn apply(root: &str, notice: &IdleNotice) -> Result<bool, String> {
         return Ok(false);
     }
     write_backup(root, &notice.path, &document.source)?;
-    workspace::write_source(root, &notice.path, &proposal.revised)?;
+    workspace::write_source_checked(
+        root,
+        &notice.path,
+        &proposal.revised,
+        Some(document.content_hash.as_str()),
+    )?;
     Ok(true)
 }
 

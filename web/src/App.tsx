@@ -30,6 +30,7 @@ import {
   type TurnView,
 } from "./engine";
 import {
+  contentHashOf,
   githubClone,
   workspaceOpenDialog,
   workspaceReadDocument,
@@ -677,7 +678,11 @@ export default function App() {
 
     setSaving(true);
     try {
-      const document = await workspaceWriteDocument(activeTab.path, activeTab.source);
+      const document = await workspaceWriteDocument(
+        activeTab.path,
+        activeTab.source,
+        contentHashOf(activeTab.saved),
+      );
       // Se actualiza sólo la marca de guardado: si el usuario escribió
       // mientras se persistía, su texto vivo no se pisa.
       setTabs((current) =>

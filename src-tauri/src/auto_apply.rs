@@ -386,7 +386,8 @@ pub fn confirm(
     }
     let backup_path = write_backup(root, path, &on_disk.source)?;
     let (next, at, inserted) = splice(&on_disk.source, patch, line);
-    let document: WorkspaceDocument = workspace::write_source(root, path, &next)?;
+    let document: WorkspaceDocument =
+        workspace::write_source_checked(root, path, &next, Some(on_disk.content_hash.as_str()))?;
     Ok(AutoApplyReport {
         glyph: verdict.value.glyph().to_string(),
         status: status_key(verdict.value).to_string(),

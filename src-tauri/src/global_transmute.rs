@@ -212,7 +212,10 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
             }
             return Err(err);
         }
-        if let Err(err) = workspace::write_source(root, &plan.path, &plan.next) {
+        let expected = workspace::content_hash(&plan.previous);
+        if let Err(err) =
+            workspace::write_source_checked(root, &plan.path, &plan.next, Some(expected.as_str()))
+        {
             for (path, previous) in written.iter().rev() {
                 let _ = workspace::write_source(root, path, previous);
             }
