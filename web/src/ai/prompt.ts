@@ -174,7 +174,7 @@ export function summarizeTreeText(tree: string, maxLines = 80): string {
   }
   const lines = tree
     .split("\n")
-    .map((line) => line.replace(/^[📁·\s]+/, "").trim())
+    .map((line) => line.replace(/^[\s·]+/u, "").replace(/^\u{1F4C1}\s*/u, "").trim())
     .filter(Boolean);
   if (lines.length <= maxLines) {
     return lines.join("\n");
