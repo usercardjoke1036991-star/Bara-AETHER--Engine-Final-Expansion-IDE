@@ -30,6 +30,9 @@ const MAX_ENTRIES: usize = 4_000;
 /// Cota del tamaño de un documento `.bara` que el editor carga o guarda.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
+/// Cota del árbol y de la herramienta «leer archivo» del asistente.
+const MAX_TREE_FILE_BYTES: u64 = 1024 * 1024;
+
 /// Tipo de entrada del árbol tal como lo consume React.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -433,6 +436,12 @@ const SOURCE_EXTENSIONS: [&str; 14] = [
     "bara", "rs", "py", "go", "sol", "c", "h", "cpp", "cc", "hpp", "js", "jsx", "ts", "tsx",
 ];
 
+/// Extensiones de texto que el asistente puede leer (solo lectura).
+const ASSISTANT_EXTENSIONS: [&str; 22] = [
+    "bara", "rs", "py", "go", "sol", "c", "h", "cpp", "cc", "hpp", "js", "jsx", "ts", "tsx", "md",
+    "txt", "json", "toml", "yaml", "yml", "css", "html",
+];
+
 /// ¿El archivo es una fuente del proyecto, dentro de la jaula de lectura?
 pub(crate) fn is_project_source(path: &Path) -> bool {
     path.extension()
@@ -455,6 +464,38 @@ pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String
         return Err(format!("«{relative}» no es una fuente del proyecto"));
     }
     ensure_file_size(&canonical)?;
+    let source = fs::read_to_string(&canonical)
+        .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
+    Ok(WorkspaceDocument {
+        root: canonical_root.display().to_string(),
+        path: normalize_relative(relative),
+        name: file_name(&canonical),
+        source,
+    })
+}
+
+/// Lectura de solo lectura para el asistente (cota 1 MiB, sin salir de la jaula).
+pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
+    let canonical_root = resolve_root(root)?;
+    let canonical = resolve_member(&canonical_root, relative)?;
+    let allowed = canonical
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ASSISTANT_EXTENSIONS
+                .iter()
+                .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+        });
+    if !allowed {
+        return Err(format!("«{relative}» no es un texto legible del proyecto"));
+    }
+    let metadata = fs::metadata(&canonical)
+        .map_err(|err| format!("no se pudo inspeccionar «{relative}»: {err}"))?;
+    if metadata.len() > MAX_TREE_FILE_BYTES {
+        return Err(format!(
+            "«{relative}» supera 1 MiB y el asistente no lo lee"
+        ));
+    }
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
     Ok(WorkspaceDocument {
@@ -622,6 +663,13 @@ fn collect(
                 children,
             });
         } else {
+            // El asistente ignora archivos > 1 MiB (también en el árbol).
+            let oversized = fs::metadata(&path)
+                .map(|meta| meta.len() > MAX_TREE_FILE_BYTES)
+                .unwrap_or(true);
+            if oversized {
+                continue;
+            }
             let is_bara = is_bara(&path);
             if is_bara {
                 *files += 1;

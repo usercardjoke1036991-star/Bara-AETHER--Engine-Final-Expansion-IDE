@@ -119,6 +119,12 @@ mod media;
 // Recetas de un clic. El proceso vive aquí, fuera del slice del handler.
 mod orchestrate;
 
+// CREATE_NO_WINDOW para hijos en Windows.
+mod win_cmd;
+
+// Contexto del editor compartido entre ventanas (main → asistencia).
+mod editor_bridge;
+
 // Hilo de reposo. La propuesta la calcula el proceso del kernel.
 mod idle_loop;
 
@@ -230,6 +236,7 @@ fn get_workspace_topology_graph(
 /// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
 #[tauri::command]
 async fn run_workspace_recipe(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     recipe: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
@@ -242,10 +249,42 @@ async fn run_workspace_recipe(
     let root = state.get().ok();
     tauri::async_runtime::spawn_blocking(move || {
         let active = root.as_deref().map(std::path::Path::new);
-        orchestrate::run(&name, active)
+        orchestrate::run(&name, active, Some(app))
     })
     .await
     .map_err(|_| "la receta se interrumpió".to_string())?
+}
+
+/// Publica el documento activo de `main` para las ventanas de asistencia.
+#[tauri::command]
+fn editor_context_publish(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    snapshot: editor_bridge::EditorSnapshot,
+    bridge: tauri::State<'_, editor_bridge::EditorBridge>,
+) -> Result<editor_bridge::EditorSnapshot, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    bridge.publish(&app, snapshot)
+}
+
+/// Último contexto publicado (lo pide `ai-workspace` al abrir).
+#[tauri::command]
+fn editor_context_get(
+    bridge: tauri::State<'_, editor_bridge::EditorBridge>,
+) -> Result<editor_bridge::EditorSnapshot, String> {
+    bridge.get()
+}
+
+/// Lectura de solo lectura para el asistente: cualquier texto del proyecto
+/// dentro de la jaula (sin `..`, sin symlinks hacia fuera), cota 1 MiB.
+#[tauri::command]
+fn workspace_read_project_file(
+    window: tauri::WebviewWindow,
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceDocument, String> {
+    window_guard::require(&window, window_guard::CHAT)?;
+    workspace::read_assistant(&state.get()?, &path)
 }
 
 /// Juzga un bloque del asistente. La carpeta es la activa; `path` no la cambia.
@@ -968,10 +1007,12 @@ pub fn run() {
     let kernel = KernelHost::boot();
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(kernel)
         .manage(workspace::ActiveWorkspace::bootstrap())
         .manage(Mutex::new(idle_loop::IdleBridge::new()))
         .manage(Mutex::new(secrets::Session::default()))
+        .manage(editor_bridge::EditorBridge::new())
         .setup(|app| {
             let handle = app.handle().clone();
             app.state::<KernelHost>().listen(move |status| {
@@ -1032,6 +1073,9 @@ pub fn run() {
             get_local_completions,
             get_workspace_topology_graph,
             workspace_source_text,
+            workspace_read_project_file,
+            editor_context_publish,
+            editor_context_get,
             run_workspace_recipe,
             judge_auto_patch,
             load_local_weights,
@@ -1074,6 +1118,9 @@ mod ipc_boundary {
         assert!(handler.contains("get_local_completions"));
         assert!(handler.contains("get_workspace_topology_graph"));
         assert!(handler.contains("workspace_source_text"));
+        assert!(handler.contains("workspace_read_project_file"));
+        assert!(handler.contains("editor_context_publish"));
+        assert!(handler.contains("editor_context_get"));
         assert!(handler.contains("run_workspace_recipe"));
         assert!(handler.contains("judge_auto_patch"));
         assert!(handler.contains("load_local_weights"));
@@ -1108,6 +1155,9 @@ mod ipc_boundary {
             "fn get_local_completions(",
             "fn get_workspace_topology_graph(",
             "fn workspace_source_text(",
+            "fn workspace_read_project_file(",
+            "fn editor_context_publish(",
+            "fn editor_context_get(",
             "fn run_workspace_recipe(",
             "fn judge_auto_patch(",
             "fn load_local_weights(",

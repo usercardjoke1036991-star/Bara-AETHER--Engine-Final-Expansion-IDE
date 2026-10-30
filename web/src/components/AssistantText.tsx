@@ -6,7 +6,9 @@
 // el contrato de respuesta pide al modelo— para no añadir dependencias ni
 // superficie de inyección.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+
+import { writeClipboard } from "../clipboard";
 
 /** Fragmento de una respuesta: prosa o bloque cercado. */
 export interface Block {
@@ -78,34 +80,58 @@ function renderInline(text: string): ReactNode[] {
   });
 }
 
+/** Botón Copiar con feedback «Copiado ✓» durante 2 s. */
+function CopyButton({
+  label,
+  text,
+  className,
+}: {
+  label: string;
+  text: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
 
-/** Copia al portapapeles y avisa al usuario (el WebView puede no permitirlo). */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
+  useEffect(() => {
+    if (!copied) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <button
+      type="button"
+      className={className}
+      title={copied ? "Copiado" : label}
+      aria-label={copied ? "Copiado" : label}
+      onClick={() => {
+        void writeClipboard(text).then((ok) => {
+          if (ok) {
+            setCopied(true);
+          }
+        });
+      }}
+    >
+      {copied ? "Copiado ✓" : (
+        <>
+          <span aria-hidden="true">⧉ </span>
+          {label}
+        </>
+      )}
+    </button>
+  );
 }
 
 /** Bloque de código con acciones: copiar y enviar al editor Shoresh. */
 function CodeBlock({ block, onUseCode }: { block: Block; onUseCode?: (code: string) => void }) {
-  const [copied, setCopied] = useState(false);
-
   return (
     <div className="ai-code">
       <div className="ai-code-head">
         <span className="muted">{block.language || "texto"}</span>
         <span className="grow" />
-        <button
-          type="button"
-          onClick={() => {
-            void copyText(block.content).then((ok) => setCopied(ok));
-          }}
-        >
-          {copied ? "copiado" : "copiar"}
-        </button>
+        <CopyButton className="ai-copy-code" label="Copiar" text={block.content} />
         {onUseCode ? (
           <button type="button" onClick={() => onUseCode(block.content)}>
             usar en el editor
@@ -117,7 +143,7 @@ function CodeBlock({ block, onUseCode }: { block: Block; onUseCode?: (code: stri
   );
 }
 
-/** Respuesta del asistente: prosa y bloques de código listos para el editor. */
+/** Respuesta del asistente: prosa, bloques y botón Copiar de la respuesta. */
 export default function AssistantText({
   text,
   onUseCode,
@@ -141,6 +167,9 @@ export default function AssistantText({
           </p>
         ),
       )}
+      <div className="ai-answer-actions">
+        <CopyButton label="Copiar" text={text} />
+      </div>
     </div>
   );
 }

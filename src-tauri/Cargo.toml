@@ -33,6 +33,7 @@ tauri-build = { version = "2", features = [] }
 # el WebView no recibe la ruta, la elige el usuario en el diálogo del sistema.
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

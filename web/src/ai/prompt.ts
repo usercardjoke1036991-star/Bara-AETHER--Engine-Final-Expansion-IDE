@@ -23,6 +23,8 @@ export interface PromptContext {
   documentSource: string;
   /** Análisis del kernel sobre esa fuente (o `null` si aún no lo hay). */
   analysis: Analysis | null;
+  /** Árbol de la carpeta abierta (texto), sin `.git`/`target`/`node_modules`. */
+  treeOutline?: string;
 }
 
 /** Recorta un texto por caracteres Unicode, sin partir un par sustituto. */
@@ -105,14 +107,18 @@ No son sintaxis del lenguaje, sino del REPL interactivo: :ayuda, :estado, :memor
 
 /** Contexto vivo: documento abierto, análisis del kernel y ejemplo real. */
 export function liveContext(context: PromptContext): string {
-  const { sample, documentName, documentSource, analysis } = context;
+  const { sample, documentName, documentSource, analysis, treeOutline } = context;
+  const tree = (treeOutline ?? "").trim();
   return `## Documento abierto en el editor (contexto vivo, medido por el kernel)
 Nombre: ${documentName || "(sin nombre)"}
 Análisis del kernel: ${inventoryLine(analysis)}
 Fuente (extracto):
 \`\`\`bara
-${excerpt(documentSource) || "(vacío)"}
+${excerpt(documentSource) || "(vacío — no hay archivo activo; pide al usuario que abra uno en main)"}
 \`\`\`
+
+## Árbol de la carpeta del proyecto (solo lectura; se omiten .git, target, node_modules y archivos >1 MiB)
+${tree || "(sin carpeta abierta todavía)"}
 
 ## Raíces conocidas de fábrica (catálogo del kernel)
 ${rootTable(context.catalogue)}
@@ -120,7 +126,10 @@ ${rootTable(context.catalogue)}
 ## Documento de ejemplo del propio kernel (sintaxis real)
 \`\`\`bara
 ${excerpt(sample, 1200)}
-\`\`\``;
+\`\`\`
+
+## Herramienta disponible
+Si necesitas el contenido de otro archivo del árbol, el IDE puede leerlo con la herramienta de solo lectura «leer archivo» (jaula del proyecto, sin ../).`;
 }
 
 /** Prompt del sistema completo que acompaña a cada petición. */

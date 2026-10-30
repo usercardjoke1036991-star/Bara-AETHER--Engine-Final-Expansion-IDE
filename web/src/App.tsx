@@ -35,6 +35,7 @@ import { judgeAutoPatch } from "./autoApply";
 import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
 import { runWorkspaceRecipe, type RecipeName } from "./recipes";
 import { publishVeto } from "./topology";
+import { outlineTree, publishEditorContext } from "./editorBridge";
 import BaraEditor from "./components/BaraEditor";
 import ChatPanel from "./components/ChatPanel";
 import CockpitPanel from "./components/CockpitPanel";
@@ -213,25 +214,18 @@ export default function App() {
     }
   }, []);
 
-  // Arranque: catálogo del kernel y documento de ejemplo, ambos servidos por
-  // Rust (en TypeScript no se duplica ni un literal del núcleo).
+  // Arranque: catálogo y genesis por separado — un fallo de belnap/oráculo
+  // no debe dejar el catálogo vacío para el asistente.
   useEffect(() => {
     let alive = true;
     void (async () => {
       try {
-        const [roots, genesis, belnap, session] = await Promise.all([
-          kernelCatalogue(),
-          sampleGenesis(),
-          belnapLattice(),
-          oracleStatus(),
-        ]);
+        const [roots, genesis] = await Promise.all([kernelCatalogue(), sampleGenesis()]);
         if (!alive) {
           return;
         }
         setCatalogue(roots);
         setSample(genesis);
-        setLattice(belnap);
-        setOracle(session);
         setTabs([
           {
             path: "samples/genesis.bara",
@@ -242,6 +236,18 @@ export default function App() {
         ]);
         setActivePath("samples/genesis.bara");
         setReady(true);
+      } catch (failure) {
+        if (alive) {
+          setError(describeError(failure));
+        }
+      }
+      try {
+        const [belnap, session] = await Promise.all([belnapLattice(), oracleStatus()]);
+        if (!alive) {
+          return;
+        }
+        setLattice(belnap);
+        setOracle(session);
       } catch (failure) {
         if (alive) {
           setError(describeError(failure));
@@ -521,21 +527,87 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [saveActive]);
 
+  const treeOutline = useMemo(
+    () => (workspace ? outlineTree(workspace.entries) : ""),
+    [workspace],
+  );
+
+  // Publica el documento activo a ai-workspace (pestaña, guardado, análisis).
+  useEffect(() => {
+    if (vista !== "main" || !ready) {
+      return;
+    }
+    const tab = activeTab;
+    void publishEditorContext({
+      path: tab?.path ?? "",
+      name: tab?.name ?? "",
+      source: tab?.source ?? "",
+      analysis,
+      treeOutline,
+    }).catch(() => {
+      /* el puente no está en el navegador puro */
+    });
+  }, [vista, ready, activeTab, analysis, treeOutline]);
+
   /** Receta del catálogo cerrado. No abre un shell. */
   const runRecipe = useCallback(async (recipe: RecipeName) => {
     setBusy(true);
+    const live: string[] = [];
+    setConsoleLog((current) => [
+      ...current,
+      { input: recipe, reply: "… ejecutando (salida en vivo)", roots: "" },
+    ].slice(-40));
+    const stop = await listen<{ stream: string; text: string; exitCode?: number }>(
+      "recipe-output",
+      (event) => {
+        const chunk = event.payload;
+        const prefix = chunk.stream === "stderr" ? "stderr" : chunk.stream === "exit" ? "exit" : "out";
+        live.push(`[${prefix}] ${chunk.text}`);
+        const reply = live.slice(-80).join("\n");
+        setConsoleLog((current) => {
+          const next = [...current];
+          for (let i = next.length - 1; i >= 0; i -= 1) {
+            if (next[i]?.input === recipe) {
+              next[i] = { input: recipe, reply, roots: "" };
+              break;
+            }
+          }
+          return next.slice(-40);
+        });
+      },
+    );
     try {
       const report = await runWorkspaceRecipe(recipe);
       const faults = report.lines.filter((line) => line.status === "false").slice(0, 6);
-      const reply = [
+      const summary = [
         `${report.recipe} · salida ${report.exitCode} · ⊤ ${report.trueCount} · ⊥ ${report.falseCount} · ⊤∧⊥ ${report.bothCount} · ∅ ${report.neitherCount}${report.truncated ? " · recortado" : ""}${report.timedOut ? " · tiempo agotado" : ""}`,
         ...faults.map((line) => `${line.glyph} ${line.text}`),
+        ...(live.length > 0 ? ["———", ...live.slice(-40)] : []),
       ].join("\n");
-      setConsoleLog((current) => [...current, { input: recipe, reply, roots: "" }].slice(-40));
+      setConsoleLog((current) => {
+        const next = [...current];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i]?.input === recipe) {
+            next[i] = { input: recipe, reply: summary, roots: "" };
+            break;
+          }
+        }
+        return next.slice(-40);
+      });
     } catch (failure) {
-      const reply = describeError(failure);
-      setConsoleLog((current) => [...current, { input: recipe, reply, roots: "" }].slice(-40));
+      const reply = [describeError(failure), ...live.slice(-20)].join("\n");
+      setConsoleLog((current) => {
+        const next = [...current];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          if (next[i]?.input === recipe) {
+            next[i] = { input: recipe, reply, roots: "" };
+            break;
+          }
+        }
+        return next.slice(-40);
+      });
     } finally {
+      stop();
       setBusy(false);
     }
   }, []);
@@ -824,6 +896,7 @@ export default function App() {
                 {tabs.map((tab) => {
                   const active = tab.path === activePath;
                   const unsaved = tab.source !== tab.saved;
+                  const saveLabel = unsaved ? "sin guardar" : "guardado";
                   return (
                     <div className={`tab${active ? " active" : ""}`} key={tab.path}>
                       <button
@@ -831,11 +904,13 @@ export default function App() {
                         role="tab"
                         aria-selected={active}
                         className="tab-name"
-                        title={tab.path}
+                        title={`${tab.path} · ${saveLabel}`}
+                        aria-label={`${tab.name}, ${saveLabel}`}
                         onClick={() => setActivePath(tab.path)}
                       >
-                        {unsaved ? <span className="dirty-dot" aria-hidden="true" /> : null}
+                        {unsaved ? <span className="dirty-dot" title="sin guardar" aria-hidden="true" /> : null}
                         {tab.name}
+                        <span className="tab-save-state muted"> · {saveLabel}</span>
                       </button>
                       <button
                         type="button"
@@ -859,7 +934,7 @@ export default function App() {
               <div className="row editor-toolbar">
                 <span className="status" title={origin}>
                   {activeTab ? origin : "sin documento"}
-                  {dirty ? " · sin guardar" : ""}
+                  {dirty ? " · sin guardar" : activeTab ? " · guardado" : ""}
                   {activeTab && !activeTab.path.endsWith(".bara") ? " · lectura" : ""}
                 </span>
                 <span className="grow" />
@@ -1148,6 +1223,7 @@ export default function App() {
         analysis={analysis}
         catalogue={catalogue}
         sample={sample}
+        treeOutline={treeOutline}
         onUseCode={applyCode}
         onJudge={judgeSuggestion}
       />

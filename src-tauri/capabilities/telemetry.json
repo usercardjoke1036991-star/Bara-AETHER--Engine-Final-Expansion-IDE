@@ -12,6 +12,7 @@
     "allow-autopoiesis",
     "allow-idle-proposal",
     "allow-idle-apply",
-    "allow-idle-dismiss"
+    "allow-idle-dismiss",
+    "allow-editor-context-get"
   ]
 }

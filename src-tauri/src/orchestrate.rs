@@ -23,6 +23,9 @@ use bara::autopoietic::BelnapValue;
 use bara::log_lattice::{observe_log_line, status_key};
 use bara_kernel_host::{new_group, terminate_tree};
 use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+use crate::win_cmd;
 
 /// `npm run typecheck` no debería pasar de un minuto.
 const IDE_RECIPE_LIMIT: Duration = Duration::from_secs(60);
@@ -175,30 +178,64 @@ struct Driven {
     truncated: bool,
 }
 
-/// Lee una tubería hasta la cota y después la vacía para que el hijo no se bloquee.
-fn drain_pipe(pipe: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>> {
+/// Emite una línea cruda al panel mientras corre la receta.
+fn emit_recipe_chunk(app: &Option<AppHandle>, stream: &str, text: &str) {
+    let Some(handle) = app else {
+        return;
+    };
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            continue;
+        }
+        let _ = handle.emit(
+            "recipe-output",
+            serde_json::json!({ "stream": stream, "text": clip(trimmed) }),
+        );
+    }
+}
+
+/// Lee un pipe y, si hay AppHandle, publica trozos en vivo.
+fn drain_pipe_live(
+    pipe: impl Read + Send + 'static,
+    app: Option<AppHandle>,
+    stream: &'static str,
+) -> thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
         let mut taken = pipe.take(MAX_OUTPUT as u64);
         let mut buf = Vec::new();
-        let _ = taken.read_to_end(&mut buf);
-        let mut rest = taken.into_inner();
-        let mut sink = [0u8; 4096];
+        let mut chunk = [0u8; 512];
+        let mut pending = String::new();
         loop {
-            match rest.read(&mut sink) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
+            match taken.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    pending.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                    while let Some(at) = pending.find('\n') {
+                        let line = pending[..at].to_string();
+                        pending = pending[at + 1..].to_string();
+                        emit_recipe_chunk(&app, stream, &line);
+                    }
+                }
+                Err(_) => break,
             }
+        }
+        if !pending.is_empty() {
+            emit_recipe_chunk(&app, stream, &pending);
         }
         buf
     })
 }
 
 /// Espera `limit`. Si el hijo sigue vivo, mata su árbol y devuelve lo ya leído.
-fn drive(command: &mut Command, limit: Duration) -> Result<Driven, String> {
+fn drive(command: &mut Command, limit: Duration, app: Option<AppHandle>) -> Result<Driven, String> {
     new_group(command);
+    win_cmd::hide_console(command);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .stdin(Stdio::null())
         .spawn()
         .map_err(|_| "no se pudo lanzar la receta".to_string())?;
     let stdout = child
@@ -209,8 +246,8 @@ fn drive(command: &mut Command, limit: Duration) -> Result<Driven, String> {
         .stderr
         .take()
         .ok_or_else(|| "la receta no abrió su salida".to_string())?;
-    let out_handle = drain_pipe(stdout);
-    let err_handle = drain_pipe(stderr);
+    let out_handle = drain_pipe_live(stdout, app.clone(), "stdout");
+    let err_handle = drain_pipe_live(stderr, app.clone(), "stderr");
     let started = Instant::now();
     let mut timed_out = false;
     let status = loop {
@@ -246,6 +283,16 @@ fn drive(command: &mut Command, limit: Duration) -> Result<Driven, String> {
     } else {
         status.and_then(|state| state.code()).unwrap_or(-1)
     };
+    if let Some(handle) = &app {
+        let _ = handle.emit(
+            "recipe-output",
+            serde_json::json!({
+                "stream": "exit",
+                "text": format!("código de salida {code}"),
+                "exitCode": code,
+            }),
+        );
+    }
     Ok(Driven {
         code,
         blob,
@@ -268,7 +315,12 @@ fn clip(text: &str) -> String {
 ///
 /// `active` es la carpeta abierta. El cwd es esa carpeta si contiene el
 /// ancla; no un padre. Sin carpeta, se prueba la ruta de compilación.
-pub fn run(recipe: &str, active: Option<&Path>) -> Result<RecipeReport, String> {
+/// `app` emite `recipe-output` en vivo (stdout/stderr + código de salida).
+pub fn run(
+    recipe: &str,
+    active: Option<&Path>,
+    app: Option<AppHandle>,
+) -> Result<RecipeReport, String> {
     let chosen = spec(recipe)?;
     let cwd = recipe_dir(chosen.ide, active)?;
     let limit = if chosen.ide {
@@ -281,7 +333,8 @@ pub fn run(recipe: &str, active: Option<&Path>) -> Result<RecipeReport, String> 
         .args(chosen.args)
         .current_dir(&cwd)
         .env("CARGO_TERM_COLOR", "never");
-    let driven = drive(&mut command, limit)?;
+    win_cmd::hide_console(&mut command);
+    let driven = drive(&mut command, limit, app)?;
     let mut lines = Vec::new();
     let mut true_count = 0u32;
     let mut false_count = 0u32;
@@ -373,7 +426,7 @@ mod tests {
             command.args(["-c", "12", "127.0.0.1"]);
         }
         let started = Instant::now();
-        let driven = drive(&mut command, Duration::from_millis(350)).expect("ping");
+        let driven = drive(&mut command, Duration::from_millis(350), None).expect("ping");
         assert!(driven.timed_out);
         assert!(started.elapsed() < Duration::from_secs(3));
     }
@@ -386,6 +439,7 @@ mod tests {
         assert!(!production.contains("read_source"));
         assert!(!production.contains("Command::new(recipe"));
         assert!(!production.contains("Command::new(&"));
+        assert!(production.contains("hide_console"));
         let typed = spec("typecheck").expect("tipos");
         assert!(!typed
             .args

@@ -10,6 +10,7 @@
     "llavero",
     "recetas",
     "ventanas",
-    "github"
+    "github",
+    "clipboard-manager:allow-write-text"
   ]
 }
