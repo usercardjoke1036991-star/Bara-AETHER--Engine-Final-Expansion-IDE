@@ -92,7 +92,7 @@ jobs:
         cargo deny --all-features check
     - name: cargo-audit
       run: |
-        cargo install cargo-audit --locked --version 0.21.2
+        cargo install cargo-audit --locked --version 0.22.2
         cargo audit
     # tsc, Vitest y el autodiagnóstico no ejecutan el CLI de Tauri ni vite build.
     # package.json no declara preinstall, install, postinstall ni prepare.
