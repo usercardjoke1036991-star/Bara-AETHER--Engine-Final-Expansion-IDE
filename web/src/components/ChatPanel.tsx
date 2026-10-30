@@ -19,13 +19,15 @@ import {
   stripStoredSecret,
 } from "../ai/config";
 import { MAX_ATTACHMENTS, filesFromDataTransfer, formatBytes, prepareImages } from "../ai/images";
-import { baraSystemPrompt } from "../ai/prompt";
+import { baraSystemPrompt, promptBudgetParts, summarizeBudget } from "../ai/prompt";
 import { deleteKey, inDesktop, keyExists, probeConnection, saveKey } from "../ai/keyring";
 import { listModels, sendChat } from "../ai/providers";
+import { READ_FILE_TOOL } from "../ai/tools";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
+import { readProjectFile } from "../editorBridge";
 import { loadLocalWeights, localComplete } from "../offline";
 import { shoreshTranslate, type Analysis, type RootEntry, type Translation } from "../engine";
 import AiSettings from "./AiSettings";
@@ -176,18 +178,16 @@ export default function ChatPanel({
   const problems = configProblems(config);
   const sendGate = chatSendGate(config, draft, pending, offline);
 
-  // El contexto del sistema se recalcula sólo cuando cambia el kernel: el
-  // prompt que viaja al proveedor es exactamente el que se puede inspeccionar.
-  const system = useMemo(
-    () =>
-      baraSystemPrompt({
-        catalogue,
-        sample,
-        documentName,
-        documentSource,
-        analysis,
-        treeOutline,
-      }),
+  /** Prompt base (sin texto de usuario); el envío añade `userText` del turno. */
+  const promptContextBase = useMemo(
+    () => ({
+      catalogue,
+      sample,
+      documentName,
+      documentSource,
+      analysis,
+      treeOutline,
+    }),
     [catalogue, sample, documentName, documentSource, analysis, treeOutline],
   );
 
@@ -257,6 +257,14 @@ export default function ChatPanel({
         ]);
         return;
       }
+      const system = baraSystemPrompt({ ...promptContextBase, userText: text });
+      if (typeof console !== "undefined" && console.debug) {
+        const budget = summarizeBudget(promptBudgetParts({ ...promptContextBase, userText: text }));
+        console.debug(
+          `[bara-prompt] «${text.slice(0, 40)}» ≈${budget.totalTokensEst} tok (est.) · ${budget.totalChars} chars`,
+          budget.byName,
+        );
+      }
       const result = await sendChat(
         await commitKey(config, setConfig, () => {
           keyEpochRef.current += 1;
@@ -264,6 +272,29 @@ export default function ChatPanel({
         history,
         system,
         controller.signal,
+        async (name, argsJson) => {
+          if (name !== READ_FILE_TOOL) {
+            return `herramienta no soportada: ${name}`;
+          }
+          let path = "";
+          try {
+            const parsed = JSON.parse(argsJson) as { path?: unknown };
+            path = typeof parsed.path === "string" ? parsed.path.trim() : "";
+          } catch {
+            path = "";
+          }
+          if (!path) {
+            return "falta el parámetro path";
+          }
+          const doc = await readProjectFile(path);
+          const body = doc.source ?? "";
+          const cap = 24_000;
+          const clipped =
+            [...body].length > cap
+              ? `${[...body].slice(0, cap).join("")}\n# … recortado`
+              : body;
+          return `archivo: ${doc.path || path}\n\n${clipped}`;
+        },
       );
       if (result.acceptedModel && result.acceptedModel !== config.model) {
         const next = { ...config, model: result.acceptedModel };
@@ -342,7 +373,7 @@ export default function ChatPanel({
       abortRef.current = null;
       setPending(false);
     }
-  }, [attachments, autoApply, config, draft, messages, offline, onJudge, pending, system]);
+  }, [attachments, autoApply, config, draft, messages, offline, onJudge, pending, promptContextBase]);
 
   const acceptReview = useCallback(async () => {
     if (!review) {
@@ -597,8 +628,13 @@ export default function ChatPanel({
             onClose={() => setSettings(false)}
           />
           <details className="ai-report">
-            <summary className="muted">prompt del sistema ({system.length} caracteres)</summary>
-            <pre className="ai-code-body">{system}</pre>
+            <summary className="muted">
+              prompt del sistema (
+              {baraSystemPrompt({ ...promptContextBase, userText: draft }).length} caracteres)
+            </summary>
+            <pre className="ai-code-body">
+              {baraSystemPrompt({ ...promptContextBase, userText: draft })}
+            </pre>
           </details>
         </div>
       ) : (

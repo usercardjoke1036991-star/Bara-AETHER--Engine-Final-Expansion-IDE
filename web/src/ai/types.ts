@@ -67,6 +67,13 @@ export interface ChatUsage {
   outputTokens: number;
 }
 
+/** Llamada a herramienta en una respuesta del modelo (OpenAI tool_calls). */
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 /** Respuesta normalizada de cualquiera de los dos proveedores. */
 export interface ChatResult {
   text: string;
@@ -74,6 +81,8 @@ export interface ChatResult {
   usage: ChatUsage | null;
   /** Nombre que el servidor aceptó, si no era el que estaba escrito en ajustes. */
   acceptedModel?: string;
+  /** Llamadas nativas; vacío si el turno ya es texto final. */
+  toolCalls?: ChatToolCall[];
 }
 
 /** Modelo ofrecido por el proveedor (`GET /models`). */

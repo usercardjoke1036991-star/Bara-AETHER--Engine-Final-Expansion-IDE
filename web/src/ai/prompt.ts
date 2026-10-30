@@ -2,14 +2,22 @@
 //
 // Todo lo que el modelo necesita saber del lenguaje **se inyecta desde el
 // kernel**: el catálogo de raíces (`kernel_catalogue`), el documento de ejemplo
-// (`sample_genesis`, el `samples/genesis.bara` embebido en el binario) y el
-// análisis léxico del documento abierto (`analyze_source`). Este módulo no
-// inventa ni un glifo: sólo redacta las reglas y los principios.
+// (`sample_genesis`) y el análisis léxico del documento abierto. Este módulo
+// no inventa glifos: redacta reglas cortas y un presupuesto de tokens acotado.
 
 import type { Analysis, RootEntry } from "../engine";
 
-/** Extracto máximo del documento abierto que se envía como contexto. */
-export const MAX_DOCUMENT_CHARS = 4000;
+/** Extracto máximo del documento abierto (presupuesto bajo para saludos). */
+export const MAX_DOCUMENT_CHARS = 800;
+
+/** Extracto del ejemplo del kernel. */
+export const MAX_SAMPLE_CHARS = 400;
+
+/** Estimación local de tokens (mezcla hebreo/ASCII): ~3,5 caracteres/token. */
+export function estimateTokens(text: string): number {
+  const chars = [...text].length;
+  return chars === 0 ? 0 : Math.ceil(chars / 3.5);
+}
 
 /** Contexto necesario para redactar el prompt del sistema. */
 export interface PromptContext {
@@ -25,6 +33,11 @@ export interface PromptContext {
   analysis: Analysis | null;
   /** Árbol de la carpeta abierta (texto), sin `.git`/`target`/`node_modules`. */
   treeOutline?: string;
+  /**
+   * Texto del usuario del turno actual. Sirve para omitir documento/ejemplo
+   * en saludos cortos y ahorrar tokens.
+   */
+  userText?: string;
 }
 
 /** Recorta un texto por caracteres Unicode, sin partir un par sustituto. */
@@ -40,100 +53,172 @@ export function excerpt(source: string, max = MAX_DOCUMENT_CHARS): string {
 /** Inventario de raíces medido por el kernel, en una sola línea. */
 export function inventoryLine(analysis: Analysis | null): string {
   if (!analysis) {
-    return "(el kernel todavía no ha analizado el documento)";
+    return "(sin análisis todavía)";
   }
   const roots =
-    analysis.roots.map((root) => `${root.glyph} ×${root.count}`).join(", ") || "ninguna";
+    analysis.roots.map((root) => `${root.glyph}×${root.count}`).join(", ") || "ninguna";
   const { summary } = analysis;
-  return [
-    `${summary.total} tokens`,
-    `raíces conocidas ${summary.rootsKnown}`,
-    `raíces desconocidas ${summary.rootsUnknown}`,
-    `identificadores ${summary.identifiers}`,
-    `números ${summary.numbers}`,
-    `cadenas ${summary.strings}`,
-    `signos ${summary.punctuation}`,
-    `inventario: ${roots}`,
-  ].join(" · ");
+  return `${summary.total} tok · conocidas ${summary.rootsKnown} · desconocidas ${summary.rootsUnknown} · id ${summary.identifiers} · núm ${summary.numbers} · str ${summary.strings} · signos ${summary.punctuation} · [${roots}]`;
 }
 
-/** Tabla de raíces del kernel (glifo + significado), como lista de viñetas. */
+/** Tabla compacta: `glifo:sentido · glifo:sentido`. */
 export function rootTable(catalogue: RootEntry[]): string {
   if (catalogue.length === 0) {
-    return "- (el kernel no ha devuelto catálogo todavía)";
+    return "(catálogo vacío)";
   }
-  return catalogue.map((entry) => `- ${entry.glyph} — ${entry.meaning}`).join("\n");
+  return catalogue.map((entry) => `${entry.glyph}:${entry.meaning}`).join(" · ");
 }
 
-// ── Secciones del prompt del sistema (constantes: fáciles de revisar) ─────
+/**
+ * Operadores tipados que el lexer del kernel reconoce (BAR `TokenKind`).
+ * Cualquier otro símbolo cae en `Punct` y marca «propuesta no verificada».
+ */
+export const LEXER_OPERATORS = ["+", "*", "!", "!!", "?", ":", ";", ",", "->"] as const;
 
-/** Identidad del asistente y reglas léxicas exactas del kernel. */
-const IDENTITY_RULES = `Eres el asistente de Bara IDE: el entorno de escritorio del lenguaje Bara (hebreo «creó») y de su kernel AETHER-Ω, congelado en la etiqueta v0.1.0-kernel. El kernel está escrito en Rust puro sobre std: sin dependencias externas, sin unsafe y con totalidad garantizada (ninguna entrada provoca un fallo).
+/** ¿El turno pide mirar código/archivo? Si no, omitimos documento y ejemplo. */
+export function needsCodeContext(userText: string | undefined): boolean {
+  const text = (userText ?? "").trim();
+  if (!text) {
+    return true;
+  }
+  if (text.length <= 24 && /^(hola|hi|hello|hey|buenas|saludos)[!?.…]*$/i.test(text)) {
+    return false;
+  }
+  return /\b(archivo|file|modifica|edita|cambia|lee|leer|código|codigo|\.bara|bloque|función|funcion|patch|diff)\b/i.test(
+    text,
+  ) || text.length > 80;
+}
 
-## El lenguaje: Shoresh (raíces triconsonánticas)
-Reglas léxicas exactas del kernel:
-- Un programa Bara se escribe con **raíces triconsonánticas hebreas**: secuencias de exactamente tres consonantes del bloque U+05D0…U+05EA (de א a ת). Cada raíz concentra un campo semántico y actúa como instrucción primitiva.
-- El nikud (diacríticos, U+0591…U+05C7) y los apóstrofos geresh y gershayim (U+05F3, U+05F4) se pliegan: las formas con vocales y la forma desnuda son la misma raíz. Escribe sin diacríticos salvo que cites un manuscrito.
-- Identificadores ASCII: letras, dígitos y guion bajo (por ejemplo: memoria). Suelen ser etiquetas de memoria holográfica.
-- Números: dígitos y punto decimal. Cadenas: entre comillas dobles, con barra invertida como carácter de escape.
-- Operadores y signos: dos puntos, punto y coma, coma, flecha, más, asterisco, interrogación, exclamación y el doble signo de exclamación, que es la **fusión o entrelazado** y funciona como operador paraconsistente entre dos raíces.
-- La almohadilla inicia un comentario hasta el final de la línea. El cargador del kernel los descarta antes de compilar, así que puedes documentar en prosa sin ensuciar el programa.`;
+// ── Secciones del prompt (cortas a propósito) ──────────────────────────────
 
-/** Semántica paraconsistente e invariantes ontológicos del runtime. */
-const ONTOLOGY_RULES = `## Raíces desconocidas: autopoiesis
-Prefiere **exclusivamente** las raíces del catálogo real del kernel (sección «Raíces conocidas de fábrica» más abajo) y la sintaxis que el lexer reconoce (operadores +, *, !, !!, ?, :, ;, coma, flecha ->, identificadores ASCII, números y cadenas). Cualquier otra raíz triconsonántica es legal en runtime por **autopoiesis**, pero en tus respuestas debes etiquetarla de forma explícita como **«propuesta no verificada»** —el IDE no la auto-aplicará. No inventes palabras clave de otros lenguajes ni mezcles sintaxis ajenas dentro de un bloque cercado bara.
+const IDENTITY_RULES = `Eres el asistente de Bara IDE (kernel AETHER-Ω). Shoresh: raíces de exactamente 3 consonantes hebreas (U+05D0…U+05EA); nikud/geresh se pliegan. Identificadores ASCII, números, cadenas "…". Comentario con # hasta fin de línea.
+Operadores del lexer: ${LEXER_OPERATORS.join(" ")}. No inventes otros.`;
 
-## Semántica y principios ontológicos
-- Evaluación con la **lógica paraconsistente de Belnap**, de cuatro valores: verdadero, falso, ambos (contradicción) y ninguno (indeterminación). Una contradicción no explota: se representa y se mide (principio de no-explosión).
-- Cada raíz es una instrucción que **colapsa** el estado del runtime: manifestar crea el mundo de la nada, guardar lo aísla, sintetizar es la heurística adaptativa, ejecutar es el colapso operacional, emitir enuncia el estado y juzgar evalúa lógicamente.
-- **Memoria holográfica de entropía cero** y log ontológico: todo colapso deriva de hashes deterministas, de modo que el mismo documento produce siempre la misma historia. No hay aleatoriedad real.
-- Invariantes que no se negocian: sólo biblioteca estándar, cero unsafe, totalidad absoluta y determinismo.`;
+const ONTOLOGY_RULES = `Usa sólo raíces del catálogo inyectado. Otra raíz triconsonántica es legal por autopoiesis pero debes etiquetarla «propuesta no verificada» (el IDE no la auto-aplica). Semántica Belnap (⊤ ⊥ ⊕ ∅); no-explosión; memoria holográfica determinista.`;
 
-/** Traducción desde lengua natural, comandos del oráculo y contrato de salida. */
-const CONTRACT_RULES = `## Traducción desde lengua natural
-El oráculo del kernel traduce español e inglés a raíces con su propio léxico: crea o manifiesta corresponde a la raíz de creación; guarda, sella o protege a la de guarda; juzga, decide o evalúa a la de juicio; emite, muestra o dime a la de enunciación; ejecuta o colapsa a la de ejecución; sabio, optimiza o adapta a la de síntesis; y entrelaza, fusiona o contradice al doble signo de exclamación. Las palabras vacías y las menores de cuatro letras se ignoran, y un verbo desconocido de cuatro o más letras se convierte en una raíz nueva (como máximo tres por turno). La interfaz ejecuta esa traducción con el kernel real: cuando afirmes que el léxico del kernel traduce una frase a un programa, es un hecho comprobado y no una suposición.
+const CONTRACT_RULES = `1. Responde en el idioma del usuario.
+2. Código Bara en bloque \`\`\`bara.
+3. Sé breve: programa + 2–3 líneas.
+4. No inventes APIs del kernel.
+5. Para leer otro archivo del árbol usa la herramienta nativa leer_archivo (nunca inventes markup DSML ni <tool_call> en el texto).
+6. El IDE valida cada bloque bara; lo no verificado no se auto-aplica.`;
 
-## Comandos del oráculo
-No son sintaxis del lenguaje, sino del REPL interactivo: :ayuda, :estado, :memoria, :tiempo, :cuántica, :malla, :metal, :zk, :deshacer y :salir.
+/** Partes medidas del prompt (caracteres + estimación de tokens). */
+export interface PromptBudgetPart {
+  name: string;
+  chars: number;
+  tokensEst: number;
+  text: string;
+}
 
-## Contrato de respuesta
-1. Responde en el idioma del usuario (por defecto, español).
-2. Todo código Bara va en un bloque cercado cuyo lenguaje es bara.
-3. Usa sólo raíces del catálogo inyectado y la sintaxis del lexer. Si debes proponer una raíz o un símbolo fuera de ese conjunto, escribe en la misma respuesta la etiqueta literal «propuesta no verificada» junto al bloque.
-4. Sé breve y útil: primero el programa, después dos o tres líneas de explicación ontológica.
-5. Si la petición admite varias lecturas, entrega el programa más corto y señala la duda.
-6. Si algo del kernel no te consta, dilo; jamás inventes módulos, tipos ni APIs.
-7. Si el usuario adjunta una imagen (captura, diagrama o código manuscrito), descríbela primero en una línea y después transcribe en un bloque bara el código que veas, marcando lo que no puedas leer con certeza.
-8. El IDE valida cada bloque \`\`\`bara con el kernel: lo no verificado no se auto-aplica.`;
+/** Desglose del presupuesto antes de unir el prompt. */
+export function promptBudgetParts(context: PromptContext): PromptBudgetPart[] {
+  const withCode = needsCodeContext(context.userText);
+  const tree = summarizeTreeText((context.treeOutline ?? "").trim());
+  const catalogue = rootTable(context.catalogue);
+  const docName = context.documentName || "(sin nombre)";
+  const analysis = inventoryLine(context.analysis);
+  const document = withCode
+    ? excerpt(context.documentSource || "", MAX_DOCUMENT_CHARS)
+    : "";
+  const sample = withCode ? excerpt(context.sample || "", MAX_SAMPLE_CHARS) : "";
 
-/** Contexto vivo: documento abierto, análisis del kernel y ejemplo real. */
+  const liveHeader = withCode
+    ? `## Documento\n${docName} · ${analysis}\n\`\`\`bara\n${document || "(vacío)"}\n\`\`\`\n\n## Árbol (rutas)\n${tree || "(sin carpeta)"}\n\n## Catálogo\n${catalogue}\n\n## Ejemplo kernel\n\`\`\`bara\n${sample || "(omitido)"}\n\`\`\`\n\n## Herramienta\nUsa leer_archivo(path) vía function calling nativo; no escribas DSML ni XML de herramientas.`
+    : `## Sesión\nSaludo / chat corto: sin documento ni ejemplo. Catálogo: ${catalogue}\nÁrbol: ${tree || "(sin carpeta)"}\nHerramienta: leer_archivo(path) nativa si hace falta un archivo.`;
+
+  const parts: PromptBudgetPart[] = [
+    partOf("sistema.identidad", IDENTITY_RULES),
+    partOf("sistema.ontologia", ONTOLOGY_RULES),
+    partOf("sistema.contrato", CONTRACT_RULES),
+    partOf("catalogo", catalogue),
+    partOf("arbol", tree),
+    partOf("documento", withCode ? `${docName}\n${analysis}\n${document}` : ""),
+    partOf("ejemplo", sample),
+    partOf("vivo.resto", liveHeader),
+  ];
+  return parts;
+}
+
+function partOf(name: string, text: string): PromptBudgetPart {
+  return { name, chars: [...text].length, tokensEst: estimateTokens(text), text };
+}
+
+/** Resumen numérico del presupuesto (suma de partes lógicas, sin doble conteo del vivo). */
+export function summarizeBudget(parts: PromptBudgetPart[]): {
+  totalChars: number;
+  totalTokensEst: number;
+  byName: Record<string, { chars: number; tokensEst: number }>;
+} {
+  const core = parts.filter((p) =>
+    ["sistema.identidad", "sistema.ontologia", "sistema.contrato", "vivo.resto"].includes(
+      p.name,
+    ),
+  );
+  const byName: Record<string, { chars: number; tokensEst: number }> = {};
+  for (const p of parts) {
+    byName[p.name] = { chars: p.chars, tokensEst: p.tokensEst };
+  }
+  const totalChars = core.reduce((n, p) => n + p.chars, 0);
+  const totalTokensEst = core.reduce((n, p) => n + p.tokensEst, 0);
+  return { totalChars, totalTokensEst, byName };
+}
+
+/**
+ * Árbol ya outlineado: deja solo rutas, limita líneas.
+ * (La profundidad se controla al generar el outline en `outlineTree`.)
+ */
+export function summarizeTreeText(tree: string, maxLines = 80): string {
+  if (!tree) {
+    return "";
+  }
+  const lines = tree
+    .split("\n")
+    .map((line) => line.replace(/^[📁·\s]+/, "").trim())
+    .filter(Boolean);
+  if (lines.length <= maxLines) {
+    return lines.join("\n");
+  }
+  return `${lines.slice(0, maxLines).join("\n")}\n… (+${lines.length - maxLines} rutas)`;
+}
+
+/** Contexto vivo compacto. */
 export function liveContext(context: PromptContext): string {
-  const { sample, documentName, documentSource, analysis, treeOutline } = context;
-  const tree = (treeOutline ?? "").trim();
-  return `## Documento abierto en el editor (contexto vivo, medido por el kernel)
-Nombre: ${documentName || "(sin nombre)"}
-Análisis del kernel: ${inventoryLine(analysis)}
-Fuente (extracto):
+  const withCode = needsCodeContext(context.userText);
+  const tree = summarizeTreeText(
+    (context.treeOutline ?? "").trim(),
+    withCode ? 80 : 20,
+  );
+  const catalogue = rootTable(context.catalogue);
+  if (!withCode) {
+    return `## Sesión
+Saludo / chat corto: sin documento ni ejemplo para ahorrar contexto.
+Catálogo: ${catalogue}
+Árbol (muestra): ${tree || "(sin carpeta)"}
+Herramienta: leer_archivo(path) por function calling nativo (nunca markup DSML).`;
+  }
+  return `## Documento
+${context.documentName || "(sin nombre)"} · ${inventoryLine(context.analysis)}
 \`\`\`bara
-${excerpt(documentSource) || "(vacío — no hay archivo activo; pide al usuario que abra uno en main)"}
+${excerpt(context.documentSource) || "(vacío)"}
 \`\`\`
 
-## Árbol de la carpeta del proyecto (solo lectura; se omiten .git, target, node_modules y archivos >1 MiB)
-${tree || "(sin carpeta abierta todavía)"}
+## Árbol (rutas)
+${tree || "(sin carpeta)"}
 
-## Raíces conocidas de fábrica (catálogo del kernel)
-${rootTable(context.catalogue)}
+## Catálogo
+${catalogue}
 
-## Documento de ejemplo del propio kernel (sintaxis real)
+## Ejemplo kernel
 \`\`\`bara
-${excerpt(sample, 1200)}
+${excerpt(context.sample, MAX_SAMPLE_CHARS)}
 \`\`\`
 
-## Herramienta disponible
-Si necesitas el contenido de otro archivo del árbol, el IDE puede leerlo con la herramienta de solo lectura «leer archivo» (jaula del proyecto, sin ../).`;
+## Herramienta
+Usa leer_archivo(path) vía function calling nativo; no escribas DSML ni XML de herramientas en el chat.`;
 }
 
-/** Prompt del sistema completo que acompaña a cada petición. */
+/** Prompt del sistema completo. */
 export function baraSystemPrompt(context: PromptContext): string {
   return [IDENTITY_RULES, ONTOLOGY_RULES, CONTRACT_RULES, liveContext(context)].join("\n\n");
 }

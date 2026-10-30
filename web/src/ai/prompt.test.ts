@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { excerpt, MAX_DOCUMENT_CHARS, baraSystemPrompt } from "./prompt";
+import {
+  LEXER_OPERATORS,
+  MAX_DOCUMENT_CHARS,
+  baraSystemPrompt,
+  estimateTokens,
+  excerpt,
+  needsCodeContext,
+  promptBudgetParts,
+  summarizeBudget,
+} from "./prompt";
 
 describe("excerpt", () => {
   it("no recorta por debajo del tope", () => {
@@ -24,9 +33,44 @@ describe("baraSystemPrompt", () => {
       documentName: "demo.bara",
       documentSource: "ברא\n",
       analysis: null,
+      userText: "modifica el archivo demo",
     });
     expect(prompt).toContain("ברא");
     expect(prompt).toContain("propuesta no verificada");
-    expect(prompt).toContain("catálogo");
+    expect(prompt).toContain("Catálogo");
+    for (const op of LEXER_OPERATORS) {
+      expect(prompt).toContain(op);
+    }
+  });
+
+  it("un Hola omite documento y queda bajo 3000 tokens estimados", () => {
+    const catalogue = Array.from({ length: 40 }, (_, i) => ({
+      glyph: `אבג`,
+      meaning: `sentido-${i}`,
+    }));
+    const tree = Array.from({ length: 200 }, (_, i) => `src/f${i}.bara`).join("\n");
+    const parts = promptBudgetParts({
+      catalogue,
+      sample: "ברא ".repeat(500),
+      documentName: "huge.bara",
+      documentSource: "x".repeat(20_000),
+      analysis: null,
+      treeOutline: tree,
+      userText: "Hola",
+    });
+    const budget = summarizeBudget(parts);
+    const prompt = baraSystemPrompt({
+      catalogue,
+      sample: "ברא ".repeat(500),
+      documentName: "huge.bara",
+      documentSource: "x".repeat(20_000),
+      analysis: null,
+      treeOutline: tree,
+      userText: "Hola",
+    });
+    expect(needsCodeContext("Hola")).toBe(false);
+    expect(prompt).not.toContain("huge.bara");
+    expect(budget.totalTokensEst).toBeLessThan(3000);
+    expect(estimateTokens(prompt)).toBeLessThan(3000);
   });
 });

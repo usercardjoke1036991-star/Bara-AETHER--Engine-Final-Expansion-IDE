@@ -140,6 +140,9 @@ mod ai_http;
 // Segunda capa de permisos: etiqueta de la ventana frente a lista fija.
 mod window_guard;
 
+// Saneado de fugas DSML / tool_call en texto del asistente.
+mod tool_leak;
+
 /// Pide una operación al proceso del kernel y devuelve el JSON ya firmado.
 fn kernel_call(kernel: &KernelHost, op: &str, args: Value) -> Result<Value, String> {
     kernel.call(op, args)
