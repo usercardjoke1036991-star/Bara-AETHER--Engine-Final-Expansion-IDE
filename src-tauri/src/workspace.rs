@@ -815,11 +815,9 @@ fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String> {
         .map_err(|err| format!("no se pudo abrir la raíz del workspace: {err}"))?;
 
     match fs::symlink_metadata(&candidate) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            return Err(format!(
-                "«{relative}» es un enlace simbólico; no se escribe"
-            ));
-        }
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "«{relative}» es un enlace simbólico; no se escribe"
+        )),
         Ok(_) => {
             let canonical = fs::canonicalize(&candidate)
                 .map_err(|err| format!("no se pudo abrir «{relative}»: {err}"))?;

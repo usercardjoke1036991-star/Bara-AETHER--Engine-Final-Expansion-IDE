@@ -300,12 +300,11 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
 }
 
 fn empty_report(path: &str, line: u32, host: &str, patch: &str, verdict: Verdict) -> AutoApplyReport {
-    let token = if verdict.can_apply || verdict.verified || !verdict.preview_diff.is_empty() {
-        judgment_token(line, host, patch)
-    } else if !patch.trim().is_empty() {
-        judgment_token(line, host, patch)
-    } else {
+    let _ = verdict;
+    let token = if patch.trim().is_empty() {
         String::new()
+    } else {
+        judgment_token(line, host, patch)
     };
     AutoApplyReport {
         glyph: verdict.value.glyph().to_string(),

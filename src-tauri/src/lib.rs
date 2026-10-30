@@ -330,6 +330,7 @@ fn judge_auto_patch(
 
 /// Escribe un bloque tras aceptación explícita; crea respaldo en `.bara-backup/`.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // IPC Tauri: window/app/state/kernel + payload del juicio.
 fn confirm_auto_patch(
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
