@@ -83,6 +83,8 @@ export interface ChatPanelProps {
   catalogue: RootEntry[];
   /** Documento de ejemplo embebido en el binario del kernel. */
   sample: string;
+  /** Árbol de la carpeta abierta, ya formateado para el prompt. */
+  treeOutline?: string;
   /** Envía un bloque de código al editor del IDE. */
   onUseCode: (code: string) => void;
   /** Pide al núcleo el veto de Belnap y, si es `∅`, la escritura. */
@@ -97,6 +99,7 @@ export default function ChatPanel({
   analysis,
   catalogue,
   sample,
+  treeOutline = "",
   onUseCode,
   onJudge,
 }: ChatPanelProps) {
@@ -171,8 +174,16 @@ export default function ChatPanel({
   // El contexto del sistema se recalcula sólo cuando cambia el kernel: el
   // prompt que viaja al proveedor es exactamente el que se puede inspeccionar.
   const system = useMemo(
-    () => baraSystemPrompt({ catalogue, sample, documentName, documentSource, analysis }),
-    [catalogue, sample, documentName, documentSource, analysis],
+    () =>
+      baraSystemPrompt({
+        catalogue,
+        sample,
+        documentName,
+        documentSource,
+        analysis,
+        treeOutline,
+      }),
+    [catalogue, sample, documentName, documentSource, analysis, treeOutline],
   );
 
   useEffect(() => {

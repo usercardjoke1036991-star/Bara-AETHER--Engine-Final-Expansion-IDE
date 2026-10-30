@@ -100,11 +100,11 @@ export default function KernelPanel({ open, source }: KernelPanelProps) {
   const [planText, setPlanText] = useState(DEFAULT_PLAN_WIDTHS.join(", "));
   const [plan, setPlan] = useState<FractalMemoryView | null>(null);
 
-  /** Pide las siete proyecciones del núcleo y las publica. */
+  /** Pide las siete proyecciones; un fallo aislado no tumba el lote entero. */
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const [autopoiesis, quantum, mesh, metal, timeline, fractal, bridge] = await Promise.all([
+      const settled = await Promise.allSettled([
         kernelAutopoiesis(source),
         quantumNative(source),
         meshSync(source, peers, rounds, threaded),
@@ -113,8 +113,28 @@ export default function KernelPanel({ open, source }: KernelPanelProps) {
         fractalMemory(source),
         bridgeSnapshot(source),
       ]);
-      setProjections({ autopoiesis, quantum, mesh, metal, timeline, fractal, bridge });
-      setError(null);
+      const pick = <T,>(index: number): T | null => {
+        const item = settled[index];
+        return item && item.status === "fulfilled" ? (item.value as T) : null;
+      };
+      const autopoiesis = pick<Awaited<ReturnType<typeof kernelAutopoiesis>>>(0);
+      const quantum = pick<Awaited<ReturnType<typeof quantumNative>>>(1);
+      const mesh = pick<Awaited<ReturnType<typeof meshSync>>>(2);
+      const metal = pick<Awaited<ReturnType<typeof metalIr>>>(3);
+      const timeline = pick<Awaited<ReturnType<typeof temporalTimeline>>>(4);
+      const fractal = pick<Awaited<ReturnType<typeof fractalMemory>>>(5);
+      const bridge = pick<Awaited<ReturnType<typeof bridgeSnapshot>>>(6);
+      if (autopoiesis && quantum && mesh && metal && timeline && fractal && bridge) {
+        setProjections({ autopoiesis, quantum, mesh, metal, timeline, fractal, bridge });
+        setError(null);
+      } else {
+        const first = settled.find((item) => item.status === "rejected");
+        setError(
+          first && first.status === "rejected"
+            ? describeError(first.reason)
+            : "alguna proyección no respondió",
+        );
+      }
     } catch (failure) {
       setError(describeError(failure));
     } finally {

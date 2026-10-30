@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "ai-workspace",
-  "description": "Asistencia multimodal: chat, llavero, carpeta de contexto y medios",
+  "description": "Asistencia multimodal: chat, llavero, carpeta de contexto, catálogo y medios",
   "windows": ["ai-workspace"],
   "permissions": [
     "core:default",
@@ -14,8 +14,14 @@
     "allow-workspace-open-dialog",
     "allow-workspace-activate",
     "allow-workspace-close-root",
+    "allow-workspace-read-project-file",
+    "allow-editor-context-get",
+    "allow-kernel-catalogue",
+    "allow-sample-genesis",
+    "allow-analyze-source",
     "allow-shoresh-translate",
     "allow-load-local-weights",
-    "allow-local-complete"
+    "allow-local-complete",
+    "clipboard-manager:allow-write-text"
   ]
 }

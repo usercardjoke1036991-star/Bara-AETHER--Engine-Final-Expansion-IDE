@@ -1,11 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "autopoiesis",
-  "description": "Ledger de autopoiesis sobre un documento de ejemplo",
+  "description": "Ledger de autopoiesis y proyecciones ZK/Metal didácticas",
   "windows": ["autopoiesis"],
   "permissions": [
     "core:default",
     "allow-sample-genesis",
-    "allow-autopoiesis"
+    "allow-autopoiesis",
+    "allow-metal-ir",
+    "allow-analyze-source",
+    "allow-editor-context-get"
   ]
 }

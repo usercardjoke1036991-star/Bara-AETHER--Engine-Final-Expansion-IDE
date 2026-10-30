@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
+use crate::win_cmd;
+
 /// Un clon que sigue vivo después de este plazo se mata y se borra el destino.
 const CLONE_LIMIT: Duration = Duration::from_secs(600);
 
@@ -130,19 +132,21 @@ pub fn clone_repository(app: &AppHandle, parent: &Path, url: &str) -> Result<Pat
         format!("clonando {}…", remote.dir_name),
     );
 
-    let mut child = Command::new("git")
-        .args([
-            "clone",
-            "--progress",
-            "--",
-            remote.clone_url.as_str(),
-            &dest.display().to_string(),
-        ])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "Never")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+    let mut git = Command::new("git");
+    git.args([
+        "clone",
+        "--progress",
+        "--",
+        remote.clone_url.as_str(),
+        &dest.display().to_string(),
+    ])
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .env("GCM_INTERACTIVE", "Never")
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped());
+    win_cmd::hide_console(&mut git);
+    let mut child = git
         .spawn()
         .map_err(|err| format!("no se pudo ejecutar git ({err}). ¿Está en el PATH?"))?;
 

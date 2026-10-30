@@ -6,8 +6,27 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { kernelAutopoiesis, type AutopoiesisReport } from "../aether";
-import { describeError, sampleGenesis } from "../engine";
+import {
+  kernelAutopoiesis,
+  metalIr,
+  type AutopoiesisReport,
+  type MetalView,
+} from "../aether";
+import {
+  analyzeSource,
+  describeError,
+  kernelCatalogue,
+  sampleGenesis,
+  type Analysis,
+  type RootEntry,
+} from "../engine";
+import {
+  getEditorContext,
+  onEditorContext,
+  outlineTree,
+  readProjectFile,
+  type EditorSnapshot,
+} from "../editorBridge";
 import { inspectMediaDialog } from "../media";
 import {
   workspaceActivate,
@@ -46,7 +65,7 @@ export default function DeskHost({ vista }: { vista: Exclude<DeskVista, "main"> 
       </header>
       {vista === "topology" ? <TopologyDesk /> : null}
       {vista === "autopoiesis" ? <AutopoiesisDesk /> : null}
-      {vista === "telemetry" ? <CockpitPanel open source="" /> : null}
+      {vista === "telemetry" ? <TelemetryDesk /> : null}
       {vista === "ai-workspace" ? <AiDesk /> : null}
     </div>
   );
@@ -60,15 +79,40 @@ function TopologyDesk() {
   );
 }
 
+function TelemetryDesk() {
+  const [source, setSource] = useState("");
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void getEditorContext()
+      .then((snap) => setSource(snap.source))
+      .catch(() => undefined);
+    void onEditorContext((snap) => setSource(snap.source)).then((unlisten) => {
+      stop = unlisten;
+    });
+    return () => {
+      stop?.();
+    };
+  }, []);
+  return (
+    <section className="desk-body">
+      <CockpitPanel open source={source} />
+    </section>
+  );
+}
+
 function AutopoiesisDesk() {
   const [source, setSource] = useState("");
   const [report, setReport] = useState<AutopoiesisReport | null>(null);
+  const [metal, setMetal] = useState<MetalView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const project = useCallback((text: string) => {
     setError(null);
-    kernelAutopoiesis(text)
-      .then(setReport)
+    void Promise.all([kernelAutopoiesis(text), metalIr(text, "cpu")])
+      .then(([auto, metalView]) => {
+        setReport(auto);
+        setMetal(metalView);
+      })
       .catch((reason: unknown) => setError(describeError(reason)));
   }, []);
 
@@ -79,6 +123,29 @@ function AutopoiesisDesk() {
         project(sample);
       })
       .catch((reason: unknown) => setError(describeError(reason)));
+  }, [project]);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void getEditorContext()
+      .then((snap) => {
+        if (snap.source.trim().length > 0) {
+          setSource(snap.source);
+          project(snap.source);
+        }
+      })
+      .catch(() => undefined);
+    void onEditorContext((snap) => {
+      if (snap.source.trim().length > 0) {
+        setSource(snap.source);
+        project(snap.source);
+      }
+    }).then((unlisten) => {
+      stop = unlisten;
+    });
+    return () => {
+      stop?.();
+    };
   }, [project]);
 
   return (
@@ -96,6 +163,14 @@ function AutopoiesisDesk() {
       {error ? <p className="error">{error}</p> : null}
       {report ? (
         <dl className="desk-facts">
+          <div>
+            <dt>Fase 1 · autopoiesis ⊤∧⊥ y puerta ZK (didáctica)</dt>
+            <dd>
+              {report.gate.didactic
+                ? "simulación didáctica (no ZK criptográfico)"
+                : "aviso: marcador didáctico ausente"}
+            </dd>
+          </div>
           <div>
             <dt>Atención total</dt>
             <dd>{report.attentionTotal}</dd>
@@ -121,6 +196,17 @@ function AutopoiesisDesk() {
             <dd>
               {report.topology.nodes} nodos · cohesión {report.topology.cohesionMilli}
               {report.topology.alert ? " · ⊤∧⊥" : ""}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
+      {metal ? (
+        <dl className="desk-facts">
+          <div>
+            <dt>Fase 2 · Metal-IR simulado (didáctico)</dt>
+            <dd>
+              {metal.label} · {metal.signature}
+              {metal.didactic ? " · sin GPU/MMIO real" : " · aviso: marcador didáctico ausente"}
             </dd>
           </div>
         </dl>
@@ -160,8 +246,30 @@ function AiDesk() {
   const [savedSource, setSavedSource] = useState("");
   const [videoName, setVideoName] = useState<string | null>(null);
   const [mediaNote, setMediaNote] = useState<string | null>(null);
+  const [catalogue, setCatalogue] = useState<RootEntry[]>([]);
+  const [sample, setSample] = useState("");
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [treeOutline, setTreeOutline] = useState("");
   const dirty =
     documentName.endsWith(".bara") && documentSource !== savedSource && !documentName.startsWith("<");
+
+  const applySnapshot = useCallback((snap: EditorSnapshot) => {
+    if (snap.path && !snap.path.startsWith("<")) {
+      setDocumentName(snap.path);
+      setDocumentSource(snap.source);
+      setSavedSource(snap.source);
+    } else if (snap.source.trim().length > 0) {
+      setDocumentName(snap.name || snap.path || "<editor>");
+      setDocumentSource(snap.source);
+      setSavedSource(snap.source);
+    }
+    if (snap.analysis) {
+      setAnalysis(snap.analysis);
+    }
+    if (snap.treeOutline) {
+      setTreeOutline(snap.treeOutline);
+    }
+  }, []);
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -171,7 +279,10 @@ function AiDesk() {
         setShelf(next);
         return workspaceTree();
       })
-      .then(setTree)
+      .then((next) => {
+        setTree(next);
+        setTreeOutline(outlineTree(next.entries));
+      })
       .catch((reason: unknown) => setError(describeError(reason)))
       .finally(() => setLoading(false));
   }, []);
@@ -179,6 +290,60 @@ function AiDesk() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    let alive = true;
+    void Promise.all([kernelCatalogue(), sampleGenesis()])
+      .then(([roots, genesis]) => {
+        if (!alive) {
+          return;
+        }
+        setCatalogue(roots);
+        setSample(genesis);
+      })
+      .catch((reason: unknown) => {
+        if (alive) {
+          setError(describeError(reason));
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void getEditorContext()
+      .then(applySnapshot)
+      .catch(() => undefined);
+    void onEditorContext(applySnapshot).then((unlisten) => {
+      stop = unlisten;
+    });
+    return () => {
+      stop?.();
+    };
+  }, [applySnapshot]);
+
+  useEffect(() => {
+    if (!documentSource.trim()) {
+      setAnalysis(null);
+      return undefined;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void analyzeSource(documentSource)
+        .then((next) => {
+          if (alive) {
+            setAnalysis(next);
+          }
+        })
+        .catch(() => undefined);
+    }, 250);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [documentSource]);
 
   const context = useMemo(() => {
     const note = videoName
@@ -188,17 +353,30 @@ function AiDesk() {
   }, [documentSource, videoName]);
 
   function openEntry(entry: WorkspaceEntry) {
-    if (!tree || !entry.bara) {
+    if (!tree) {
       return;
     }
-    workspaceReadDocument(entry.path)
-      .then((document) => {
-        setDocumentName(document.path);
-        setDocumentSource(document.source);
-        setSavedSource(document.source);
-        setError(null);
-      })
-      .catch((reason: unknown) => setError(describeError(reason)));
+    if (entry.bara) {
+      workspaceReadDocument(entry.path)
+        .then((document) => {
+          setDocumentName(document.path);
+          setDocumentSource(document.source);
+          setSavedSource(document.source);
+          setError(null);
+        })
+        .catch((reason: unknown) => setError(describeError(reason)));
+      return;
+    }
+    if (entry.kind === "file") {
+      readProjectFile(entry.path)
+        .then((document) => {
+          setDocumentName(document.path);
+          setDocumentSource(document.source);
+          setSavedSource(document.source);
+          setError(null);
+        })
+        .catch((reason: unknown) => setError(describeError(reason)));
+    }
   }
 
   function attachText(file: File) {
@@ -250,39 +428,43 @@ function AiDesk() {
           {(shelf?.roots ?? []).map((slot) => {
             const onlyRoot = (shelf?.roots.length ?? 0) <= 1;
             return (
-            <li key={slot.id}>
-              <button
-                type="button"
-                className={slot.active ? "shelf-active" : undefined}
-                onClick={() => {
-                  workspaceActivate(slot.id)
-                    .then(() => reload())
-                    .catch((reason: unknown) => setError(describeError(reason)));
-                }}
-              >
-                {slot.name}
-              </button>
-              <button
-                type="button"
-                className="shelf-close"
-                aria-label={onlyRoot ? `No se cierra la última carpeta (${slot.name})` : `Cerrar ${slot.name}`}
-                title={onlyRoot ? "La última carpeta del estante no se cierra" : "Cerrar carpeta"}
-                disabled={onlyRoot}
-                onClick={() => {
-                  if (onlyRoot) {
-                    return;
+              <li key={slot.id}>
+                <button
+                  type="button"
+                  className={slot.active ? "shelf-active" : undefined}
+                  onClick={() => {
+                    workspaceActivate(slot.id)
+                      .then(() => reload())
+                      .catch((reason: unknown) => setError(describeError(reason)));
+                  }}
+                >
+                  {slot.name}
+                </button>
+                <button
+                  type="button"
+                  className="shelf-close"
+                  aria-label={
+                    onlyRoot
+                      ? `No se cierra la última carpeta (${slot.name})`
+                      : `Cerrar ${slot.name}`
                   }
-                  workspaceCloseRoot(slot.id)
-                    .then((next) => {
-                      setShelf(next);
-                      reload();
-                    })
-                    .catch((reason: unknown) => setError(describeError(reason)));
-                }}
-              >
-                ×
-              </button>
-            </li>
+                  title={onlyRoot ? "La última carpeta del estante no se cierra" : "Cerrar carpeta"}
+                  disabled={onlyRoot}
+                  onClick={() => {
+                    if (onlyRoot) {
+                      return;
+                    }
+                    workspaceCloseRoot(slot.id)
+                      .then((next) => {
+                        setShelf(next);
+                        reload();
+                      })
+                      .catch((reason: unknown) => setError(describeError(reason)));
+                  }}
+                >
+                  ×
+                </button>
+              </li>
             );
           })}
         </ul>
@@ -295,6 +477,7 @@ function AiDesk() {
               workspaceOpenDialog()
                 .then((next) => {
                   setTree(next);
+                  setTreeOutline(outlineTree(next.entries));
                   setError(null);
                 })
                 .catch((reason: unknown) => {
@@ -325,19 +508,19 @@ function AiDesk() {
           <div className="row">
             <span className="status" title={documentName}>
               {documentName}
-              {dirty ? " · sin guardar" : ""}
+              {dirty ? " · sin guardar" : documentName.endsWith(".bara") ? " · guardado" : ""}
             </span>
             <span className="grow" />
             <button type="button" disabled={!dirty || saving} onClick={saveDocument}>
               {saving ? "Guardando…" : "Guardar"}
             </button>
           </div>
-          {documentName.endsWith(".bara") ? (
+          {documentName.endsWith(".bara") || documentSource.length > 0 ? (
             <textarea
               className="desk-source"
               value={documentSource}
               spellCheck={false}
-              aria-label="Documento .bara de contexto"
+              aria-label="Documento de contexto"
               onChange={(event) => setDocumentSource(event.target.value)}
             />
           ) : null}
@@ -379,14 +562,19 @@ function AiDesk() {
           <p className="muted">
             {mediaNote ?? "La cota de 32 MB la aplica el backend. Los píxeles no entran en el chat."}
           </p>
+          <p className="muted">
+            Catálogo: {catalogue.length} raíces
+            {analysis ? ` · análisis ${analysis.summary.total} tokens` : ""}
+          </p>
         </div>
         <ChatPanel
           open
           documentName={documentName}
           documentSource={context}
-          analysis={null}
-          catalogue={[]}
-          sample=""
+          analysis={analysis}
+          catalogue={catalogue}
+          sample={sample}
+          treeOutline={treeOutline}
           onUseCode={(code) => {
             setDocumentName("<fragmento>");
             setDocumentSource(code);

@@ -807,6 +807,25 @@ td {
   gap: 0.4rem;
 }
 
+.ai-answer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+}
+
+.ai-answer-actions button,
+.ai-copy-code {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+}
+
+.tab-save-state {
+  font-size: 0.7rem;
+  font-weight: 400;
+  opacity: 0.75;
+}
+
 .ai-text {
   margin: 0;
   font-size: 0.85rem;
