@@ -103,7 +103,7 @@ export interface ChatPanelProps {
   /** Juzga un bloque sin escribir (diff + canApply). */
   onJudge: (patch: string) => Promise<AutoApplyReport>;
   /** Escribe tras aceptar el diff (con respaldo). */
-  onConfirm: (patch: string) => Promise<AutoApplyReport>;
+  onConfirm: (patch: string, judgmentId: string) => Promise<AutoApplyReport>;
   /** Restaura el respaldo del último apply. */
   onUndo: (path: string, backupPath: string) => Promise<AutoApplyReport>;
   /** Abre el panel si estaba cerrado (p. ej. parche desde Asistencia). */
@@ -551,7 +551,7 @@ export default function ChatPanel({
       return;
     }
     try {
-      const report = await onConfirm(review.patch);
+      const report = await onConfirm(review.patch, review.report.judgmentId);
       if (report.applied) {
         setLastBackup(
           report.backupPath

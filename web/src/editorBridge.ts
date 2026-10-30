@@ -46,6 +46,11 @@ export function proposeEditorPatch(patch: string): Promise<void> {
   return invoke("propose_editor_patch", { patch });
 }
 
+/** Fragmento de contexto desde la ventana IA hacia `main` (solo memoria). */
+export function proposeAiDeskAttachment(name: string, source: string): Promise<void> {
+  return invoke("propose_ai_desk_attachment", { name, source });
+}
+
 /** Abre DevTools (solo debug / feature `devtools`). */
 export function openDevtools(): Promise<void> {
   return invoke("open_devtools_window");

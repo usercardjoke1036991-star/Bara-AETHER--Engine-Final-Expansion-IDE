@@ -12,8 +12,11 @@ use bara::syntax;
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
 
+use crate::auto_apply;
 use crate::graph;
 use crate::workspace;
+
+const MAX_FILES: usize = 48;
 
 const MAX_NAME: usize = 64;
 
@@ -162,9 +165,6 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
     let mut network = BelnapValue::Neither;
     let mut seen = false;
     for node in graph.nodes.iter().filter(|node| node.kind == "file") {
-        if plans.len() == 48 {
-            break;
-        }
         let document = match workspace::read_text(root, &node.path) {
             Ok(document) => document,
             Err(_) => continue,
@@ -186,6 +186,12 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
     if !seen {
         return Ok(report(from, to, BelnapValue::False, false, Vec::new()));
     }
+    if plans.len() > MAX_FILES {
+        return Err(format!(
+            "la red tocaría {} archivos; el tope es {MAX_FILES}",
+            plans.len()
+        ));
+    }
     let files: Vec<GlobalFile> = plans
         .iter()
         .map(|plan| GlobalFile {
@@ -200,6 +206,12 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
     }
     let mut written: Vec<(String, String)> = Vec::new();
     for plan in &plans {
+        if let Err(err) = auto_apply::write_backup(root, &plan.path, &plan.previous) {
+            for (path, previous) in written.iter().rev() {
+                let _ = workspace::write_source(root, path, previous);
+            }
+            return Err(err);
+        }
         if let Err(err) = workspace::write_source(root, &plan.path, &plan.next) {
             for (path, previous) in written.iter().rev() {
                 let _ = workspace::write_source(root, path, previous);

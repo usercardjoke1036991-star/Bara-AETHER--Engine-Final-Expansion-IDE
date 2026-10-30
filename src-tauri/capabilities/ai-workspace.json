@@ -10,7 +10,6 @@
     "allow-workspace-roots",
     "allow-workspace-tree",
     "allow-workspace-read-document",
-    "allow-workspace-write-document",
     "allow-workspace-open-dialog",
     "allow-workspace-activate",
     "allow-workspace-close-root",
@@ -24,6 +23,7 @@
     "allow-local-complete",
     "allow-open-desk-window",
     "allow-propose-editor-patch",
+    "allow-propose-ai-desk-attachment",
     "clipboard-manager:allow-write-text"
   ]
 }

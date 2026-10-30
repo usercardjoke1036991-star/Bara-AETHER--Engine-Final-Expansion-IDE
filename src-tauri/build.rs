@@ -161,6 +161,7 @@ const APP_COMMANDS: &[&str] = &[
     "workspace_close_root",
     "open_desk_window",
     "propose_editor_patch",
+    "propose_ai_desk_attachment",
     "open_devtools_window",
     "transmute_workspace",
     "inspect_media_dialog",

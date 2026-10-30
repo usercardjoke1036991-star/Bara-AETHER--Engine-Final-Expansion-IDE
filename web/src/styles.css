@@ -12,9 +12,15 @@
   --unknown: #e07a5f;
   --ident: #9ecbff;
   --error: #ff6b6b;
-  /* Ancho del panel del asistente (reserva lateral del escritorio). */
-  --ai-width: 400px;
+  --space-1: 8px;
+  --space-2: 12px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --side-frac: 0.2;
+  --chat-frac: 0.28;
+  --font-min: 14px;
   font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: var(--font-min);
 }
 
 * {
@@ -33,29 +39,165 @@ body,
   display: flex;
   flex-direction: column;
   height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ide-shell {
+  min-width: 0;
+}
+
+.ide-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ide-side {
+  flex: 0 0 calc(var(--side-frac) * 100%);
+  max-width: 36%;
+  min-width: 12rem;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.ide-center {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ide-chat {
+  flex: 0 0 calc(var(--chat-frac) * 100%);
+  max-width: 42%;
+  min-width: 16rem;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+.ide-chat .ai-panel {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border-left: none;
+  box-shadow: none;
+}
+
+.ide-split {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--line);
+  align-self: stretch;
+}
+
+.ide-split:hover {
+  background: var(--accent);
+}
+
+.kernel-dock {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--pane);
+  max-height: 42%;
+  min-height: 2.5rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kernel-dock.open {
+  flex: 0 1 38%;
+}
+
+.kernel-dock-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.kernel-dock-tabs button {
+  min-height: 2rem;
+  padding: 0.35rem 0.75rem;
+  font-size: var(--font-min);
+}
+
+.kernel-dock-tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.kernel-dock-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2);
 }
 
 .bar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.6rem 1rem;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--line);
   background: var(--pane);
+  overflow-x: auto;
+  flex-shrink: 0;
 }
 
 .bar h1 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1.125rem;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.bar button {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.85rem;
+  font-size: var(--font-min);
+}
+
+.bar-more {
+  position: relative;
+}
+
+.bar-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 40;
+  margin: 4px 0 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--pane);
+  border: 1px solid var(--line);
+  min-width: 12rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.bar-menu button {
+  width: 100%;
+  text-align: left;
 }
 
 .tag,
 .status,
 .muted {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--font-min);
 }
 
 .kernel-pill {
@@ -162,21 +304,19 @@ body,
 
 .workspace {
   display: flex;
-  flex: 0 0 232px;
+  flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.45rem;
-  width: 232px;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
   min-height: 0;
-  padding: 0.65rem;
+  padding: var(--space-2);
   background: var(--pane);
-  border-right: 1px solid var(--line);
 }
 
-@container (max-width: 420px) {
-  .workspace {
-    flex-basis: 7.5rem;
-    width: 7.5rem;
-  }
+.ide-side .workspace {
+  border-right: none;
+  height: 100%;
 }
 
 .workspace-head {
@@ -713,24 +853,18 @@ td {
 
 /* ---------- Panel del asistente (AETHER-Ω) ---------- */
 
-/* Con el panel abierto, el escritorio reserva su ancho: nada queda tapado. */
-.app.ai-open {
-  padding-right: var(--ai-width);
-}
-
+/* Chat dockeado: el panel vive dentro de .ide-chat (ver .ide-chat .ai-panel). */
 .ai-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  z-index: 5;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  width: var(--ai-width);
-  height: 100vh;
-  padding: 0.75rem;
-  border-left: 1px solid var(--line);
+  gap: var(--space-1);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-2);
   background: var(--pane);
+  overflow: hidden;
 }
 
 /* Zona de arrastre activa: el panel es el destino de las imágenes. */
@@ -1234,7 +1368,6 @@ td {
 tr.vb-selected td {
   border-color: var(--accent);
   color: var(--accent);
-}
 }
 
 .vb-node small {

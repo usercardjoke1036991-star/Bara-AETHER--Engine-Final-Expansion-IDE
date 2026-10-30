@@ -17,6 +17,7 @@ export interface AutoApplyReport {
   canApply: boolean;
   blockReason: string;
   backupPath: string;
+  judgmentId: string;
 }
 
 /** Informe vacío tipado (p. ej. sin documento abierto). */
@@ -35,6 +36,7 @@ export function emptyReport(line = 1): AutoApplyReport {
     canApply: false,
     blockReason: "Abre un archivo .bara primero",
     backupPath: "",
+    judgmentId: "",
   };
 }
 
@@ -83,8 +85,15 @@ export function confirmAutoPatch(
   line: number,
   host: string,
   patch: string,
+  judgmentId: string,
 ): Promise<AutoApplyReport> {
-  return invoke<AutoApplyReport>("confirm_auto_patch", { path, line, host, patch });
+  return invoke<AutoApplyReport>("confirm_auto_patch", {
+    path,
+    line,
+    host,
+    patch,
+    judgmentId,
+  });
 }
 
 /** Restaura el archivo desde el respaldo. */

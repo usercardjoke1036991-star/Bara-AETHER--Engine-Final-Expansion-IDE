@@ -10,6 +10,7 @@ import {
   PROVIDER_MODEL_PRESETS,
   TOKEN_RANGE,
   configProblems,
+  isLocalApiRoot,
   temperatureRange,
   describeConfig,
   withProvider,
@@ -55,6 +56,7 @@ export default function AiSettings({
   const problems = configProblems(config);
   const presets = PROVIDER_MODEL_PRESETS[config.provider];
   const heat = temperatureRange(config.provider);
+  const localOverride = isLocalApiRoot(config.baseUrl);
 
   return (
     <div className="ai-settings">
@@ -123,14 +125,19 @@ export default function AiSettings({
         <span>Raíz de la API</span>
         <input
           spellCheck={false}
+          readOnly={!localOverride}
           value={config.baseUrl}
           placeholder={PROVIDER_ENDPOINTS[config.provider]}
           aria-label="Raíz de la API"
-          onChange={(event) => onChange({ ...config, baseUrl: event.target.value })}
+          onChange={(event) => {
+            if (localOverride) {
+              onChange({ ...config, baseUrl: event.target.value });
+            }
+          }}
         />
         <span className="muted">
-          Prefijo de la petición. Anthropic añade /messages; OpenAI y los servidores compatibles,
-          /chat/completions.
+          En la nube sólo la raíz oficial del proveedor (OpenAI admite DeepSeek). Para un servidor
+          local usa el botón de abajo; entonces podrás editar la URL.
         </span>
       </label>
       <div className="row">
@@ -141,6 +148,12 @@ export default function AiSettings({
           }
         >
           raíz oficial
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ ...config, baseUrl: "http://127.0.0.1:11434/v1" })}
+        >
+          servidor local
         </button>
       </div>
 

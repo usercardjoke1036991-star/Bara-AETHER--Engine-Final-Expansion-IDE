@@ -8,11 +8,14 @@
 //! * `∅` (Neither) jamás se aplica — ni en automático ni tras aceptar.
 //! * `confirm` escribe sólo con `⊤`, léxico verificado y aceptación explícita;
 //!   antes crea una copia en `.bara-backup/<fecha>/`.
-//! * `undo` restaura ese respaldo.
+//! * `undo` restaura **siempre** desde el respaldo bajo `.bara-backup/` (no hay
+//!   deshacer sin ruta de copia).
 
 #![forbid(unsafe_code)]
 
 use bara::autopoietic::BelnapValue;
+use bara::crypto_native::sha256_hex;
+use bara::lexer::{Lexer, TokenKind};
 use bara::log_lattice::status_key;
 use bara::syntax::{self, shoresh_unverified_reason};
 use bara::transmute_engine::language_of_extension;
@@ -51,6 +54,8 @@ pub struct AutoApplyReport {
     pub block_reason: String,
     /// Ruta relativa del respaldo tras un `confirm` exitoso.
     pub backup_path: String,
+    /// Huella del juicio (`line`, host y parche). Vacía si no hubo candidato.
+    pub judgment_id: String,
 }
 
 /// Inserta `patch` en la línea 1-based. `line == 0` añade al final.
@@ -126,7 +131,8 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     (y as i32, m, d)
 }
 
-fn write_backup(root: &str, relative: &str, contents: &str) -> Result<String, String> {
+/// Copia de seguridad bajo `.bara-backup/` antes de cualquier escritura autónoma.
+pub(crate) fn write_backup(root: &str, relative: &str, contents: &str) -> Result<String, String> {
     let root_path = workspace::resolve_root(root)?;
     let stamp = stamp();
     let safe = relative.replace('\\', "/");
@@ -185,6 +191,61 @@ struct Verdict {
     block_reason: String,
 }
 
+fn is_bara_path(path: &str) -> bool {
+    path.rsplit(['/', '\\'])
+        .next()
+        .and_then(|name| name.rsplit_once('.'))
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("bara"))
+}
+
+/// Verificación estricta de parches `.bara`: léxico, sintaxis, raíz conocida y sin identificadores Latin.
+fn bara_patch_verified(patch: &str) -> Result<(), String> {
+    if let Some(reason) = shoresh_unverified_reason(patch) {
+        return Err(reason);
+    }
+    let tree = syntax::parse(language_of_path("x.bara"), patch);
+    if !tree.balanced {
+        return Err("propuesta no verificada: sintaxis desequilibrada".to_string());
+    }
+    let tokens = Lexer::new(patch).tokenize();
+    let mut known_roots = 0u32;
+    for token in tokens {
+        match token.kind {
+            TokenKind::Identifier(_) => {
+                return Err(
+                    "propuesta no verificada: identificador ASCII/Latin libre".to_string(),
+                );
+            }
+            TokenKind::Root { keyword, .. } if keyword.is_some() => {
+                known_roots = known_roots.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+    if known_roots == 0 {
+        return Err("propuesta no verificada: falta una raíz hebrea conocida".to_string());
+    }
+    Ok(())
+}
+
+fn patch_verified(path: &str, patch: &str) -> (bool, String) {
+    if is_bara_path(path) {
+        match bara_patch_verified(patch) {
+            Ok(()) => (true, String::new()),
+            Err(reason) => (false, reason),
+        }
+    } else {
+        match shoresh_unverified_reason(patch) {
+            None => (true, String::new()),
+            Some(reason) => (false, reason),
+        }
+    }
+}
+
+fn judgment_token(line: u32, host: &str, patch: &str) -> String {
+    sha256_hex(format!("{line}\0{host}\0{patch}").as_bytes())
+}
+
 fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, String> {
     if path.len() > 512 || line > 1_000_000 {
         return Err("la ruta o la línea quedan fuera de la cota".to_string());
@@ -192,9 +253,7 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
     if patch.len() > MAX_PATCH || host.len() > MAX_HOST {
         return Err("el bloque supera la cota del parche".to_string());
     }
-    let unverified = shoresh_unverified_reason(patch);
-    let verified = unverified.is_none();
-    let unverified_reason = unverified.unwrap_or_default();
+    let (verified, unverified_reason) = patch_verified(path, patch);
     let value = syntax::judge_patch(language_of_path(path), host, patch);
     let (next, at, _inserted) = splice(host, patch, line);
     let preview_diff = if value == BelnapValue::True && verified {
@@ -240,7 +299,14 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
     })
 }
 
-fn empty_report(path: &str, line: u32, verdict: Verdict) -> AutoApplyReport {
+fn empty_report(path: &str, line: u32, host: &str, patch: &str, verdict: Verdict) -> AutoApplyReport {
+    let token = if verdict.can_apply || verdict.verified || !verdict.preview_diff.is_empty() {
+        judgment_token(line, host, patch)
+    } else if !patch.trim().is_empty() {
+        judgment_token(line, host, patch)
+    } else {
+        String::new()
+    };
     AutoApplyReport {
         glyph: verdict.value.glyph().to_string(),
         status: status_key(verdict.value).to_string(),
@@ -255,6 +321,7 @@ fn empty_report(path: &str, line: u32, verdict: Verdict) -> AutoApplyReport {
         can_apply: verdict.can_apply,
         block_reason: verdict.block_reason,
         backup_path: String::new(),
+        judgment_id: token,
     }
 }
 
@@ -275,11 +342,11 @@ pub fn judge(
             verdict.preview_diff.clear();
             verdict.block_reason =
                 "el archivo en disco no coincide con el editor; no se escribe".to_string();
-            return Ok(empty_report(path, line, verdict));
+            return Ok(empty_report(path, line, host, patch, verdict));
         }
     }
     let at = verdict.at;
-    Ok(empty_report(path, at, verdict))
+    Ok(empty_report(path, at, host, patch, verdict))
 }
 
 /// Escribe el parche tras aceptación explícita. Crea respaldo en `.bara-backup/`.
@@ -289,19 +356,28 @@ pub fn confirm(
     line: u32,
     host: &str,
     patch: &str,
+    judgment_id: &str,
 ) -> Result<AutoApplyReport, String> {
+    if judgment_id.trim().is_empty() {
+        return Err("falta el token de juicio; vuelve a abrir el diff".to_string());
+    }
+    if judgment_id != judgment_token(line, host, patch) {
+        return Err(
+            "el token de juicio no coincide con la línea, el host o el parche".to_string(),
+        );
+    }
     let mut verdict = evaluate(path, line, host, patch)?;
     if !verdict.can_apply {
         if verdict.block_reason.is_empty() {
             verdict.block_reason = "el parche no se puede aplicar".to_string();
         }
-        return Ok(empty_report(path, line, verdict));
+        return Ok(empty_report(path, line, host, patch, verdict));
     }
     if verdict.value == BelnapValue::Neither {
         verdict.can_apply = false;
         verdict.preview_diff.clear();
         verdict.block_reason = "∅ falta información: no se escribe".to_string();
-        return Ok(empty_report(path, line, verdict));
+        return Ok(empty_report(path, line, host, patch, verdict));
     }
     let on_disk = workspace::read_text(root, path)?;
     if on_disk.source != host {
@@ -324,11 +400,15 @@ pub fn confirm(
         can_apply: false,
         block_reason: String::new(),
         backup_path,
+        judgment_id: judgment_id.to_string(),
     })
 }
 
 /// Restaura el archivo desde un respaldo relativo bajo `.bara-backup/`.
 pub fn undo(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport, String> {
+    if backup_path.trim().is_empty() {
+        return Err("deshacer exige la ruta del respaldo en .bara-backup/".to_string());
+    }
     if !backup_path.replace('\\', "/").starts_with(".bara-backup/") {
         return Err("el respaldo debe vivir bajo .bara-backup/".to_string());
     }
@@ -357,6 +437,7 @@ pub fn undo(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport
         can_apply: false,
         block_reason: String::new(),
         backup_path: backup_path.replace('\\', "/"),
+        judgment_id: String::new(),
     })
 }
 
@@ -398,12 +479,15 @@ mod tests {
         assert!(!preview.preview_diff.is_empty());
         assert_eq!(fs::read_to_string(&file).expect("disco"), "fn alpha() {}\n");
 
+        let token = preview.judgment_id.clone();
+        assert!(!token.is_empty());
         let written = confirm(
             &root_text,
             "src/lib.rs",
             2,
             "fn alpha() {}\n",
             "fn beta() {}\n",
+            &token,
         )
         .expect("confirm");
         assert!(written.applied);
@@ -428,7 +512,15 @@ mod tests {
         assert!(!report.can_apply);
         assert_eq!(report.glyph, "∅");
         assert!(!report.verified);
-        let denied = confirm(&root_text, "src/lib.rs", 1, "fn alpha() {}\n", "זזז\n").expect("∅");
+        let denied = confirm(
+            &root_text,
+            "src/lib.rs",
+            1,
+            "fn alpha() {}\n",
+            "זזז\n",
+            &report.judgment_id,
+        )
+        .expect("∅");
         assert!(!denied.applied);
         assert!(!denied.can_apply);
         assert_eq!(
@@ -462,12 +554,21 @@ mod tests {
         let file = root.join("src").join("lib.rs");
         let original = "fn alpha() {}\n";
         fs::write(&file, original).expect("semilla");
+        let preview = judge(
+            &root.display().to_string(),
+            "src/lib.rs",
+            2,
+            "fn alpha() {}\n",
+            "fn beta() {}\n",
+        )
+        .expect("preview");
         let stale = confirm(
             &root.display().to_string(),
             "src/lib.rs",
             2,
             "fn alpha() {}\nfn extra() {}\n",
             "fn beta() {}\n",
+            &preview.judgment_id,
         );
         assert!(
             stale.is_err(),
@@ -479,5 +580,28 @@ mod tests {
             "el error no dice que el disco difiere: {message}"
         );
         assert_eq!(fs::read_to_string(&file).expect("disco"), original);
+    }
+
+    #[test]
+    fn los_parchest_bara_rechazan_ascii_libre() {
+        let root = scratch();
+        fs::write(root.join("doc.bara"), "ברא\n").expect("semilla");
+        let root_text = root.display().to_string();
+        for patch in ["vy:+1 * dirección:0\n", "izquierda ->\n"] {
+            let report = judge(&root_text, "doc.bara", 1, "ברא\n", patch).expect("juicio");
+            assert!(!report.verified, "debía rechazar «{patch}»");
+            assert!(!report.can_apply);
+        }
+        let ok = judge(&root_text, "doc.bara", 2, "ברא\n", "ברא\n").expect("ok");
+        assert!(ok.verified);
+    }
+
+    #[test]
+    fn confirm_exige_token_de_juicio() {
+        let root = scratch();
+        fs::write(root.join("doc.bara"), "ברא\n").expect("semilla");
+        let root_text = root.display().to_string();
+        let err = confirm(&root_text, "doc.bara", 1, "ברא\n", "ברא\n", "").expect_err("token");
+        assert!(err.contains("token"));
     }
 }

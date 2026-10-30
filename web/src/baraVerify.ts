@@ -9,8 +9,11 @@ export function statusFromAnalysis(analysis: Analysis): BaraVerifyStatus {
   if (analysis.summary.rootsUnknown > 0) {
     return "unverified";
   }
-  // Sin raíces conocidas ni desconocidas: prosa/ASCII — no es Shoresh verificable.
   if (analysis.summary.rootsKnown === 0) {
+    return "unverified";
+  }
+  // Alineado con auto_apply: identificadores ASCII/Latin libres invalidan el bloque.
+  if (analysis.summary.identifiers > 0) {
     return "unverified";
   }
   return "verified";

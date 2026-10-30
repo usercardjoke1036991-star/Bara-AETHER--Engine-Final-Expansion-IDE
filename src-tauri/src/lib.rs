@@ -332,19 +332,34 @@ fn judge_auto_patch(
 #[tauri::command]
 fn confirm_auto_patch(
     window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     path: String,
     line: u32,
     host: String,
     patch: String,
+    judgment_id: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
     window_guard::require(&window, window_guard::MAIN)?;
-    kernel_call(
+    let report = kernel_call(
         &kernel,
         "confirm_patch",
-        auto_patch_args(&state, path, line, host, patch)?,
-    )
+        json!({
+            "root": state.get()?,
+            "path": path,
+            "line": line,
+            "host": host,
+            "patch": patch,
+            "judgment_id": judgment_id,
+        }),
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(relative) = report.get("path").and_then(Value::as_str) {
+            emit_workspace_file_changed(&app, relative);
+        }
+    }
+    Ok(report)
 }
 
 /// Restaura un archivo desde un respaldo relativo bajo `.bara-backup/`.
@@ -412,17 +427,32 @@ fn local_complete(prompt: String, kernel: tauri::State<'_, KernelHost>) -> Resul
 /// Propaga un identificador por el grafo de la carpeta activa.
 #[tauri::command]
 fn transmute_global(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     path: String,
     from: String,
     to: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
-    kernel_call(
+    window_guard::require(&window, window_guard::MAIN)?;
+    let report = kernel_call(
         &kernel,
         "transmute_global",
         json!({ "root": state.get()?, "path": path, "from": from, "to": to }),
-    )
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(files) = report.get("files").and_then(Value::as_array) {
+            for file in files {
+                if file.get("changed").and_then(Value::as_bool) == Some(true) {
+                    if let Some(relative) = file.get("path").and_then(Value::as_str) {
+                        emit_workspace_file_changed(&app, relative);
+                    }
+                }
+            }
+        }
+    }
+    Ok(report)
 }
 
 /// Aviso del hilo de reposo. Vacío si no hay una optimización limpia.
@@ -438,6 +468,7 @@ fn idle_proposal(slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>) -> Result
 #[tauri::command]
 fn idle_apply(
     window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
@@ -450,16 +481,24 @@ fn idle_apply(
     let Some(notice) = notice else {
         return Ok(Value::Bool(false));
     };
+    let relative = notice
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let wrote = kernel_call(
         &kernel,
         "idle_apply",
         json!({
             "root": state.get()?,
-            "path": notice.get("path").and_then(Value::as_str).unwrap_or(""),
+            "path": relative,
             "name": notice.get("name").and_then(Value::as_str).unwrap_or(""),
             "message": notice.get("message").and_then(Value::as_str).unwrap_or(""),
         }),
     )?;
+    if wrote.as_bool() == Some(true) && !relative.is_empty() {
+        emit_workspace_file_changed(&app, &relative);
+    }
     if let Ok(mut guard) = slot.lock() {
         guard.clear();
     }
@@ -508,12 +547,23 @@ fn workspace_read_document(
 #[tauri::command]
 fn workspace_write_document(
     window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     path: String,
     source: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
     window_guard::require(&window, window_guard::WRITE)?;
-    workspace::write(&state.get()?, &path, &source)
+    let document = workspace::write(&state.get()?, &path, &source)?;
+    emit_workspace_file_changed(&app, &document.path);
+    Ok(document)
+}
+
+/// Avisa a todas las ventanas de que un archivo del workspace cambió en disco.
+fn emit_workspace_file_changed(app: &tauri::AppHandle, path: &str) {
+    let _ = app.emit(
+        "workspace-file-changed",
+        json!({ "path": path.replace('\\', "/") }),
+    );
 }
 
 /// Suelta la malla y el oráculo de una carpeta en el proceso del kernel.
@@ -847,6 +897,34 @@ fn propose_editor_patch(app: tauri::AppHandle, patch: String) -> Result<(), Stri
     Ok(())
 }
 
+/// La ventana de asistencia envía un fragmento de contexto a `main` (solo memoria).
+#[tauri::command]
+fn propose_ai_desk_attachment(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    name: String,
+    source: String,
+) -> Result<(), String> {
+    window_guard::require(&window, window_guard::CHAT)?;
+    let label = name.trim();
+    let text = source.trim();
+    if label.is_empty() || text.is_empty() {
+        return Err("el fragmento está vacío".to_string());
+    }
+    if text.len() > 256 * 1024 {
+        return Err("el fragmento supera 256 KiB".to_string());
+    }
+    app.emit(
+        "ai-desk-attachment",
+        json!({ "name": label, "source": text }),
+    )
+    .map_err(|err| err.to_string())?;
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_focus();
+    }
+    Ok(())
+}
+
 /// Abre el inspector web. Requiere `--features devtools` (p. ej. `tauri dev`).
 #[tauri::command]
 fn open_devtools_window(window: tauri::WebviewWindow) -> Result<(), String> {
@@ -1147,6 +1225,7 @@ pub fn run() {
             workspace_close_root,
             open_desk_window,
             propose_editor_patch,
+            propose_ai_desk_attachment,
             open_devtools_window,
             transmute_workspace,
             inspect_media_dialog,

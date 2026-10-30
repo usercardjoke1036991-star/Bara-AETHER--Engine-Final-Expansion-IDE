@@ -179,6 +179,7 @@ fn handle(world: &mut World, op: &str, args: &Value) -> Result<Value, String> {
             count_u32(args, "line")?,
             text(args, "host")?,
             text(args, "patch")?,
+            text(args, "judgment_id")?,
         )),
         "undo_patch" => result_of(auto_apply::undo(
             text(args, "root")?,

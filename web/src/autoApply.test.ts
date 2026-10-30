@@ -105,6 +105,7 @@ describe("Aceptar / Rechazar / Deshacer (contrato)", () => {
         path: "hello.bara",
         source: disk.text,
         backupPath: ".bara-backup/stamp/hello.bara.bak",
+        judgmentId: "abc",
       };
     });
     const undo = vi.fn(async () => {

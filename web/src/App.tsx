@@ -1,5 +1,14 @@
 import { listen } from "@tauri-apps/api/event";
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
 import {
   CLASS_LABEL,
@@ -54,9 +63,27 @@ import WelcomeGate from "./components/WelcomeGate";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import { readReveal, TOPOLOGY_CHANNEL } from "./topology";
 import { currentVista, openDeskWindow, type DeskVista } from "./windows";
+import { restoreMainWindow } from "./windowState";
 
 /** Máximo de filas de tokens que se pintan (rendimiento del WebView). */
 const MAX_ROWS = 1200;
+
+/** Primer `.bara` del árbol (sugerencia al recibir un diff sin archivo). */
+function firstBaraPath(entries: WorkspaceEntry[] | undefined): string | null {
+  if (!entries) {
+    return null;
+  }
+  for (const entry of entries) {
+    if (entry.bara) {
+      return entry.path;
+    }
+    const nested = firstBaraPath(entry.children);
+    if (nested) {
+      return nested;
+    }
+  }
+  return null;
+}
 
 /** Documento abierto en el editor. */
 interface EditorTab {
@@ -129,12 +156,26 @@ export default function App() {
   const [cloneProgress, setCloneProgress] = useState<string | null>(null);
   /** Documento de ejemplo del kernel (contexto del asistente). */
   const [sample, setSample] = useState("");
-  /** Visibilidad del panel lateral del asistente. */
-  const [aiOpen, setAiOpen] = useState(false);
+  /** Chat dockeado a la derecha (único chat). */
+  const [aiOpen, setAiOpen] = useState(true);
+  /** Explorador de archivos colapsable. */
+  const [sideOpen, setSideOpen] = useState(true);
+  /** Anchos flexibles de laterales (fracción CSS, no px fijos del layout). */
+  const [sideFrac, setSideFrac] = useState(0.2);
+  const [chatFrac, setChatFrac] = useState(0.28);
   /** Banner de parche visible aunque el chat estuviera cerrado. */
   const [patchBanner, setPatchBanner] = useState<string | null>(null);
+  /** Sugerencia al recibir diff sin archivo activo. */
+  const [suggestOpen, setSuggestOpen] = useState<string | null>(null);
   /** Sube al cambiar de carpeta: limpia diff en ChatPanel. */
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
+  /** Cajón Kernel inferior (cerrado por defecto). */
+  const [kernelDockOpen, setKernelDockOpen] = useState(false);
+  const [kernelTab, setKernelTab] = useState<
+    "resumen" | "tokens" | "oraculo" | "catalogo" | "bilattice"
+  >("resumen");
+  /** Menú «Más» de acciones secundarias. */
+  const [moreOpen, setMoreOpen] = useState(false);
   /** Visibilidad del panel de proyecciones del kernel AETHER-Ω. */
   const [kernelOpen, setKernelOpen] = useState(false);
   /** Visibilidad del panel del constructor visual (lienzo → Shoresh firmado). */
@@ -162,6 +203,10 @@ export default function App() {
 
   useEffect(() => {
     void currentVista().then(setVista);
+  }, []);
+
+  useEffect(() => {
+    void restoreMainWindow();
   }, []);
 
   useEffect(() => {
@@ -345,6 +390,60 @@ export default function App() {
       unlisten?.();
     };
   }, [vista, refreshWorkspace, resetEditorForRootChange]);
+
+  useEffect(() => {
+    if (vista !== "main") {
+      return undefined;
+    }
+    let cancel = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        unlisten = await listen<{ path?: string }>("workspace-file-changed", (event) => {
+          if (cancel) {
+            return;
+          }
+          const relative = event.payload?.path?.trim();
+          if (!relative) {
+            return;
+          }
+          const tab = tabsRef.current.find((item) => pathsEqual(item.path, relative));
+          if (!tab) {
+            return;
+          }
+          if (tab.source !== tab.saved) {
+            setPatchBanner(
+              `«${relative}» cambió en disco; tienes cambios locales sin guardar.`,
+            );
+            return;
+          }
+          void workspaceReadDocument(relative)
+            .then((document) => {
+              if (cancel) {
+                return;
+              }
+              setTabs((current) =>
+                current.map((item) =>
+                  pathsEqual(item.path, relative)
+                    ? { ...item, source: document.source, saved: document.source }
+                    : item,
+                ),
+              );
+              if (pathsEqual(pathRef.current, relative)) {
+                sourceRef.current = document.source;
+              }
+            })
+            .catch(() => undefined);
+        });
+      } catch {
+        // Sin Tauri.
+      }
+    })();
+    return () => {
+      cancel = true;
+      unlisten?.();
+    };
+  }, [vista]);
 
   const adoptWorkspace = useCallback(
     (next: WorkspaceTree) => {
@@ -860,12 +959,18 @@ export default function App() {
     return report;
   }, []);
 
-  const confirmSuggestion = useCallback(async (patch: string) => {
+  const confirmSuggestion = useCallback(async (patch: string, judgmentId: string) => {
     const path = pathRef.current;
     if (path === null || path.length === 0) {
       return emptyReport(cursorLineRef.current);
     }
-    const report = await confirmAutoPatch(path, cursorLineRef.current, sourceRef.current, patch);
+    const report = await confirmAutoPatch(
+      path,
+      cursorLineRef.current,
+      sourceRef.current,
+      patch,
+      judgmentId,
+    );
     applyReportToEditor(path, report);
     if (report.status === "both") {
       publishVeto(path, report.line > 0 ? report.line : cursorLineRef.current);
@@ -905,48 +1010,109 @@ export default function App() {
     return <DeskHost vista={vista} />;
   }
 
+  const suggestedBara = suggestOpen ?? firstBaraPath(workspace?.entries);
+
   return (
-    <div className={`app${aiOpen ? " ai-open" : ""}${kernelOpen ? " kernel-open" : ""}${cockpitOpen ? " cockpit-open" : ""}`}>
+    <div
+      className={`app ide-shell${aiOpen ? " ai-open" : ""}${sideOpen ? " side-open" : ""}${kernelDockOpen ? " kernel-dock-open" : ""}${kernelOpen ? " kernel-open" : ""}${cockpitOpen ? " cockpit-open" : ""}`}
+      style={
+        {
+          "--side-frac": String(sideFrac),
+          "--chat-frac": String(chatFrac),
+        } as CSSProperties
+      }
+    >
       <header className="bar">
         <h1>Bara IDE</h1>
-        <span className="tag">kernel v0.1.0-kernel · Shoresh</span>
-        <span className={`kernel-pill kernel-pill-${kernelTone(kernelPill)}`}>kernel {kernelPill}</span>
+        <span className={`kernel-pill kernel-pill-${kernelTone(kernelPill)}`} title="Estado del proceso kernel">
+          kernel {kernelPill}
+        </span>
         <span className="grow" />
         <span className="status">
           {importing
             ? cloneProgress ?? "clonando…"
             : workspaceLoading
-              ? "sincronizando workspace…"
+              ? "sincronizando…"
               : saving
                 ? "guardando…"
                 : busy
                   ? "analizando…"
-                  : "workspace en sincronía"}
+                  : "listo"}
         </span>
-        <button type="button" onClick={() => setKernelOpen(!kernelOpen)}>
-          {kernelOpen ? "ocultar núcleo" : "núcleo AETHER-Ω"}
+        <button type="button" title="Mostrar u ocultar explorador" aria-pressed={sideOpen} onClick={() => setSideOpen((v) => !v)}>
+          {sideOpen ? "Archivos" : "Archivos ▸"}
         </button>
-        <button type="button" onClick={() => setCockpitOpen(!cockpitOpen)}>
-          {cockpitOpen ? "ocultar cockpit" : "telemetría"}
+        <button type="button" title="Mostrar u ocultar chat" aria-pressed={aiOpen} onClick={() => setAiOpen((v) => !v)}>
+          {aiOpen ? "Chat" : "Chat ▸"}
         </button>
-        <button type="button" onClick={() => setVisualOpen(!visualOpen)}>
-          {visualOpen ? "ocultar lienzo" : "lienzo visual"}
+        <button
+          type="button"
+          title="Panel Kernel (tokens, oráculo, catálogo…)"
+          aria-pressed={kernelDockOpen}
+          onClick={() => setKernelDockOpen((v) => !v)}
+        >
+          Kernel
         </button>
-        <button type="button" onClick={() => setAiOpen(!aiOpen)}>
-          {aiOpen ? "ocultar asistente" : "asistente"}
-        </button>
-        <button type="button" onClick={() => void openDeskWindow("topology").catch((reason: unknown) => setError(describeError(reason)))}>
-          ventana topología
-        </button>
-        <button type="button" onClick={() => void openDeskWindow("autopoiesis").catch((reason: unknown) => setError(describeError(reason)))}>
-          ventana ledger
-        </button>
-        <button type="button" onClick={() => void openDeskWindow("telemetry").catch((reason: unknown) => setError(describeError(reason)))}>
-          ventana cockpit
-        </button>
-        <button type="button" onClick={() => void openDeskWindow("ai-workspace").catch((reason: unknown) => setError(describeError(reason)))}>
-          ventana IA
-        </button>
+        <div className="bar-more">
+          <button type="button" title="Más herramientas" aria-expanded={moreOpen} onClick={() => setMoreOpen((v) => !v)}>
+            Más ▾
+          </button>
+          {moreOpen ? (
+            <ul className="bar-menu" role="menu">
+              <li>
+                <button type="button" role="menuitem" onClick={() => { setKernelOpen(true); setMoreOpen(false); }}>
+                  Núcleo AETHER-Ω
+                </button>
+              </li>
+              <li>
+                <button type="button" role="menuitem" onClick={() => { setCockpitOpen(true); setMoreOpen(false); }}>
+                  Telemetría
+                </button>
+              </li>
+              <li>
+                <button type="button" role="menuitem" onClick={() => { setVisualOpen(true); setMoreOpen(false); }}>
+                  Lienzo visual
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    void openDeskWindow("topology").catch((reason: unknown) => setError(describeError(reason)));
+                    setMoreOpen(false);
+                  }}
+                >
+                  Topología
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    void openDeskWindow("autopoiesis").catch((reason: unknown) => setError(describeError(reason)));
+                    setMoreOpen(false);
+                  }}
+                >
+                  Ledger
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    void openDeskWindow("ai-workspace").catch((reason: unknown) => setError(describeError(reason)));
+                    setMoreOpen(false);
+                  }}
+                >
+                  Adjuntar medios
+                </button>
+              </li>
+            </ul>
+          ) : null}
+        </div>
       </header>
       {idle ? (
         <div className="idle-note" role="status">
@@ -974,32 +1140,82 @@ export default function App() {
       {patchBanner ? (
         <div className="patch-banner" role="status">
           <span>{patchBanner}</span>
+          {suggestedBara && /abre un archivo \.bara/i.test(patchBanner) ? (
+            <button
+              type="button"
+              title={`Abrir ${suggestedBara}`}
+              onClick={() => {
+                const hit = workspace?.entries && suggestedBara;
+                if (!hit) {
+                  return;
+                }
+                void openWorkspaceFile({
+                  name: suggestedBara.split("/").pop() ?? suggestedBara,
+                  path: suggestedBara,
+                  kind: "file",
+                  bara: true,
+                  children: [],
+                });
+                setSuggestOpen(null);
+                setPatchBanner(null);
+              }}
+            >
+              ¿Abrir {suggestedBara}?
+            </button>
+          ) : null}
           <button type="button" onClick={() => setPatchBanner(null)}>
             ok
           </button>
         </div>
       ) : null}
 
-      <main className="grid">
-        <section className="pane editor-pane">
-          <div className="editor-shell">
-            <WorkspaceSidebar
-              root={workspaceRoot}
-              tree={workspace}
-              loading={workspaceLoading || importing}
-              activePath={activePath}
-              onPickFolder={() => {
-                void pickFolder();
-              }}
-              onClone={() => setShowWelcome(true)}
-              onRefresh={() => {
-                void refreshWorkspace();
-              }}
-              onOpenFile={(entry) => {
-                void openWorkspaceFile(entry);
+      <div className="ide-body">
+        {sideOpen ? (
+          <>
+            <aside className="ide-side" aria-label="Explorador">
+              <WorkspaceSidebar
+                root={workspaceRoot}
+                tree={workspace}
+                loading={workspaceLoading || importing}
+                activePath={activePath}
+                onPickFolder={() => {
+                  void pickFolder();
+                }}
+                onClone={() => setShowWelcome(true)}
+                onRefresh={() => {
+                  void refreshWorkspace();
+                }}
+                onOpenFile={(entry) => {
+                  void openWorkspaceFile(entry);
+                }}
+              />
+            </aside>
+            <div
+              className="ide-split"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Redimensionar explorador"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                const startX = event.clientX;
+                const start = sideFrac;
+                const onMove = (ev: MouseEvent) => {
+                  const delta = (ev.clientX - startX) / window.innerWidth;
+                  setSideFrac(Math.min(0.36, Math.max(0.14, start + delta)));
+                };
+                const onUp = () => {
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
               }}
             />
+          </>
+        ) : null}
 
+        <section className="pane editor-pane ide-center">
+          <div className="editor-shell">
             <div className="editor-main">
               <div className="editor-stage">
               {showWelcome ? (
@@ -1087,246 +1303,191 @@ export default function App() {
                 }}
               />
               </div>
-              <details className="fold console-fold" open>
-                <summary>Consola del oráculo</summary>
-              <KernelConsole
-                lines={consoleLog}
-                busy={busy}
-                lattice={lattice}
-                current={oracle?.timelineObservation ?? null}
-                onSubmit={(line) => {
-                  void converse(line);
-                }}
-                onRecipe={(recipe) => {
-                  void runRecipe(recipe);
-                }}
-              />
-              </details>
             </div>
           </div>
         </section>
 
-        <section className="pane">
-          <details className="fold" open>
-            <summary>Resumen</summary>
-          {analysis ? (
-            <SummaryPanel analysis={analysis} />
-          ) : (
-            <p className="muted">Sin documento analizado.</p>
-          )}
-          </details>
-          <details className="fold" open>
-            <summary>Inventario de raíces</summary>
-          {analysis && analysis.roots.length > 0 ? (
-            <ul className="roots">
-              {analysis.roots.map((root) => (
-                <li key={root.glyph}>
-                  <span className="glyph">{root.glyph}</span>
-                  <span className="meaning">{root.meaning}</span>
-                  <span className="count">×{root.count}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">Ninguna raíz reconocida.</p>
-          )}
-          </details>
-          <details className="fold" open>
-            <summary>Catálogo del kernel</summary>
-          <ul className="roots">
-            {catalogue.map((entry) => (
-              <li key={entry.glyph}>
-                <span className="glyph">{entry.glyph}</span>
-                <span className="meaning">{entry.meaning}</span>
-              </li>
-            ))}
-          </ul>
-          </details>
-        </section>
-
-        <section className="pane">
-          <details className="fold" open>
-            <summary>Oráculo del kernel</summary>
-          <div className="row">
-            <input
-              className="path"
-              value={query}
-              spellCheck={false}
-              placeholder="consulta en lengua natural o raíz Shoresh"
-              onChange={(event) => {
-                setQuery(event.target.value);
+        {aiOpen ? (
+          <>
+            <div
+              className="ide-split"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Redimensionar chat"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                const startX = event.clientX;
+                const start = chatFrac;
+                const onMove = (ev: MouseEvent) => {
+                  const delta = (startX - ev.clientX) / window.innerWidth;
+                  setChatFrac(Math.min(0.42, Math.max(0.22, start + delta)));
+                };
+                const onUp = () => {
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
               }}
             />
+            <aside className="ide-chat" aria-label="Asistente">
+              <ChatPanel
+                open={aiOpen}
+                onClose={() => setAiOpen(false)}
+                documentName={origin}
+                documentSource={source}
+                analysis={analysis}
+                catalogue={catalogue}
+                sample={sample}
+                treeOutline={treeOutline}
+                onUseCode={applyCode}
+                onJudge={judgeSuggestion}
+                onConfirm={confirmSuggestion}
+                onUndo={undoSuggestion}
+                acceptRemotePatches
+                workspaceEpoch={workspaceEpoch}
+                onEnsureOpen={() => setAiOpen(true)}
+                onPatchNotice={(message) => {
+                  setPatchBanner(message);
+                  if (/abre un archivo \.bara/i.test(message)) {
+                    setSuggestOpen(firstBaraPath(workspace?.entries));
+                  }
+                }}
+              />
+            </aside>
+          </>
+        ) : null}
+      </div>
+
+      <section className={`kernel-dock${kernelDockOpen ? " open" : ""}`} aria-label="Kernel">
+        <div className="kernel-dock-tabs" role="tablist">
+          {(
+            [
+              ["resumen", "Resumen"],
+              ["tokens", "Tokens"],
+              ["oraculo", "Oráculo"],
+              ["catalogo", "Catálogo"],
+              ["bilattice", "Bilattice"],
+            ] as const
+          ).map(([id, label]) => (
             <button
+              key={id}
               type="button"
-              disabled={busy}
+              role="tab"
+              aria-selected={kernelTab === id}
+              className={kernelTab === id ? "active" : undefined}
               onClick={() => {
-                void askOracle();
+                setKernelTab(id);
+                setKernelDockOpen(true);
               }}
             >
-              Conversar
+              {label}
             </button>
-            <button type="button" disabled={busy || !oracle} onClick={markTimeline}>
-              Marcar
-            </button>
-            <button
-              type="button"
-              disabled={busy || marker === null}
-              onClick={() => {
-                void rollbackTimeline();
-              }}
-            >
-              Δ⁻¹
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                void closeOracle();
-              }}
-            >
-              Cerrar sesión
-            </button>
-          </div>
-
-          {lastTurn ? (
-            <ul className="roots">
-              <li>
-                <span className="meaning">{lastTurn.reply}</span>
-              </li>
-              {lastTurn.roots ? (
-                <li>
-                  <span className="glyph">shoresh</span>
-                  <span className="meaning">{lastTurn.roots}</span>
-                  <span className="count">×{lastTurn.events}</span>
-                </li>
-              ) : null}
-            </ul>
-          ) : (
-            <p className="muted">
-              Sin turnos: el oráculo es el del kernel (su léxico y su runtime).
-            </p>
-          )}
-
-          {oracle ? (
-            <table className="summary">
-              <tbody>
-                <tr>
-                  <th>turnos</th>
-                  <td className="num">{oracle.turns}</td>
-                </tr>
-                <tr>
-                  <th>eventos</th>
-                  <td className="num">{oracle.events}</td>
-                </tr>
-                <tr>
-                  <th>deltas Δ⁻¹</th>
-                  <td className="num">
-                    {oracle.deltas} (revertidos {oracle.reverted})
-                  </td>
-                </tr>
-                <tr>
-                  <th>marcador</th>
-                  <td className="num">
-                    {oracle.nextMarker}
-                    {marker === null ? "" : ` · marcado ${marker}`}
-                  </td>
-                </tr>
-                <tr>
-                  <th>pila</th>
-                  <td className="num">
-                    {oracle.stackDepth} · temporal {oracle.timelineDepth}
-                  </td>
-                </tr>
-                <tr>
-                  <th>memoria</th>
-                  <td className="num">
-                    {oracle.memoryNodes} nodo(s) · {oracle.regions} región(es)
-                  </td>
-                </tr>
-                <tr>
-                  <th>autopoiesis</th>
-                  <td className="num">
-                    {oracle.axioms} axioma(s) · gen#{oracle.generation}
-                  </td>
-                </tr>
-                <tr>
-                  <th>malla</th>
-                  <td className="num">
-                    {oracle.meshPeers} peer(s) · {oracle.qubits} qubit(s)
-                  </td>
-                </tr>
-                {oracle.timelineObservation ? (
-                  <tr>
-                    <th>cima ⊤/⊥</th>
-                    <td className="num">
-                      {oracle.timelineObservation.glyph}{" "}
-                      {oracle.timelineObservation.name}
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          ) : (
-            <p className="muted">Sesión del oráculo no disponible.</p>
-          )}
-
-          </details>
-          <details className="fold" open>
-            <summary>Biláttice de Belnap</summary>
-          {lattice ? (
-            <ul className="roots">
-              {lattice.values.map((point) => (
-                <li key={point.key}>
-                  <span className="glyph">{point.observation.glyph}</span>
-                  <span className="meaning">{point.observation.name}</span>
-                  <span className="count">
-                    ⊤{point.truth} ⊥{point.falsity}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">Sin biláttice servida por el kernel.</p>
-          )}
-          </details>
-        </section>
-
-        <section className="pane tokens">
-          <details className="fold" open>
-            <summary>Tokens{analysis ? ` (${analysis.summary.total})` : ""}</summary>
-          <div className="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Línea</th>
-                  <th>Col</th>
-                  <th>Clase</th>
-                  <th>Lexema</th>
-                  <th>Kernel</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((token, index) => (
-                  <tr key={`${token.line}:${token.column}:${index}`}>
-                    <td className="num">{token.line}</td>
-                    <td className="num">{token.column}</td>
-                    <td className={`cls ${token.class}`}>{CLASS_LABEL[token.class]}</td>
-                    <td className="lexeme">{token.lexeme === "\n" ? "⏎" : token.lexeme}</td>
-                    <td className="muted">{token.display}</td>
-                  </tr>
+          ))}
+          <span className="grow" />
+          <button type="button" title="Cerrar panel Kernel" onClick={() => setKernelDockOpen(false)}>
+            {kernelDockOpen ? "▾" : "▴"}
+          </button>
+        </div>
+        {kernelDockOpen ? (
+          <div className="kernel-dock-body">
+            {kernelTab === "resumen" ? (
+              analysis ? <SummaryPanel analysis={analysis} /> : <p className="muted">Sin documento analizado.</p>
+            ) : null}
+            {kernelTab === "tokens" ? (
+              <div className="scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Línea</th>
+                      <th>Col</th>
+                      <th>Clase</th>
+                      <th>Lexema</th>
+                      <th>Kernel</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((token, index) => (
+                      <tr key={`${token.line}:${token.column}:${index}`}>
+                        <td className="num">{token.line}</td>
+                        <td className="num">{token.column}</td>
+                        <td className={`cls ${token.class}`}>{CLASS_LABEL[token.class]}</td>
+                        <td className="lexeme">{token.lexeme === "\n" ? "⏎" : token.lexeme}</td>
+                        <td className="muted">{token.display}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+            {kernelTab === "oraculo" ? (
+              <div className="kernel-oraculo">
+                <div className="row">
+                  <input
+                    className="path"
+                    value={query}
+                    spellCheck={false}
+                    placeholder="consulta o raíz Shoresh"
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                  <button type="button" disabled={busy} onClick={() => void askOracle()}>
+                    Conversar
+                  </button>
+                  <button type="button" disabled={busy || !oracle} onClick={markTimeline}>
+                    Marcar
+                  </button>
+                  <button type="button" disabled={busy || marker === null} onClick={() => void rollbackTimeline()}>
+                    Δ⁻¹
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => void closeOracle()} title="Cerrar sesión del oráculo">
+                    Cerrar
+                  </button>
+                </div>
+                {lastTurn ? <p>{lastTurn.reply}</p> : <p className="muted">Sin turnos.</p>}
+                <KernelConsole
+                  lines={consoleLog}
+                  busy={busy}
+                  lattice={lattice}
+                  current={oracle?.timelineObservation ?? null}
+                  onSubmit={(line) => {
+                    void converse(line);
+                  }}
+                  onRecipe={(recipe) => {
+                    void runRecipe(recipe);
+                  }}
+                />
+              </div>
+            ) : null}
+            {kernelTab === "catalogo" ? (
+              <ul className="roots">
+                {catalogue.map((entry) => (
+                  <li key={entry.glyph}>
+                    <span className="glyph">{entry.glyph}</span>
+                    <span className="meaning">{entry.meaning}</span>
+                  </li>
                 ))}
-              </tbody>
-            </table>
+              </ul>
+            ) : null}
+            {kernelTab === "bilattice" ? (
+              lattice ? (
+                <ul className="roots">
+                  {lattice.values.map((point) => (
+                    <li key={point.key}>
+                      <span className="glyph">{point.observation.glyph}</span>
+                      <span className="meaning">{point.observation.name}</span>
+                      <span className="count">
+                        ⊤{point.truth} ⊥{point.falsity}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted">Sin biláttice.</p>
+              )
+            ) : null}
           </div>
-          {analysis && analysis.tokens.length > MAX_ROWS ? (
-            <p className="muted">
-              Se muestran las primeras {MAX_ROWS} de {analysis.tokens.length} tokens.
-            </p>
-          ) : null}
-          </details>
-        </section>
-      </main>
+        ) : null}
+      </section>
 
       <PanelGuard name="núcleo" resetKey={kernelOpen}>
         <KernelPanel open={kernelOpen} source={source} />
@@ -1337,25 +1498,6 @@ export default function App() {
       <PanelGuard name="lienzo" resetKey={visualOpen}>
         <VisualBuilder open={visualOpen} onUseCode={applyCode} />
       </PanelGuard>
-
-      <ChatPanel
-        open={aiOpen}
-        onClose={() => setAiOpen(false)}
-        documentName={origin}
-        documentSource={source}
-        analysis={analysis}
-        catalogue={catalogue}
-        sample={sample}
-        treeOutline={treeOutline}
-        onUseCode={applyCode}
-        onJudge={judgeSuggestion}
-        onConfirm={confirmSuggestion}
-        onUndo={undoSuggestion}
-        acceptRemotePatches
-        workspaceEpoch={workspaceEpoch}
-        onEnsureOpen={() => setAiOpen(true)}
-        onPatchNotice={(message) => setPatchBanner(message)}
-      />
     </div>
   );
 }

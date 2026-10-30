@@ -200,7 +200,10 @@ const CHECKS: Check[] = [
         saveConfig({ ...readyConfig(), baseUrl: propia, rememberKey: false }, store),
         "no se guardó la raíz propia",
       );
-      expect(loadConfig(store).baseUrl === propia, "la raíz guardada volvió a la oficial");
+      expect(
+        loadConfig(store).baseUrl === PROVIDER_ENDPOINTS.anthropic,
+        "una raíz HTTPS arbitraria no debe persistir",
+      );
       const local = { ...readyConfig(), baseUrl: "http://127.0.0.1:11434/v1" };
       expect(
         !configProblems(local).some((problem) => problem.includes("raíz")),

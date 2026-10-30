@@ -25,8 +25,10 @@ jobs:
       shell: bash
       env:
         KERNEL_READ_TOKEN: ${{ secrets.KERNEL_READ_TOKEN }}
-      run: |
-        git config --global url."https://x-access-token:${KERNEL_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: "url.https://x-access-token:${KERNEL_READ_TOKEN}@github.com/.insteadOf"
+        GIT_CONFIG_VALUE_0: "https://github.com/"
+      run: echo "git credential rewrite activo para este job"
     # Set de escritorio de Tauri v2 en Debian/Ubuntu
     # (https://v2.tauri.app/start/prerequisites/). libwebkit2gtk-4.1-dev
     # arrastra GTK 3, de modo que pkg-config resuelve gio-2.0, glib-2.0 y
@@ -110,8 +112,10 @@ jobs:
       shell: bash
       env:
         KERNEL_READ_TOKEN: ${{ secrets.KERNEL_READ_TOKEN }}
-      run: |
-        git config --global url."https://x-access-token:${KERNEL_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: "url.https://x-access-token:${KERNEL_READ_TOKEN}@github.com/.insteadOf"
+        GIT_CONFIG_VALUE_0: "https://github.com/"
+      run: echo "git credential rewrite activo para este job"
     - name: Instalar Rust 1.99.0 (MSVC)
       uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:
