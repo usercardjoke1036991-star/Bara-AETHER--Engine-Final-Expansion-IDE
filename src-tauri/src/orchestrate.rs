@@ -229,11 +229,7 @@ fn drain_pipe_live(
 }
 
 /// Espera `limit`. Si el hijo sigue vivo, mata su árbol y devuelve lo ya leído.
-fn drive(
-    command: &mut Command,
-    limit: Duration,
-    app: Option<AppHandle>,
-) -> Result<Driven, String> {
+fn drive(command: &mut Command, limit: Duration, app: Option<AppHandle>) -> Result<Driven, String> {
     new_group(command);
     win_cmd::hide_console(command);
     let mut child = command

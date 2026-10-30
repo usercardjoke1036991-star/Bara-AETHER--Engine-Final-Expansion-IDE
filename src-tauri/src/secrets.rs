@@ -253,10 +253,10 @@ mod tests {
 
     impl OsSecrets for MemoryOs {
         fn set(&self, service: &str, user: &str, secret: &str) -> Result<(), String> {
-            self.map.lock().expect("os").insert(
-                (service.to_string(), user.to_string()),
-                secret.to_string(),
-            );
+            self.map
+                .lock()
+                .expect("os")
+                .insert((service.to_string(), user.to_string()), secret.to_string());
             Ok(())
         }
 

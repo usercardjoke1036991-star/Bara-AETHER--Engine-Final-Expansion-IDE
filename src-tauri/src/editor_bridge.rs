@@ -39,7 +39,11 @@ impl EditorBridge {
         Self::default()
     }
 
-    pub fn publish(&self, app: &AppHandle, snapshot: EditorSnapshot) -> Result<EditorSnapshot, String> {
+    pub fn publish(
+        &self,
+        app: &AppHandle,
+        snapshot: EditorSnapshot,
+    ) -> Result<EditorSnapshot, String> {
         {
             let mut guard = self
                 .latest
