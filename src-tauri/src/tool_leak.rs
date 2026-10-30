@@ -4,6 +4,9 @@
 //! replica el saneado mínimo para pruebas Rust y usos futuros en el host.
 
 #![forbid(unsafe_code)]
+// El hot path es TypeScript; estas APIs se ejercen en `#[cfg(test)]` y quedan
+// listas si el host necesita saneado sin pasar por el WebView.
+#![allow(dead_code)]
 
 /// Aviso cuando el modelo filtró markup y no se pudo recuperar la llamada.
 pub const TOOL_LEAK_NOTICE: &str = "el modelo intentó usar una herramienta y falló";
