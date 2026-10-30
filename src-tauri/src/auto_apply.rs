@@ -151,8 +151,7 @@ fn write_backup(root: &str, relative: &str, contents: &str) -> Result<String, St
     let member = safe_relative(&backup_rel)?;
     let target = root_path.join(&member);
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("no se pudo crear el respaldo: {err}"))?;
+        fs::create_dir_all(parent).map_err(|err| format!("no se pudo crear el respaldo: {err}"))?;
         let canonical_parent = fs::canonicalize(parent)
             .map_err(|err| format!("no se pudo validar el respaldo: {err}"))?;
         if !canonical_parent.starts_with(&root_path) {
@@ -199,7 +198,6 @@ struct Verdict {
     unverified_reason: String,
     preview_diff: String,
     at: u32,
-    inserted: u32,
     can_apply: bool,
     block_reason: String,
 }
@@ -215,7 +213,7 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
     let verified = unverified.is_none();
     let unverified_reason = unverified.unwrap_or_default();
     let value = syntax::judge_patch(language_of_path(path), host, patch);
-    let (next, at, inserted) = splice(host, patch, line);
+    let (next, at, _inserted) = splice(host, patch, line);
     let preview_diff = if value == BelnapValue::True && verified {
         unified_diff(path, host, &next)
     } else {
@@ -234,7 +232,10 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
             false,
             "⊤∧⊥ veto: el bloque contradice el archivo".to_string(),
         ),
-        BelnapValue::False => (false, "⊥ bloque vacío: no hay hecho que escribir".to_string()),
+        BelnapValue::False => (
+            false,
+            "⊥ bloque vacío: no hay hecho que escribir".to_string(),
+        ),
         BelnapValue::True if !verified => (
             false,
             if unverified_reason.is_empty() {
@@ -251,7 +252,6 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
         unverified_reason,
         preview_diff,
         at,
-        inserted,
         can_apply,
         block_reason,
     })
@@ -352,8 +352,8 @@ pub fn undo(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport
     let root_path = workspace::resolve_root(root)?;
     let member = safe_relative(backup_path)?;
     let backup = root_path.join(member);
-    let canonical = fs::canonicalize(&backup)
-        .map_err(|err| format!("no se pudo abrir el respaldo: {err}"))?;
+    let canonical =
+        fs::canonicalize(&backup).map_err(|err| format!("no se pudo abrir el respaldo: {err}"))?;
     if !canonical.starts_with(&root_path) {
         return Err("el respaldo queda fuera del workspace".to_string());
     }
@@ -431,10 +431,7 @@ mod tests {
 
         let restored = undo(&root_text, "src/lib.rs", &written.backup_path).expect("undo");
         assert!(restored.applied);
-        assert_eq!(
-            fs::read_to_string(&file).expect("disco"),
-            "fn alpha() {}\n"
-        );
+        assert_eq!(fs::read_to_string(&file).expect("disco"), "fn alpha() {}\n");
     }
 
     #[test]
