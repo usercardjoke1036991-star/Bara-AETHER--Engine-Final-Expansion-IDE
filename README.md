@@ -250,10 +250,16 @@ desde el kernel por IPC.
   al llavero y se borra del WebView. No hay variables `VITE_*` de clave: el
   haz no puede llevar un secreto. La raíz tiene que ser uno de los tres hosts
   oficiales o HTTP en la máquina local; otro host no sale del proceso.
-* **Cómo llega el código al editor**: los bloques cercados (```) de cada
-  respuesta se pueden copiar o enviar al editor con «usar en el editor». El
-  bloque se **añade** al final del documento, nunca lo sustituye, y el kernel lo
-  vuelve a analizar en 200 ms.
+* **Cómo llega el código al editor**: «usar en el editor» abre un **diff**
+  (antes/después) sobre el `.bara` activo del workspace, con Aceptar / Rechazar.
+  Rechazar no escribe. Aceptar crea copia en `.bara-backup/` y luego escribe;
+  Deshacer restaura desde ese backup. Desde la ventana Asistencia el parche se
+  emite a la ventana principal (`propose_editor_patch`) y se enfoca `main`.
+  Sin archivo `.bara` activo: «Abre un archivo .bara primero». Nunca se escribe
+  sin diff. El botón **Guardar** de `<fragmento>` en Asistencia **solo guarda en
+  memoria** (no toca disco); Guardar de un `.bara` real del árbol sí escribe con
+  `workspace_write_document` (edición manual del contexto, distinto del flujo de
+  diff).
 * **Traducción a Shoresh**: el botón «Shoresh» de cualquier mensaje (y el del
   redactor) llama a `shoresh_translate`, es decir, al mismo traductor del REPL
   del kernel. Si el léxico desconoce una raíz, el oráculo la sintetiza y el
