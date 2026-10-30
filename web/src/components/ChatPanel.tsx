@@ -291,8 +291,8 @@ export default function ChatPanel({
         setUsages((previous) => ({ ...previous, [id]: usage }));
       }
       if (autoApply) {
-        const blocks = codeBlocks(result.text);
-        for (const block of blocks) {
+        const block = codeBlocks(result.text)[0];
+        if (block) {
           try {
             const report = await onJudge(block);
             if (report.status === "neither" || report.glyph === "∅") {
@@ -301,33 +301,27 @@ export default function ChatPanel({
                   `∅ falta información: no se escribe (${report.unverifiedReason || "sin detalle"}).`,
               );
               setReview(null);
-              break;
-            }
-            if (report.status === "both") {
+            } else if (report.status === "both") {
               setNotice(
                 `Veto ${report.glyph}: el bloque contradice el archivo. Hace falta intervención manual.`,
               );
               setReview(null);
-              break;
-            }
-            if (!report.verified || !report.canApply) {
+            } else if (!report.verified || !report.canApply) {
               setNotice(
                 report.blockReason ||
                   report.unverifiedReason ||
                   `Auto-Apply ${report.glyph}: propuesta no verificada; no se escribe.`,
               );
               setReview(null);
-              break;
+            } else {
+              setReview({ patch: block, report });
+              setNotice(
+                `Auto-Apply ${report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`,
+              );
             }
-            setReview({ patch: block, report });
-            setNotice(
-              `Auto-Apply ${report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`,
-            );
-            break;
           } catch (error) {
             setNotice(reasonOf(error));
             setReview(null);
-            break;
           }
         }
       }

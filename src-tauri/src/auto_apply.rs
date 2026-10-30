@@ -18,7 +18,7 @@ use bara::syntax::{self, shoresh_unverified_reason};
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::workspace::{self, WorkspaceDocument};
@@ -127,28 +127,12 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     (y as i32, m, d)
 }
 
-fn safe_relative(relative: &str) -> Result<PathBuf, String> {
-    let path = Path::new(relative);
-    if relative.trim().is_empty() || path.is_absolute() {
-        return Err("la ruta del respaldo debe ser relativa al workspace".to_string());
-    }
-    if path
-        .components()
-        .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(format!(
-            "la ruta «{relative}» contiene componentes no permitidos"
-        ));
-    }
-    Ok(path.to_path_buf())
-}
-
 fn write_backup(root: &str, relative: &str, contents: &str) -> Result<String, String> {
     let root_path = workspace::resolve_root(root)?;
     let stamp = stamp();
     let safe = relative.replace('\\', "/");
     let backup_rel = format!(".bara-backup/{stamp}/{safe}.bak");
-    let member = safe_relative(&backup_rel)?;
+    let member = workspace::safe_relative(&backup_rel)?;
     let target = root_path.join(&member);
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("no se pudo crear el respaldo: {err}"))?;
@@ -350,7 +334,7 @@ pub fn undo(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport
         return Err("el respaldo debe vivir bajo .bara-backup/".to_string());
     }
     let root_path = workspace::resolve_root(root)?;
-    let member = safe_relative(backup_path)?;
+    let member = workspace::safe_relative(backup_path)?;
     let backup = root_path.join(member);
     let canonical =
         fs::canonicalize(&backup).map_err(|err| format!("no se pudo abrir el respaldo: {err}"))?;

@@ -290,6 +290,22 @@ fn workspace_read_project_file(
     workspace::read_assistant(&state.get()?, &path)
 }
 
+fn auto_patch_args(
+    state: &workspace::ActiveWorkspace,
+    path: String,
+    line: u32,
+    host: String,
+    patch: String,
+) -> Result<Value, String> {
+    Ok(json!({
+        "root": state.get()?,
+        "path": path,
+        "line": line,
+        "host": host,
+        "patch": patch,
+    }))
+}
+
 /// Juzga un bloque del asistente **sin escribir**. La carpeta es la activa.
 #[tauri::command]
 fn judge_auto_patch(
@@ -305,13 +321,7 @@ fn judge_auto_patch(
     kernel_call(
         &kernel,
         "judge_patch",
-        json!({
-            "root": state.get()?,
-            "path": path,
-            "line": line,
-            "host": host,
-            "patch": patch,
-        }),
+        auto_patch_args(&state, path, line, host, patch)?,
     )
 }
 
@@ -330,13 +340,7 @@ fn confirm_auto_patch(
     kernel_call(
         &kernel,
         "confirm_patch",
-        json!({
-            "root": state.get()?,
-            "path": path,
-            "line": line,
-            "host": host,
-            "patch": patch,
-        }),
+        auto_patch_args(&state, path, line, host, patch)?,
     )
 }
 

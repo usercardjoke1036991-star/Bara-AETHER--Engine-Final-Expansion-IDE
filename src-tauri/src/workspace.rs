@@ -770,10 +770,10 @@ fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 
 /// Sólo componentes normales: sin raíz, prefijo, `..` ni `.` explícitos.
-fn safe_relative(relative: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_relative(relative: &str) -> Result<PathBuf, String> {
     let path = Path::new(relative);
     if relative.trim().is_empty() || path.is_absolute() {
-        return Err("la ruta del documento debe ser relativa al workspace".to_string());
+        return Err("la ruta debe ser relativa al workspace".to_string());
     }
     if path
         .components()
