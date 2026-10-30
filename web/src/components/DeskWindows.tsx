@@ -28,6 +28,8 @@ import {
   type EditorSnapshot,
 } from "../editorBridge";
 import { inspectMediaDialog } from "../media";
+import { formatPatchDebug } from "../patchFlow";
+import { dedupeTreeByPathKey } from "../paths";
 import {
   workspaceActivate,
   workspaceCloseRoot,
@@ -250,18 +252,36 @@ function AiDesk() {
   const [sample, setSample] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [treeOutline, setTreeOutline] = useState("");
+  const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
+  const [patchBanner, setPatchBanner] = useState<string | null>(null);
   const dirty =
     documentName.endsWith(".bara") && documentSource !== savedSource && !documentName.startsWith("<");
+
+  const resetLocalDocument = useCallback((reason: string) => {
+    setDocumentName("<asistencia>");
+    setDocumentSource("");
+    setSavedSource("");
+    setAnalysis(null);
+    setWorkspaceEpoch((n) => n + 1);
+    setPatchBanner("Carpeta cambiada: el diff se reinició. Abre un .bara en main.");
+    console.info(formatPatchDebug({ phase: "root_reset", vista: "ai-workspace", detail: reason }));
+  }, []);
 
   const applySnapshot = useCallback((snap: EditorSnapshot) => {
     if (snap.path && !snap.path.startsWith("<")) {
       setDocumentName(snap.path);
       setDocumentSource(snap.source);
       setSavedSource(snap.source);
+      setPatchBanner(null);
     } else if (snap.source.trim().length > 0) {
       setDocumentName(snap.name || snap.path || "<editor>");
       setDocumentSource(snap.source);
       setSavedSource(snap.source);
+    } else if (snap.path === "<editor>" || snap.name === "<editor>") {
+      setDocumentName("<asistencia>");
+      setDocumentSource("");
+      setSavedSource("");
+      setAnalysis(null);
     }
     if (snap.analysis) {
       setAnalysis(snap.analysis);
@@ -280,8 +300,9 @@ function AiDesk() {
         return workspaceTree();
       })
       .then((next) => {
-        setTree(next);
-        setTreeOutline(outlineTree(next.entries));
+        const deduped = { ...next, entries: dedupeTreeByPathKey(next.entries) };
+        setTree(deduped);
+        setTreeOutline(outlineTree(deduped.entries));
       })
       .catch((reason: unknown) => setError(describeError(reason)))
       .finally(() => setLoading(false));
@@ -290,6 +311,32 @@ function AiDesk() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    let cancel = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<{ root?: string; reason?: string }>(
+          "workspace-root-changed",
+          (event) => {
+            if (cancel) {
+              return;
+            }
+            resetLocalDocument(event.payload?.reason ?? "event");
+            reload();
+          },
+        );
+      } catch {
+        // Sin Tauri no hay evento entre ventanas.
+      }
+    })();
+    return () => {
+      cancel = true;
+      unlisten?.();
+    };
+  }, [reload, resetLocalDocument]);
 
   useEffect(() => {
     let alive = true;
@@ -446,7 +493,10 @@ function AiDesk() {
                   className={slot.active ? "shelf-active" : undefined}
                   onClick={() => {
                     workspaceActivate(slot.id)
-                      .then(() => reload())
+                      .then(() => {
+                        resetLocalDocument("shelf-activate");
+                        reload();
+                      })
                       .catch((reason: unknown) => setError(describeError(reason)));
                   }}
                 >
@@ -488,8 +538,10 @@ function AiDesk() {
               setLoading(true);
               workspaceOpenDialog()
                 .then((next) => {
-                  setTree(next);
-                  setTreeOutline(outlineTree(next.entries));
+                  const deduped = { ...next, entries: dedupeTreeByPathKey(next.entries) };
+                  setTree(deduped);
+                  setTreeOutline(outlineTree(deduped.entries));
+                  resetLocalDocument("open-dialog");
                   setError(null);
                 })
                 .catch((reason: unknown) => {
@@ -589,6 +641,14 @@ function AiDesk() {
             {analysis ? ` · análisis ${analysis.summary.total} tokens` : ""}
           </p>
         </div>
+        {patchBanner ? (
+          <div className="patch-banner" role="status">
+            <span>{patchBanner}</span>
+            <button type="button" onClick={() => setPatchBanner(null)}>
+              ok
+            </button>
+          </div>
+        ) : null}
         <ChatPanel
           open
           documentName={documentName}
@@ -597,6 +657,9 @@ function AiDesk() {
           catalogue={catalogue}
           sample={sample}
           treeOutline={treeOutline}
+          workspaceEpoch={workspaceEpoch}
+          acceptRemotePatches={false}
+          onPatchNotice={(message) => setPatchBanner(message)}
           onJudge={async () => ({
             glyph: "⊥",
             status: "false",

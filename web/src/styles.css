@@ -1726,6 +1726,21 @@ tr.vb-selected td {
   color: #c9a227;
 }
 
+.patch-banner {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: #1a2830;
+  color: #e8f0f6;
+  border-bottom: 1px solid #c9a227;
+  font-size: 13px;
+}
+
+.patch-banner span {
+  flex: 1;
+}
+
 .ai-review {
   margin: 0.5rem 0;
   padding: 0.5rem 0;

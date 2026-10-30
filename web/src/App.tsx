@@ -41,6 +41,8 @@ import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
 import { runWorkspaceRecipe, type RecipeName } from "./recipes";
 import { publishVeto } from "./topology";
 import { openDevtools, outlineTree, publishEditorContext } from "./editorBridge";
+import { formatPatchDebug } from "./patchFlow";
+import { dedupeTreeByPathKey, pathsEqual } from "./paths";
 import BaraEditor from "./components/BaraEditor";
 import ChatPanel from "./components/ChatPanel";
 import CockpitPanel from "./components/CockpitPanel";
@@ -129,6 +131,10 @@ export default function App() {
   const [sample, setSample] = useState("");
   /** Visibilidad del panel lateral del asistente. */
   const [aiOpen, setAiOpen] = useState(false);
+  /** Banner de parche visible aunque el chat estuviera cerrado. */
+  const [patchBanner, setPatchBanner] = useState<string | null>(null);
+  /** Sube al cambiar de carpeta: limpia diff en ChatPanel. */
+  const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   /** Visibilidad del panel de proyecciones del kernel AETHER-Ω. */
   const [kernelOpen, setKernelOpen] = useState(false);
   /** Visibilidad del panel del constructor visual (lienzo → Shoresh firmado). */
@@ -181,7 +187,7 @@ export default function App() {
   }, []);
 
   const activeTab = useMemo(
-    () => tabs.find((tab) => tab.path === activePath) ?? null,
+    () => tabs.find((tab) => pathsEqual(tab.path, activePath)) ?? null,
     [tabs, activePath],
   );
   const source = activeTab?.source ?? "";
@@ -265,12 +271,38 @@ export default function App() {
   }, []);
 
   /** Vuelve a enumerar la raíz que el backend ya tiene activa. */
+  /** Al cambiar de carpeta: sin pestaña activa ni diff pendiente. */
+  const resetEditorForRootChange = useCallback((reason: string) => {
+    setTabs([]);
+    setActivePath(null);
+    setAnalysis(null);
+    setWorkspaceEpoch((n) => n + 1);
+    setPatchBanner("Carpeta cambiada: abre un archivo .bara para usar el editor.");
+    console.info(
+      formatPatchDebug({
+        phase: "root_reset",
+        detail: reason,
+      }),
+    );
+    void publishEditorContext({
+      path: "<editor>",
+      name: "<editor>",
+      source: "",
+      analysis: null,
+      treeOutline: "",
+    }).catch(() => undefined);
+  }, []);
+
   const refreshWorkspace = useCallback(async () => {
     setWorkspaceLoading(true);
     try {
       const next = await workspaceTree();
-      setWorkspace(next);
-      setWorkspaceRoot(next.root);
+      const deduped = {
+        ...next,
+        entries: dedupeTreeByPathKey(next.entries),
+      };
+      setWorkspace(deduped);
+      setWorkspaceRoot(deduped.root);
       setError(null);
     } catch (failure) {
       setError(describeError(failure));
@@ -285,13 +317,50 @@ export default function App() {
     void refreshWorkspace();
   }, [refreshWorkspace]);
 
-  const adoptWorkspace = useCallback((next: WorkspaceTree) => {
-    setWorkspace(next);
-    setWorkspaceRoot(next.root);
-    setError(null);
-    setShowWelcome(false);
-    setCloneProgress(null);
-  }, []);
+  // Otra ventana (Asistencia) cambió la carpeta: reiniciar editor y diff.
+  useEffect(() => {
+    if (vista !== "main") {
+      return undefined;
+    }
+    let cancel = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        unlisten = await listen<{ root?: string; reason?: string }>(
+          "workspace-root-changed",
+          (event) => {
+            if (cancel) {
+              return;
+            }
+            resetEditorForRootChange(event.payload?.reason ?? "event");
+            void refreshWorkspace();
+          },
+        );
+      } catch {
+        // Sin Tauri.
+      }
+    })();
+    return () => {
+      cancel = true;
+      unlisten?.();
+    };
+  }, [vista, refreshWorkspace, resetEditorForRootChange]);
+
+  const adoptWorkspace = useCallback(
+    (next: WorkspaceTree) => {
+      const deduped = {
+        ...next,
+        entries: dedupeTreeByPathKey(next.entries),
+      };
+      setWorkspace(deduped);
+      setWorkspaceRoot(deduped.root);
+      setError(null);
+      setShowWelcome(false);
+      setCloneProgress(null);
+      resetEditorForRootChange(`adopt:${deduped.root}`);
+    },
+    [resetEditorForRootChange],
+  );
 
   /** El diálogo del sistema elige la carpeta; el WebView no manda la ruta. */
   const pickFolder = useCallback(async () => {
@@ -362,8 +431,10 @@ export default function App() {
       if (!entry.bara) {
         return;
       }
-      if (tabs.some((tab) => tab.path === entry.path)) {
-        setActivePath(entry.path);
+      const existing = tabs.find((tab) => pathsEqual(tab.path, entry.path));
+      if (existing) {
+        setActivePath(existing.path);
+        setPatchBanner(null);
         return;
       }
       if (workspaceRoot.length === 0) {
@@ -374,20 +445,23 @@ export default function App() {
       setBusy(true);
       try {
         const document = await workspaceReadDocument(entry.path);
-        setTabs((current) =>
-          current.some((tab) => tab.path === document.path)
-            ? current
-            : [
-                ...current,
-                {
-                  path: document.path,
-                  name: document.name,
-                  source: document.source,
-                  saved: document.source,
-                },
-              ],
-        );
+        setTabs((current) => {
+          const hit = current.find((tab) => pathsEqual(tab.path, document.path));
+          if (hit) {
+            return current;
+          }
+          return [
+            ...current,
+            {
+              path: document.path,
+              name: document.name,
+              source: document.source,
+              saved: document.source,
+            },
+          ];
+        });
         setActivePath(document.path);
+        setPatchBanner(null);
         setError(null);
       } catch (failure) {
         setError(describeError(failure));
@@ -767,7 +841,7 @@ export default function App() {
     cursorLineRef.current = report.line + Math.max(report.inserted, 1);
     setTabs((current) =>
       current.map((tab) =>
-        tab.path === path || tab.path === report.path
+        pathsEqual(tab.path, path) || pathsEqual(tab.path, report.path)
           ? { ...tab, source: report.source, saved: report.source }
           : tab,
       ),
@@ -897,6 +971,14 @@ export default function App() {
       ) : null}
 
       {error ? <div className="error">{error}</div> : null}
+      {patchBanner ? (
+        <div className="patch-banner" role="status">
+          <span>{patchBanner}</span>
+          <button type="button" onClick={() => setPatchBanner(null)}>
+            ok
+          </button>
+        </div>
+      ) : null}
 
       <main className="grid">
         <section className="pane editor-pane">
@@ -1269,6 +1351,10 @@ export default function App() {
         onJudge={judgeSuggestion}
         onConfirm={confirmSuggestion}
         onUndo={undoSuggestion}
+        acceptRemotePatches
+        workspaceEpoch={workspaceEpoch}
+        onEnsureOpen={() => setAiOpen(true)}
+        onPatchNotice={(message) => setPatchBanner(message)}
       />
     </div>
   );

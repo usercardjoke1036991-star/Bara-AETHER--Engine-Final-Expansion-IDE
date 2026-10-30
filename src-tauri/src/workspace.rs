@@ -14,6 +14,7 @@
 //! del sistema de archivos.
 
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
@@ -139,7 +140,11 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
     let canonical = resolve_root(root)?;
     let mut budget = MAX_ENTRIES;
     let mut files = 0usize;
-    let (entries, truncated) = collect(&canonical, &canonical, "", 0, &mut budget, &mut files)?;
+    let (mut entries, truncated) = collect(&canonical, &canonical, "", 0, &mut budget, &mut files)?;
+    // Windows: el mismo archivo no puede existir con dos capitalizaciones; si el
+    // índice o un enumerator las duplica, el UI no debe mostrar dos nodos.
+    dedupe_entries_case_insensitive(&mut entries);
+    let files = count_bara(&entries);
 
     Ok(WorkspaceTree {
         root: canonical.display().to_string(),
@@ -151,6 +156,31 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
         files,
         truncated,
     })
+}
+
+fn count_bara(entries: &[WorkspaceEntry]) -> usize {
+    let mut n = 0usize;
+    for entry in entries {
+        if entry.bara {
+            n += 1;
+        }
+        n += count_bara(&entry.children);
+    }
+    n
+}
+
+/// Conserva la primera aparición por path en minúsculas (ASCII).
+fn dedupe_entries_case_insensitive(entries: &mut Vec<WorkspaceEntry>) {
+    let mut seen = HashSet::new();
+    entries.retain(|entry| {
+        let key = entry.path.to_ascii_lowercase();
+        seen.insert(key)
+    });
+    for entry in entries.iter_mut() {
+        if !entry.children.is_empty() {
+            dedupe_entries_case_insensitive(&mut entry.children);
+        }
+    }
 }
 
 /// Tope de carpetas abiertas a la vez. Cada una conserva su propia jaula.
@@ -994,6 +1024,37 @@ mod tests {
 
         fs::remove_dir_all(&first).expect("limpiar a");
         fs::remove_dir_all(&second).expect("limpiar b");
+    }
+
+    #[test]
+    fn dedupe_elimina_pares_solo_por_mayusculas() {
+        let mut entries = vec![
+            WorkspaceEntry {
+                name: "Hello.bara".into(),
+                path: "Hello.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+            WorkspaceEntry {
+                name: "hELLO.bara".into(),
+                path: "hELLO.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+            WorkspaceEntry {
+                name: "other.bara".into(),
+                path: "other.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+        ];
+        dedupe_entries_case_insensitive(&mut entries);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "Hello.bara");
+        assert_eq!(entries[1].path, "other.bara");
     }
 
     #[test]

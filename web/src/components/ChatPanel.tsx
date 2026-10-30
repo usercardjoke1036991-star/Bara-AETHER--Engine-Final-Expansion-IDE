@@ -29,7 +29,12 @@ import type { AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
 import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
 import { loadLocalWeights, localComplete } from "../offline";
-import { isActiveBaraPath, proposeFromJudge } from "../proposePatch";
+import {
+  formatPatchDebug,
+  preflightPatch,
+  resolvePatchAttempt,
+  shouldListenForPropose,
+} from "../patchFlow";
 import { shoreshTranslate, type Analysis, type RootEntry, type Translation } from "../engine";
 import { currentVista, openDeskWindow } from "../windows";
 import AiSettings from "./AiSettings";
@@ -101,6 +106,17 @@ export interface ChatPanelProps {
   onConfirm: (patch: string) => Promise<AutoApplyReport>;
   /** Restaura el respaldo del último apply. */
   onUndo: (path: string, backupPath: string) => Promise<AutoApplyReport>;
+  /** Abre el panel si estaba cerrado (p. ej. parche desde Asistencia). */
+  onEnsureOpen?: () => void;
+  /** Aviso visible a nivel app (banner); nunca silencio. */
+  onPatchNotice?: (message: string) => void;
+  /** Generación al cambiar de carpeta: limpia diff y avisos. */
+  workspaceEpoch?: number;
+  /**
+   * Sólo `main` debe escuchar `assistant-propose-patch`.
+   * La ventana Asistencia emite; no re-escucha (evitar juez stub).
+   */
+  acceptRemotePatches?: boolean;
 }
 
 export default function ChatPanel({
@@ -115,6 +131,10 @@ export default function ChatPanel({
   onJudge,
   onConfirm,
   onUndo,
+  onEnsureOpen,
+  onPatchNotice,
+  workspaceEpoch = 0,
+  acceptRemotePatches = false,
 }: ChatPanelProps) {
   const [config, setConfig] = useState<AiConfig>(() => loadConfig());
   useEffect(() => {
@@ -205,36 +225,72 @@ export default function ChatPanel({
     writeAutoApplyEnabled(autoApply);
   }, [autoApply]);
 
-  /** Abre el panel de diff (sin escribir). */
+  const publishNotice = useCallback(
+    (message: string) => {
+      setNotice(message);
+      onPatchNotice?.(message);
+    },
+    [onPatchNotice],
+  );
+
+  useEffect(() => {
+    setReview(null);
+    setLastBackup(null);
+    setNotice(null);
+    console.info(
+      formatPatchDebug({
+        phase: "root_reset",
+        document: documentName,
+        detail: `epoch=${workspaceEpoch}`,
+      }),
+    );
+    // Sólo al cambiar de carpeta (epoch), no en cada rename del documento.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- workspaceEpoch es la señal
+  }, [workspaceEpoch]);
+
+  /** Abre el panel de diff (sin escribir). Siempre deja un aviso visible. */
   const beginReview = useCallback(
     async (patch: string) => {
-      const code = patch.trim();
-      if (!code) {
-        return;
-      }
-      if (!isActiveBaraPath(documentName)) {
-        setNotice("Abre un archivo .bara primero");
+      onEnsureOpen?.();
+      const early = preflightPatch(patch, documentName);
+      if (!early.ok) {
+        console.info(formatPatchDebug(early.log));
         setReview(null);
+        publishNotice(early.notice);
         return;
       }
       try {
-        const report = await onJudge(code);
-        const outcome = proposeFromJudge(code, report, true);
-        if (outcome.kind === "review") {
-          setReview({ patch: outcome.patch, report: outcome.report });
-          setNotice(
-            `${outcome.report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`,
-          );
+        console.info(
+          formatPatchDebug({
+            phase: "judge",
+            document: documentName,
+            detail: `len=${early.code.length}`,
+          }),
+        );
+        const report = await onJudge(early.code);
+        const resolved = resolvePatchAttempt(early.code, documentName, report);
+        console.info(formatPatchDebug(resolved.log));
+        if (resolved.outcome.kind === "review") {
+          setReview({ patch: resolved.outcome.patch, report: resolved.outcome.report });
+          publishNotice(resolved.notice);
           return;
         }
         setReview(null);
-        setNotice(outcome.notice);
+        publishNotice(resolved.notice);
       } catch (error) {
         setReview(null);
-        setNotice(reasonOf(error));
+        const message = reasonOf(error);
+        console.info(
+          formatPatchDebug({
+            phase: "error",
+            document: documentName,
+            detail: message.slice(0, 160),
+          }),
+        );
+        publishNotice(message);
       }
     },
-    [documentName, onJudge],
+    [documentName, onEnsureOpen, onJudge, publishNotice],
   );
 
   /**
@@ -247,23 +303,47 @@ export default function ChatPanel({
         try {
           const vista = await currentVista();
           if (vista !== "main") {
+            console.info(
+              formatPatchDebug({
+                phase: "emit",
+                vista,
+                document: documentName,
+                detail: `len=${code.trim().length}`,
+              }),
+            );
+            publishNotice("Enviando diff a la ventana principal…");
             await proposeEditorPatch(code);
             await openDeskWindow("main");
-            setNotice("Diff enviado a la ventana principal…");
+            publishNotice("Diff enviado a la ventana principal. Si no ves el panel, ábrelo en main.");
             return;
           }
+          console.info(
+            formatPatchDebug({
+              phase: "ensure_open",
+              vista: "main",
+              document: documentName,
+            }),
+          );
           await beginReview(code);
         } catch (error) {
-          setNotice(reasonOf(error));
+          const message = reasonOf(error);
+          console.info(
+            formatPatchDebug({
+              phase: "error",
+              document: documentName,
+              detail: message.slice(0, 160),
+            }),
+          );
+          publishNotice(message);
         }
       })();
     },
-    [beginReview],
+    [beginReview, documentName, publishNotice],
   );
 
-  // Parches pedidos desde la ventana Asistencia (evento Tauri).
+  // Parches desde Asistencia: main escucha aunque el chat esté cerrado.
   useEffect(() => {
-    if (!inDesktop() || !open) {
+    if (!acceptRemotePatches || !shouldListenForPropose(inDesktop(), open)) {
       return undefined;
     }
     let cancel = false;
@@ -276,19 +356,35 @@ export default function ChatPanel({
             return;
           }
           const patch = typeof event.payload?.patch === "string" ? event.payload.patch : "";
-          if (patch.trim()) {
-            void beginReview(patch);
+          console.info(
+            formatPatchDebug({
+              phase: "recv",
+              vista: "main",
+              document: documentName,
+              detail: `len=${patch.trim().length}`,
+            }),
+          );
+          onEnsureOpen?.();
+          if (!patch.trim()) {
+            publishNotice("Se recibió un parche vacío desde Asistencia.");
+            return;
           }
+          void beginReview(patch);
         });
-      } catch {
-        // Sin Tauri no hay puente entre ventanas.
+      } catch (error) {
+        console.info(
+          formatPatchDebug({
+            phase: "error",
+            detail: `listen: ${reasonOf(error).slice(0, 120)}`,
+          }),
+        );
       }
     })();
     return () => {
       cancel = true;
       unlisten?.();
     };
-  }, [beginReview, open]);
+  }, [acceptRemotePatches, beginReview, documentName, onEnsureOpen, open, publishNotice]);
 
   /** Adjunta archivos (arrastrados, pegados o elegidos) al mensaje en curso. */
   const attach = useCallback(

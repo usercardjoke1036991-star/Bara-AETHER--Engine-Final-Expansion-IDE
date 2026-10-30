@@ -873,10 +873,18 @@ fn workspace_roots(
 /// Activa una carpeta por el identificador que emitió el backend.
 #[tauri::command]
 fn workspace_activate(
+    app: tauri::AppHandle,
     id: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceShelf, String> {
-    state.activate(id.trim())
+    let shelf = state.activate(id.trim())?;
+    if let Ok(root) = state.get() {
+        let _ = app.emit(
+            "workspace-root-changed",
+            json!({ "root": root, "reason": "activate" }),
+        );
+    }
+    Ok(shelf)
 }
 
 /// Cierra una carpeta del estante. La última permanece.
@@ -945,6 +953,10 @@ async fn workspace_open_dialog(
     let folder = pick_folder(&app, "Abrir carpeta del workspace")?;
     let tree = workspace::tree(&folder.display().to_string())?;
     adopt_root(&state, &kernel, tree.root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": tree.root.clone(), "reason": "open" }),
+    );
     Ok(tree)
 }
 
@@ -973,6 +985,10 @@ async fn github_clone(
     .map_err(|_| "el clon se interrumpió".to_string())??;
     let tree = workspace::tree(&cloned.display().to_string())?;
     adopt_root(&state, &kernel, tree.root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": tree.root.clone(), "reason": "clone" }),
+    );
     Ok(tree)
 }
 

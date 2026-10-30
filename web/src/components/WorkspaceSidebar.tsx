@@ -96,6 +96,7 @@ export default function WorkspaceSidebar({
                 className={slot.active ? "shelf-active" : undefined}
                 disabled={loading}
                 onClick={() => {
+                  // `workspace-root-changed` reinicia editor/diff en todas las ventanas.
                   void workspaceActivate(slot.id)
                     .then(() => onRefresh())
                     .catch((reason: unknown) => {
