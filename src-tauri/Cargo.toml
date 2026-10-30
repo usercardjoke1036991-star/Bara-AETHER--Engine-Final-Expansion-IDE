@@ -30,13 +30,14 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
-# Inspector web: activo en `debug_assertions` o con `--features devtools`.
-# Release sin esta feature queda sin DevTools (ver README).
+# Inspector web: `tauri dev --features devtools` (o profile debug con la feature).
+# Release sin esta feature no enlaza DevTools (F12 queda inerte).
 devtools = ["tauri/devtools"]
 
 [dependencies]
 # Backend Tauri v2. El único plugin es el diálogo nativo de carpetas:
 # el WebView no recibe la ruta, la elige el usuario en el diálogo del sistema.
+# `devtools` del crate se activa sólo vía feature (no en release de dist).
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"

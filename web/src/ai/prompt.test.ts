@@ -38,6 +38,8 @@ describe("baraSystemPrompt", () => {
     expect(prompt).toContain("ברא");
     expect(prompt).toContain("propuesta no verificada");
     expect(prompt).toContain("Catálogo");
+    expect(prompt).not.toMatch(/auto-aplicable/i);
+    expect(prompt).toContain("diff para aceptar o rechazar");
     for (const op of LEXER_OPERATORS) {
       expect(prompt).toContain(op);
     }

@@ -36,6 +36,8 @@ export interface ChatMessage {
   createdAt: number;
   /** Error del proveedor, si el turno falló. */
   error: string | null;
+  /** Rutas leídas con `leer_archivo` en este turno (si las hubo). */
+  toolsUsed?: string[];
 }
 
 /**
@@ -83,6 +85,8 @@ export interface ChatResult {
   acceptedModel?: string;
   /** Llamadas nativas; vacío si el turno ya es texto final. */
   toolCalls?: ChatToolCall[];
+  /** Rutas leídas vía herramientas en el bucle (p. ej. leer_archivo). */
+  toolsUsed?: string[];
 }
 
 /** Modelo ofrecido por el proveedor (`GET /models`). */

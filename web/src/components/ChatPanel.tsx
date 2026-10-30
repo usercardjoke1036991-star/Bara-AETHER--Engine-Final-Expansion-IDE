@@ -27,9 +27,11 @@ import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
-import { readProjectFile } from "../editorBridge";
+import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
 import { loadLocalWeights, localComplete } from "../offline";
+import { isActiveBaraPath, proposeFromJudge } from "../proposePatch";
 import { shoreshTranslate, type Analysis, type RootEntry, type Translation } from "../engine";
+import { currentVista, openDeskWindow } from "../windows";
 import AiSettings from "./AiSettings";
 import AssistantText, { codeBlocks } from "./AssistantText";
 
@@ -88,8 +90,11 @@ export interface ChatPanelProps {
   sample: string;
   /** Árbol de la carpeta abierta, ya formateado para el prompt. */
   treeOutline?: string;
-  /** Envía un bloque de código al editor del IDE. */
-  onUseCode: (code: string) => void;
+  /**
+   * Opcional: pegar código en el editor sin diff (p. ej. Visual Builder).
+   * «usar en el editor» del chat **no** usa esto: abre previewDiff.
+   */
+  onUseCode?: (code: string) => void;
   /** Juzga un bloque sin escribir (diff + canApply). */
   onJudge: (patch: string) => Promise<AutoApplyReport>;
   /** Escribe tras aceptar el diff (con respaldo). */
@@ -107,7 +112,6 @@ export default function ChatPanel({
   catalogue,
   sample,
   treeOutline = "",
-  onUseCode,
   onJudge,
   onConfirm,
   onUndo,
@@ -200,6 +204,91 @@ export default function ChatPanel({
   useEffect(() => {
     writeAutoApplyEnabled(autoApply);
   }, [autoApply]);
+
+  /** Abre el panel de diff (sin escribir). */
+  const beginReview = useCallback(
+    async (patch: string) => {
+      const code = patch.trim();
+      if (!code) {
+        return;
+      }
+      if (!isActiveBaraPath(documentName)) {
+        setNotice("Abre un archivo .bara primero");
+        setReview(null);
+        return;
+      }
+      try {
+        const report = await onJudge(code);
+        const outcome = proposeFromJudge(code, report, true);
+        if (outcome.kind === "review") {
+          setReview({ patch: outcome.patch, report: outcome.report });
+          setNotice(
+            `${outcome.report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`,
+          );
+          return;
+        }
+        setReview(null);
+        setNotice(outcome.notice);
+      } catch (error) {
+        setReview(null);
+        setNotice(reasonOf(error));
+      }
+    },
+    [documentName, onJudge],
+  );
+
+  /**
+   * «usar en el editor»: en `main` abre el diff; desde Asistencia emite a
+   * la ventana principal y la enfoca.
+   */
+  const useInEditor = useCallback(
+    (code: string) => {
+      void (async () => {
+        try {
+          const vista = await currentVista();
+          if (vista !== "main") {
+            await proposeEditorPatch(code);
+            await openDeskWindow("main");
+            setNotice("Diff enviado a la ventana principal…");
+            return;
+          }
+          await beginReview(code);
+        } catch (error) {
+          setNotice(reasonOf(error));
+        }
+      })();
+    },
+    [beginReview],
+  );
+
+  // Parches pedidos desde la ventana Asistencia (evento Tauri).
+  useEffect(() => {
+    if (!inDesktop() || !open) {
+      return undefined;
+    }
+    let cancel = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<{ patch?: string }>(PROPOSE_PATCH_EVENT, (event) => {
+          if (cancel) {
+            return;
+          }
+          const patch = typeof event.payload?.patch === "string" ? event.payload.patch : "";
+          if (patch.trim()) {
+            void beginReview(patch);
+          }
+        });
+      } catch {
+        // Sin Tauri no hay puente entre ventanas.
+      }
+    })();
+    return () => {
+      cancel = true;
+      unlisten?.();
+    };
+  }, [beginReview, open]);
 
   /** Adjunta archivos (arrastrados, pegados o elegidos) al mensaje en curso. */
   const attach = useCallback(
@@ -306,6 +395,7 @@ export default function ChatPanel({
       }
       const id = newId();
       const usage = result.usage;
+      const toolsUsed = result.toolsUsed;
       setMessages((previous) => [
         ...previous,
         {
@@ -316,44 +406,19 @@ export default function ChatPanel({
           model: result.model,
           createdAt: Date.now(),
           error: null,
+          toolsUsed,
         },
       ]);
       if (usage) {
         setUsages((previous) => ({ ...previous, [id]: usage }));
       }
+      if (toolsUsed && toolsUsed.length > 0) {
+        setNotice(`📄 leyó ${toolsUsed.join(", ")}`);
+      }
       if (autoApply) {
         const block = codeBlocks(result.text)[0];
         if (block) {
-          try {
-            const report = await onJudge(block);
-            if (report.status === "neither" || report.glyph === "∅") {
-              setNotice(
-                report.blockReason ||
-                  `∅ falta información: no se escribe (${report.unverifiedReason || "sin detalle"}).`,
-              );
-              setReview(null);
-            } else if (report.status === "both") {
-              setNotice(
-                `Veto ${report.glyph}: el bloque contradice el archivo. Hace falta intervención manual.`,
-              );
-              setReview(null);
-            } else if (!report.verified || !report.canApply) {
-              setNotice(
-                report.blockReason ||
-                  report.unverifiedReason ||
-                  `Auto-Apply ${report.glyph}: propuesta no verificada; no se escribe.`,
-              );
-              setReview(null);
-            } else {
-              setReview({ patch: block, report });
-              setNotice(
-                `Auto-Apply ${report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`,
-              );
-            }
-          } catch (error) {
-            setNotice(reasonOf(error));
-            setReview(null);
-          }
+          await beginReview(block);
         }
       }
     } catch (error) {
@@ -373,7 +438,17 @@ export default function ChatPanel({
       abortRef.current = null;
       setPending(false);
     }
-  }, [attachments, autoApply, config, draft, messages, offline, onJudge, pending, promptContextBase]);
+  }, [
+    attachments,
+    autoApply,
+    beginReview,
+    config,
+    draft,
+    messages,
+    offline,
+    pending,
+    promptContextBase,
+  ]);
 
   const acceptReview = useCallback(async () => {
     if (!review) {
@@ -676,7 +751,7 @@ export default function ChatPanel({
                 message={message}
                 usage={usages[message.id]}
                 translation={translations[message.id]}
-                onUseCode={onUseCode}
+                onUseCode={useInEditor}
                 onTranslate={(id, text) => {
                   void translate(id, text);
                 }}
@@ -786,7 +861,7 @@ export default function ChatPanel({
             </div>
 
             {translations.borrador ? (
-              <TranslationBox result={translations.borrador} onUseCode={onUseCode} />
+              <TranslationBox result={translations.borrador} onUseCode={useInEditor} />
             ) : null}
             {review ? (
               <div className="ai-review" role="region" aria-label="Vista previa del parche">
@@ -854,6 +929,11 @@ function MessageRow({
         {usage ? (
           <span className="muted">
             {usage.inputTokens}→{usage.outputTokens} tokens
+          </span>
+        ) : null}
+        {message.toolsUsed && message.toolsUsed.length > 0 ? (
+          <span className="muted" title="Herramienta leer_archivo">
+            📄 leyó {message.toolsUsed.join(", ")}
           </span>
         ) : null}
         {hasText ? (

@@ -319,49 +319,26 @@ pasos extra; el workflow no necesita MinGW.
 
 ## DevTools
 
-El inspector web de Tauri **no** va en los builds por defecto (tampoco en
-`tauri build` / `dist:windows`).
+El inspector web **no** va en `tauri build` / `dist:windows` (release).
 
-* Para abrirlo: compila con la feature opcional `devtools`
-  (`cargo build --manifest-path src-tauri/Cargo.toml --features devtools` o
-  `tauri dev --features devtools`).
-* Esa feature activa `tauri/devtools` y llama a `open_devtools` al arrancar.
-* Sin la feature, el binario (debug o release) no enlaza el inspector.
+* `npm run dev:win` lanza `tauri dev --features devtools`.
+* Con esa feature, **F12** o **Ctrl+Shift+I** abren el inspector en la ventana
+  activa (`open_devtools_window`).
+* Sin la feature, el comando responde error y el binario no enlaza DevTools.
 
 ## Kernel fijado por git
 
-El crate `bara` ya **no** depende de un `../BAR` hermano suelto. Los
-`Cargo.toml` (raíz, `kernel-host/`, `src-tauri/`) apuntan al repositorio del
-kernel con un `rev` SHA concreto (hoy el tip de `dev` tras el merge de
-`fix/judge-patch-lexicon`). Se eligió **dependencia git fijada** (no
-submódulo) porque:
+El crate `bara` se declara con `git` + `rev` SHA en los `Cargo.toml` del IDE
+(CI y clon limpio). Para desarrollo local contra un checkout hermano:
 
-1. el CI y cualquier clon del IDE resuelven el mismo commit sin junctions;
-2. el SHA se audita en el diff del PR;
-3. el secreto `KERNEL_READ_TOKEN` sigue sirviendo si el kernel es privado
-   (`git`/`cargo` autenticados en el workflow).
+1. Copia `Cargo.toml.local.example` → `Cargo.toml.local` (gitignored).
+2. Ejecuta `npm run kernel:local` (inyecta el `[patch]` path `../BAR` entre
+   marcadores en el `Cargo.toml` de la raíz).
+3. En CI **no** existe `Cargo.toml.local` ni se corre el script: manda el pin.
 
-### Local vs CI (doble resolución)
-
-En esta máquina, `C:\Users\Vexor\Downloads\Cargo.toml` declara un
-`[workspace]` que incluye `BAR` y `bara-ide`. Cargo, al subir directorios,
-trata ese manifiesto como raíz: **en local** `bara` se resuelve por
-**path** (`../BAR`), aunque el `Cargo.toml` del IDE pida `git + rev`.
-**En CI** no existe ese workspace padre, así que manda el pin git.
-
-Cómo unificarlo (propuesta, **sin aplicar**):
-
-1. Quitar `bara-ide` / `bara-ide/src-tauri` / `bara-ide/kernel-host` del
-   workspace de `Downloads`, dejando el IDE como repo autónomo; o
-2. Declarar `[workspace]` propio en la raíz del IDE (rompe el workspace
-   anidado actual); o
-3. Mantener el dual a propósito y regenerar `Cargo.lock` del IDE con el
-   padre renombrado temporalmente (como en CI) cuando se mueva el `rev`.
-
-Para iterar en local contra un checkout hermano sin tocar el workspace
-padre, también vale un
-`[patch."https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git"]`
-con `bara = { path = "../BAR" }` **sin subirlo** al remoto.
+Si además hay un `Downloads/Cargo.toml` workspace padre, Cargo puede seguir
+resolviendo por path; el dual queda documentado aquí. Para dist/CI limpio,
+renombra temporalmente ese workspace padre.
 
 ## Notas
 

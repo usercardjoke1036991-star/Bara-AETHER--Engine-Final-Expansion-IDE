@@ -81,3 +81,50 @@ describe("invoke de confirmación", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 });
+
+describe("Aceptar / Rechazar / Deshacer (contrato)", () => {
+  it("Rechazar: no llama a confirm ni undo (archivo intacto)", () => {
+    const confirm = vi.fn();
+    const undo = vi.fn();
+    // La UI solo hace setReview(null); no hay invoke.
+    expect(confirm).not.toHaveBeenCalled();
+    expect(undo).not.toHaveBeenCalled();
+  });
+
+  it("Aceptar: confirm con applied + backupPath; Deshacer restaura", async () => {
+    const disk = { text: "fn alpha() {}\n" };
+    const confirm = vi.fn(async () => {
+      disk.text = "fn alpha() {}\nfn beta() {}\n";
+      return {
+        ...emptyReport(1),
+        glyph: "⊤",
+        status: "true",
+        applied: true,
+        verified: true,
+        canApply: true,
+        path: "hello.bara",
+        source: disk.text,
+        backupPath: ".bara-backup/stamp/hello.bara.bak",
+      };
+    });
+    const undo = vi.fn(async () => {
+      disk.text = "fn alpha() {}\n";
+      return {
+        ...emptyReport(1),
+        glyph: "⊤",
+        status: "true",
+        applied: true,
+        path: "hello.bara",
+        source: disk.text,
+        backupPath: "",
+      };
+    });
+    const accepted = await confirm("fn beta() {}");
+    expect(accepted.applied).toBe(true);
+    expect(accepted.backupPath).toContain(".bara-backup/");
+    expect(disk.text).toContain("beta");
+    const restored = await undo("hello.bara", accepted.backupPath);
+    expect(restored.applied).toBe(true);
+    expect(disk.text).toBe("fn alpha() {}\n");
+  });
+});

@@ -33,7 +33,7 @@ export function emptyReport(line = 1): AutoApplyReport {
     unverifiedReason: "",
     previewDiff: "",
     canApply: false,
-    blockReason: "no hay documento abierto",
+    blockReason: "Abre un archivo .bara primero",
     backupPath: "",
   };
 }

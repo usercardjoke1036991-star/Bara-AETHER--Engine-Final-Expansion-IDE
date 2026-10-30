@@ -38,6 +38,19 @@ export function readProjectFile(path: string): Promise<{ path: string; name: str
   return invoke("workspace_read_project_file", { path });
 }
 
+/** Evento Tauri: la ventana de asistencia pide un diff en `main`. */
+export const PROPOSE_PATCH_EVENT = "assistant-propose-patch";
+
+/** Emite el parche a la ventana principal (sin escribir). */
+export function proposeEditorPatch(patch: string): Promise<void> {
+  return invoke("propose_editor_patch", { patch });
+}
+
+/** Abre DevTools (solo debug / feature `devtools`). */
+export function openDevtools(): Promise<void> {
+  return invoke("open_devtools_window");
+}
+
 /** Profundidad máxima del árbol inyectado al prompt. */
 export const TREE_MAX_DEPTH = 3;
 

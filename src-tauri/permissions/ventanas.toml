@@ -1,7 +1,11 @@
 [[set]]
 identifier = "ventanas"
 description = "Abrir o enfocar una ventana registrada del IDE"
-permissions = ["allow-open-desk-window"]
+permissions = [
+  "allow-open-desk-window",
+  "allow-propose-editor-patch",
+  "allow-open-devtools-window",
+]
 
 [[set]]
 identifier = "medios"

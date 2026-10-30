@@ -829,6 +829,39 @@ async fn open_desk_window(app: tauri::AppHandle, vista: String) -> Result<(), St
         .map_err(|err| err.to_string())
 }
 
+/// La ventana de asistencia pide un diff en `main` (sin escribir).
+#[tauri::command]
+fn propose_editor_patch(app: tauri::AppHandle, patch: String) -> Result<(), String> {
+    let text = patch.trim();
+    if text.is_empty() {
+        return Err("el parche está vacío".to_string());
+    }
+    if text.len() > 32 * 1024 {
+        return Err("el parche supera 32 KiB".to_string());
+    }
+    app.emit("assistant-propose-patch", json!({ "patch": text }))
+        .map_err(|err| err.to_string())?;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_focus();
+    }
+    Ok(())
+}
+
+/// Abre el inspector web. Requiere `--features devtools` (p. ej. `tauri dev`).
+#[tauri::command]
+fn open_devtools_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(feature = "devtools")]
+    {
+        window.open_devtools();
+        Ok(())
+    }
+    #[cfg(not(feature = "devtools"))]
+    {
+        let _ = window;
+        Err("DevTools desactivadas en este binario (release o sin feature)".to_string())
+    }
+}
+
 /// Estante de carpetas abiertas. Cada una es una jaula distinta.
 #[tauri::command]
 fn workspace_roots(
@@ -1078,12 +1111,8 @@ pub fn run() {
                 .handle()
                 .emit("kernel-host", app.state::<KernelHost>().status().label());
             idle_loop::start(app.handle().clone());
-            // DevTools sólo con `--features devtools` (release queda apagado por
-            // defecto; en debug se puede activar la misma feature). Ver README.
-            #[cfg(feature = "devtools")]
-            if let Some(window) = app.get_webview_window("main") {
-                window.open_devtools();
-            }
+            // DevTools: en debug (o `--features devtools`) el front puede abrirlas
+            // con F12 / Ctrl+Shift+I. Release sin la feature no enlaza el inspector.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1101,6 +1130,8 @@ pub fn run() {
             workspace_activate,
             workspace_close_root,
             open_desk_window,
+            propose_editor_patch,
+            open_devtools_window,
             transmute_workspace,
             inspect_media_dialog,
             github_clone,
@@ -1176,6 +1207,8 @@ mod ipc_boundary {
             .0;
         assert!(handler.contains("oracle_converse"));
         assert!(handler.contains("open_desk_window"));
+        assert!(handler.contains("propose_editor_patch"));
+        assert!(handler.contains("open_devtools_window"));
         assert!(handler.contains("workspace_activate"));
         assert!(handler.contains("transmute_workspace"));
         assert!(handler.contains("inspect_media_dialog"));

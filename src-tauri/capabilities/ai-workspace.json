@@ -22,6 +22,8 @@
     "allow-shoresh-translate",
     "allow-load-local-weights",
     "allow-local-complete",
+    "allow-open-desk-window",
+    "allow-propose-editor-patch",
     "clipboard-manager:allow-write-text"
   ]
 }

@@ -395,8 +395,20 @@ function AiDesk() {
       .catch((reason: unknown) => setError(describeError(reason)));
   }
 
+  /**
+   * Guardar del panel de contexto:
+   * - `<fragmento>` u otros no-`.bara`: **solo memoria** (no escribe al disco).
+   * - `.bara` del workspace: escribe con `workspace_write_document` (edición
+   *   manual del contexto, no el flujo de diff de «usar en el editor»).
+   */
   const saveDocument = useCallback(() => {
     if (!dirty) {
+      return;
+    }
+    const name = documentName.trim();
+    if (!name.toLowerCase().endsWith(".bara") || name === "<fragmento>") {
+      setSavedSource(documentSource);
+      setError(null);
       return;
     }
     setSaving(true);
@@ -511,7 +523,17 @@ function AiDesk() {
               {dirty ? " · sin guardar" : documentName.endsWith(".bara") ? " · guardado" : ""}
             </span>
             <span className="grow" />
-            <button type="button" disabled={!dirty || saving} onClick={saveDocument}>
+            <button
+              type="button"
+              disabled={!dirty || saving}
+              title={
+                documentName.trim().toLowerCase().endsWith(".bara") &&
+                documentName.trim() !== "<fragmento>"
+                  ? "Escribe el .bara de contexto en el workspace"
+                  : "Solo memoria: el fragmento no se escribe al disco"
+              }
+              onClick={saveDocument}
+            >
               {saving ? "Guardando…" : "Guardar"}
             </button>
           </div>
@@ -575,10 +597,6 @@ function AiDesk() {
           catalogue={catalogue}
           sample={sample}
           treeOutline={treeOutline}
-          onUseCode={(code) => {
-            setDocumentName("<fragmento>");
-            setDocumentSource(code);
-          }}
           onJudge={async () => ({
             glyph: "⊥",
             status: "false",
@@ -591,7 +609,7 @@ function AiDesk() {
             unverifiedReason: "",
             previewDiff: "",
             canApply: false,
-            blockReason: "ventana auxiliar: sin escritura",
+            blockReason: "Abre un archivo .bara primero",
             backupPath: "",
           })}
           onConfirm={async () => ({
@@ -606,7 +624,7 @@ function AiDesk() {
             unverifiedReason: "",
             previewDiff: "",
             canApply: false,
-            blockReason: "ventana auxiliar: sin escritura",
+            blockReason: "ventana auxiliar: la escritura la hace main tras el diff",
             backupPath: "",
           })}
           onUndo={async () => ({
@@ -621,7 +639,7 @@ function AiDesk() {
             unverifiedReason: "",
             previewDiff: "",
             canApply: false,
-            blockReason: "ventana auxiliar: sin escritura",
+            blockReason: "ventana auxiliar: deshacer en main",
             backupPath: "",
           })}
         />

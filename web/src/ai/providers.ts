@@ -24,6 +24,7 @@ import {
   anthropicTools,
   openAiTools,
   parseToolLeakAsCalls,
+  pathFromToolArgs,
   runToolCall,
   sanitizeAssistantText,
   type ToolCall,
@@ -659,6 +660,7 @@ export async function sendChat(
     }));
     let usageAcc: ChatUsage | null = null;
     let lastModel = "";
+    const toolsUsed: string[] = [];
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       const result = await exchangeChatRound(
@@ -692,6 +694,7 @@ export async function sendChat(
           model: lastModel,
           usage: usageAcc,
           acceptedModel: renamed,
+          toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
         };
       }
 
@@ -701,6 +704,7 @@ export async function sendChat(
           model: lastModel,
           usage: usageAcc,
           acceptedModel,
+          toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
         };
       }
 
@@ -710,6 +714,10 @@ export async function sendChat(
         toolCalls,
       });
       for (const call of toolCalls) {
+        const path = pathFromToolArgs(call.arguments);
+        if (path && !toolsUsed.includes(path)) {
+          toolsUsed.push(path);
+        }
         const content = await runToolCall(call, executeTool);
         thread.push({
           role: "tool",
@@ -727,6 +735,7 @@ export async function sendChat(
       model: lastModel,
       usage: usageAcc,
       acceptedModel,
+      toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
     };
   } finally {
     linked.cancel();

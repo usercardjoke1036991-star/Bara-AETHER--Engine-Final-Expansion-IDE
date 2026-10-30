@@ -40,7 +40,7 @@ import {
 import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
 import { runWorkspaceRecipe, type RecipeName } from "./recipes";
 import { publishVeto } from "./topology";
-import { outlineTree, publishEditorContext } from "./editorBridge";
+import { openDevtools, outlineTree, publishEditorContext } from "./editorBridge";
 import BaraEditor from "./components/BaraEditor";
 import ChatPanel from "./components/ChatPanel";
 import CockpitPanel from "./components/CockpitPanel";
@@ -531,6 +531,24 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [saveActive]);
+
+  // DevTools (F12 / Ctrl+Shift+I): sólo si el binario se compiló con `--features devtools`.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const open =
+        event.key === "F12" ||
+        ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "i");
+      if (!open) {
+        return;
+      }
+      event.preventDefault();
+      void openDevtools().catch(() => {
+        /* release sin feature: silencio */
+      });
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const treeOutline = useMemo(
     () => (workspace ? outlineTree(workspace.entries) : ""),
