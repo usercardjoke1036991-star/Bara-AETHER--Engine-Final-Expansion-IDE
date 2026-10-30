@@ -16,6 +16,8 @@ permissions = [
   "allow-editor-context-publish",
   "allow-editor-context-get",
   "allow-judge-auto-patch",
+  "allow-confirm-auto-patch",
+  "allow-undo-auto-patch",
   "allow-idle-proposal",
   "allow-idle-apply",
   "allow-idle-dismiss",

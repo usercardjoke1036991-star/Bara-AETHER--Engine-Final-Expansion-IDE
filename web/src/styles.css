@@ -1708,6 +1708,36 @@ tr.vb-selected td {
   color: #e07a5f;
 }
 
+.ai-badge {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid #3a4a58;
+  color: #9eb0c0;
+}
+
+.ai-badge-ok {
+  border-color: #4fd1c5;
+  color: #4fd1c5;
+}
+
+.ai-badge-warn {
+  border-color: #c9a227;
+  color: #c9a227;
+}
+
+.ai-review {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0;
+  border-top: 1px solid #2a3540;
+}
+
+.ai-diff {
+  max-height: 12rem;
+  overflow: auto;
+  font-size: 0.8rem;
+}
+
 .idle-note {
   display: flex;
   gap: 8px;

@@ -81,7 +81,7 @@ Reglas léxicas exactas del kernel:
 
 /** Semántica paraconsistente e invariantes ontológicos del runtime. */
 const ONTOLOGY_RULES = `## Raíces desconocidas: autopoiesis
-Cualquier otra raíz triconsonántica es legal: el runtime sintetiza su axioma por **autopoiesis** y el lenguaje crece en lugar de rechazar el programa. Úsalas sólo cuando ninguna raíz del catálogo exprese la intención, y dilo abiertamente.
+Prefiere **exclusivamente** las raíces del catálogo real del kernel (sección «Raíces conocidas de fábrica» más abajo) y la sintaxis que el lexer reconoce (operadores +, *, !, !!, ?, :, ;, coma, flecha ->, identificadores ASCII, números y cadenas). Cualquier otra raíz triconsonántica es legal en runtime por **autopoiesis**, pero en tus respuestas debes etiquetarla de forma explícita como **«propuesta no verificada»** —el IDE no la auto-aplicará. No inventes palabras clave de otros lenguajes ni mezcles sintaxis ajenas dentro de un bloque cercado bara.
 
 ## Semántica y principios ontológicos
 - Evaluación con la **lógica paraconsistente de Belnap**, de cuatro valores: verdadero, falso, ambos (contradicción) y ninguno (indeterminación). Una contradicción no explota: se representa y se mide (principio de no-explosión).
@@ -99,11 +99,12 @@ No son sintaxis del lenguaje, sino del REPL interactivo: :ayuda, :estado, :memor
 ## Contrato de respuesta
 1. Responde en el idioma del usuario (por defecto, español).
 2. Todo código Bara va en un bloque cercado cuyo lenguaje es bara.
-3. Usa exclusivamente los glifos del catálogo y, si hace falta, raíces autopoiéticas triconsonánticas. Nunca inventes palabras clave en otros idiomas ni mezcles sintaxis ajenas.
+3. Usa sólo raíces del catálogo inyectado y la sintaxis del lexer. Si debes proponer una raíz o un símbolo fuera de ese conjunto, escribe en la misma respuesta la etiqueta literal «propuesta no verificada» junto al bloque.
 4. Sé breve y útil: primero el programa, después dos o tres líneas de explicación ontológica.
 5. Si la petición admite varias lecturas, entrega el programa más corto y señala la duda.
 6. Si algo del kernel no te consta, dilo; jamás inventes módulos, tipos ni APIs.
-7. Si el usuario adjunta una imagen (captura, diagrama o código manuscrito), descríbela primero en una línea y después transcribe en un bloque bara el código que veas, marcando lo que no puedas leer con certeza.`;
+7. Si el usuario adjunta una imagen (captura, diagrama o código manuscrito), descríbela primero en una línea y después transcribe en un bloque bara el código que veas, marcando lo que no puedas leer con certeza.
+8. El IDE valida cada bloque \`\`\`bara con el kernel: lo no verificado no se auto-aplica.`;
 
 /** Contexto vivo: documento abierto, análisis del kernel y ejemplo real. */
 export function liveContext(context: PromptContext): string {

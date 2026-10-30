@@ -587,6 +587,42 @@ function AiDesk() {
             line: 1,
             inserted: 0,
             source: "",
+            verified: false,
+            unverifiedReason: "",
+            previewDiff: "",
+            canApply: false,
+            blockReason: "ventana auxiliar: sin escritura",
+            backupPath: "",
+          })}
+          onConfirm={async () => ({
+            glyph: "⊥",
+            status: "false",
+            applied: false,
+            path: "",
+            line: 1,
+            inserted: 0,
+            source: "",
+            verified: false,
+            unverifiedReason: "",
+            previewDiff: "",
+            canApply: false,
+            blockReason: "ventana auxiliar: sin escritura",
+            backupPath: "",
+          })}
+          onUndo={async () => ({
+            glyph: "⊥",
+            status: "false",
+            applied: false,
+            path: "",
+            line: 1,
+            inserted: 0,
+            source: "",
+            verified: false,
+            unverifiedReason: "",
+            previewDiff: "",
+            canApply: false,
+            blockReason: "ventana auxiliar: sin escritura",
+            backupPath: "",
           })}
         />
       </section>

@@ -317,6 +317,33 @@ $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = Join-Path $sc 'x86_64-w64-mingw
 En CI (ubuntu-latest) `build-essential` aporta `gcc` y ring se compila sin
 pasos extra; el workflow no necesita MinGW.
 
+## DevTools
+
+El inspector web de Tauri **no** va en los builds por defecto (tampoco en
+`tauri build` / `dist:windows`).
+
+* Para abrirlo: compila con la feature opcional `devtools`
+  (`cargo build --manifest-path src-tauri/Cargo.toml --features devtools` o
+  `tauri dev --features devtools`).
+* Esa feature activa `tauri/devtools` y llama a `open_devtools` al arrancar.
+* Sin la feature, el binario (debug o release) no enlaza el inspector.
+
+## Kernel fijado por git
+
+El crate `bara` ya **no** depende de un `../BAR` hermano suelto. Los
+`Cargo.toml` (raíz, `kernel-host/`, `src-tauri/`) apuntan al repositorio del
+kernel con un `rev` SHA concreto. Se eligió **dependencia git fijada** (no
+submódulo) porque:
+
+1. el CI y cualquier clon del IDE resuelven el mismo commit sin junctions;
+2. el SHA se audita en el diff del PR;
+3. el secreto `KERNEL_READ_TOKEN` sigue sirviendo si el kernel es privado
+   (`git`/`cargo` autenticados en el workflow).
+
+Para iterar en local contra un checkout hermano, puedes añadir un
+`[patch."https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git"]`
+con `bara = { path = "../BAR" }` sin subirlo al remoto.
+
 ## Notas
 
 * **Toolchain de Windows**: el árbol completo de Tauri v2 **verifica** y

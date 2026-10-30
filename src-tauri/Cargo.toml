@@ -28,6 +28,12 @@ path = "src/main.rs"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = []
+# Inspector web: activo en `debug_assertions` o con `--features devtools`.
+# Release sin esta feature queda sin DevTools (ver README).
+devtools = ["tauri/devtools"]
+
 [dependencies]
 # Backend Tauri v2. El único plugin es el diálogo nativo de carpetas:
 # el WebView no recibe la ruta, la elige el usuario en el diálogo del sistema.
@@ -50,11 +56,12 @@ rustls-native-certs = "0.8"
 webpki-roots = "0.26"
 
 # Motor del IDE: la biblioteca `bara-ide` con la feature `serde` activada
-# (modelo serializable a JSON) y, tras ella, el kernel `bara` por ruta.
+# (modelo serializable a JSON) y el kernel `bara` fijado por git (rev en
+# el `Cargo.toml` de la raíz).
 bara-ide = { path = "..", features = ["serde"] }
 
 # Proceso hijo del kernel. El escritorio lo supervisa; no ejecuta el núcleo.
 bara-kernel-host = { path = "../kernel-host" }
 
-# Enlace directo al kernel para clasificar las líneas de las recetas.
-bara = { path = "../../BAR" }
+# Mismo pin git que la raíz / kernel-host (no `../BAR` suelto).
+bara = { git = "https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git", rev = "0db6304065e018fddfec7e2378e43d2abe82465d" }

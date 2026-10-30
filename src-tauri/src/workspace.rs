@@ -19,7 +19,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 /// Directorios que nunca se enumeran (artefactos y metadatos del repositorio).
-const EXCLUDED_DIRS: [&str; 3] = ["target", "node_modules", ".git"];
+const EXCLUDED_DIRS: [&str; 4] = ["target", "node_modules", ".git", ".bara-backup"];
 
 /// Cota de profundidad del árbol (evita ciclos patológicos de junctions).
 const MAX_DEPTH: usize = 24;

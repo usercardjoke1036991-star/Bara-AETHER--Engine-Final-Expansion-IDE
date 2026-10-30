@@ -199,6 +199,8 @@ const APP_COMMANDS: &[&str] = &[
     "editor_context_get",
     "run_workspace_recipe",
     "judge_auto_patch",
+    "confirm_auto_patch",
+    "undo_auto_patch",
     "load_local_weights",
     "local_complete",
     "transmute_global",

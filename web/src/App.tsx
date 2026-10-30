@@ -31,7 +31,12 @@ import {
   type WorkspaceTree,
 } from "./workspace";
 import { analysisStillCurrent } from "./analysisGate";
-import { judgeAutoPatch } from "./autoApply";
+import {
+  confirmAutoPatch,
+  emptyReport,
+  judgeAutoPatch,
+  undoAutoPatch,
+} from "./autoApply";
 import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
 import { runWorkspaceRecipe, type RecipeName } from "./recipes";
 import { publishVeto } from "./topology";
@@ -736,36 +741,54 @@ export default function App() {
     [activePath],
   );
 
+  const applyReportToEditor = useCallback((path: string, report: Awaited<ReturnType<typeof judgeAutoPatch>>) => {
+    if (!report.applied || !report.source) {
+      return;
+    }
+    sourceRef.current = report.source;
+    cursorLineRef.current = report.line + Math.max(report.inserted, 1);
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.path === path || tab.path === report.path
+          ? { ...tab, source: report.source, saved: report.source }
+          : tab,
+      ),
+    );
+  }, []);
+
   const judgeSuggestion = useCallback(async (patch: string) => {
     const path = pathRef.current;
     if (path === null || path.length === 0) {
-      return {
-        glyph: "⊥",
-        status: "false",
-        applied: false,
-        path: "",
-        line: cursorLineRef.current,
-        inserted: 0,
-        source: "",
-      };
+      return emptyReport(cursorLineRef.current);
     }
     const report = await judgeAutoPatch(path, cursorLineRef.current, sourceRef.current, patch);
-    if (report.applied) {
-      sourceRef.current = report.source;
-      cursorLineRef.current = report.line + Math.max(report.inserted, 1);
-      setTabs((current) =>
-        current.map((tab) =>
-          tab.path === path || tab.path === report.path
-            ? { ...tab, source: report.source, saved: report.source }
-            : tab,
-        ),
-      );
-    }
     if (report.status === "both") {
       publishVeto(path, report.line > 0 ? report.line : cursorLineRef.current);
     }
     return report;
   }, []);
+
+  const confirmSuggestion = useCallback(async (patch: string) => {
+    const path = pathRef.current;
+    if (path === null || path.length === 0) {
+      return emptyReport(cursorLineRef.current);
+    }
+    const report = await confirmAutoPatch(path, cursorLineRef.current, sourceRef.current, patch);
+    applyReportToEditor(path, report);
+    if (report.status === "both") {
+      publishVeto(path, report.line > 0 ? report.line : cursorLineRef.current);
+    }
+    return report;
+  }, [applyReportToEditor]);
+
+  const undoSuggestion = useCallback(
+    async (path: string, backupPath: string) => {
+      const report = await undoAutoPatch(path, backupPath);
+      applyReportToEditor(path, report);
+      return report;
+    },
+    [applyReportToEditor],
+  );
 
   const applyCode = useCallback(
     (code: string) => {
@@ -1226,6 +1249,8 @@ export default function App() {
         treeOutline={treeOutline}
         onUseCode={applyCode}
         onJudge={judgeSuggestion}
+        onConfirm={confirmSuggestion}
+        onUndo={undoSuggestion}
       />
     </div>
   );

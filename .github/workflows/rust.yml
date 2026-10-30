@@ -11,6 +11,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Autenticación para el crate `bara` (repo privado del kernel).
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
   build:
@@ -19,29 +21,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-    # `actions/checkout` rechaza `path: ../BAR` porque queda fuera de
-    # `$GITHUB_WORKSPACE`. El núcleo entra en `./BAR-local` y un enlace lo
-    # publica en el hermano `../BAR`, que es lo que leen
-    # `Cargo.toml` (`../BAR`) y `src-tauri/Cargo.toml` (`../../BAR`).
-    # Esta tarea corre en `ubuntu-latest`; no hace falta una unión de Windows.
-    - name: Clone Bara Core Repository
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      with:
-        repository: usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion
-        # Tip de `dev` del kernel. Respecto de b916ff9 el delta es sólo CI:
-        # Rust 1.99.0 fijo y la veda de panic!/unreachable! fuera de los tests.
-        # Una rama móvil recompilaría el IDE contra código que aún no se ha visto.
-        ref: c9ca8a3bf917bf3e24504af8a8539af6f0b924a7
-        token: ${{ secrets.KERNEL_READ_TOKEN }}
-        path: BAR-local
-    - name: Enlazar el núcleo en ../BAR
+    - name: Autenticar git para el kernel privado
       shell: bash
-      working-directory: ${{ github.workspace }}
       run: |
-        ln -sfn "$PWD/BAR-local" ../BAR
-        test -f ../BAR/Cargo.toml
-        test "$(readlink -f ../BAR)" = "$(readlink -f "$PWD/BAR-local")"
-        echo "bara queda en $(readlink -f ../BAR)"
+        git config --global url."https://x-access-token:${{ secrets.KERNEL_READ_TOKEN }}@github.com/".insteadOf "https://github.com/"
     # Set de escritorio de Tauri v2 en Debian/Ubuntu
     # (https://v2.tauri.app/start/prerequisites/). libwebkit2gtk-4.1-dev
     # arrastra GTK 3, de modo que pkg-config resuelve gio-2.0, glib-2.0 y
@@ -59,7 +42,7 @@ jobs:
           libssl-dev \
           libayatana-appindicator3-dev \
           librsvg2-dev
-    # El pin del kernel de arriba no se mueve aquí. Rust queda en 1.99.0,
+    # El pin del kernel vive en Cargo.toml (rev SHA). Rust queda en 1.99.0,
     # la misma versión con la que se empaqueta el escritorio de Windows.
     - name: Instalar Rust 1.99.0
       uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -98,7 +81,34 @@ jobs:
         chmod +x .github/linux-link.py
         cargo clippy --all-targets --locked -- -D warnings
         cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
-    # tsc y el autodiagnóstico no ejecutan el CLI de Tauri ni vite build.
+    # tsc, Vitest y el autodiagnóstico no ejecutan el CLI de Tauri ni vite build.
     # package.json no declara preinstall, install, postinstall ni prepare.
     - name: Frontend
-      run: npm ci --ignore-scripts && npm run typecheck && npm run test:ai
+      run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run test:ai
+
+  # MSVC en windows-latest: el runner trae VS/Build Tools y WebView2; ring y
+  # Tauri enlazan sin instalar LLVM MinGW (más frágil en GHA). El target local
+  # gnu sigue documentado en el README para desarrolladores.
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - name: Autenticar git para el kernel privado
+      shell: bash
+      run: |
+        git config --global url."https://x-access-token:${{ secrets.KERNEL_READ_TOKEN }}@github.com/".insteadOf "https://github.com/"
+    - name: Instalar Rust 1.99.0 (MSVC)
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      with:
+        toolchain: 1.99.0
+        components: clippy, rustfmt
+    - name: Build
+      run: cargo build --locked --verbose
+    - name: Run tests
+      run: cargo test --locked --verbose
+    - name: Kernel-host + Tauri (lib)
+      run: |
+        cargo test --manifest-path kernel-host/Cargo.toml --features faults --locked
+        cargo test --manifest-path src-tauri/Cargo.toml --locked
+    - name: Frontend
+      run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run test:ai

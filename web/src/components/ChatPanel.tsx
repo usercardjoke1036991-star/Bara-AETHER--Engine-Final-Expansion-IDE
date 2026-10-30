@@ -25,6 +25,7 @@ import { listModels, sendChat } from "../ai/providers";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
+import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
 import { loadLocalWeights, localComplete } from "../offline";
 import { shoreshTranslate, type Analysis, type RootEntry, type Translation } from "../engine";
 import AiSettings from "./AiSettings";
@@ -87,8 +88,12 @@ export interface ChatPanelProps {
   treeOutline?: string;
   /** Envía un bloque de código al editor del IDE. */
   onUseCode: (code: string) => void;
-  /** Pide al núcleo el veto de Belnap y, si es `∅`, la escritura. */
+  /** Juzga un bloque sin escribir (diff + canApply). */
   onJudge: (patch: string) => Promise<AutoApplyReport>;
+  /** Escribe tras aceptar el diff (con respaldo). */
+  onConfirm: (patch: string) => Promise<AutoApplyReport>;
+  /** Restaura el respaldo del último apply. */
+  onUndo: (path: string, backupPath: string) => Promise<AutoApplyReport>;
 }
 
 export default function ChatPanel({
@@ -102,6 +107,8 @@ export default function ChatPanel({
   treeOutline = "",
   onUseCode,
   onJudge,
+  onConfirm,
+  onUndo,
 }: ChatPanelProps) {
   const [config, setConfig] = useState<AiConfig>(() => loadConfig());
   useEffect(() => {
@@ -155,13 +162,11 @@ export default function ChatPanel({
   const [dragging, setDragging] = useState(false);
   const [offline, setOffline] = useState(false);
   const [weights, setWeights] = useState<string | null>(null);
-  const [autoApply, setAutoApply] = useState(() => {
-    try {
-      return localStorage.getItem("bara.autoApply") === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [autoApply, setAutoApply] = useState(() => readAutoApplyEnabled());
+  const [review, setReview] = useState<{ patch: string; report: AutoApplyReport } | null>(null);
+  const [lastBackup, setLastBackup] = useState<{ path: string; backupPath: string } | null>(
+    null,
+  );
 
   const abortRef = useRef<AbortController | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
@@ -193,11 +198,7 @@ export default function ChatPanel({
   }, [open, settings]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("bara.autoApply", autoApply ? "1" : "0");
-    } catch {
-      // El almacén puede estar cerrado. El interruptor sigue valiendo en esta sesión.
-    }
+    writeAutoApplyEnabled(autoApply);
   }, [autoApply]);
 
   /** Adjunta archivos (arrastrados, pegados o elegidos) al mensaje en curso. */
@@ -294,19 +295,38 @@ export default function ChatPanel({
         for (const block of blocks) {
           try {
             const report = await onJudge(block);
+            if (report.status === "neither" || report.glyph === "∅") {
+              setNotice(
+                report.blockReason ||
+                  `∅ falta información: no se escribe (${report.unverifiedReason || "sin detalle"}).`,
+              );
+              setReview(null);
+              break;
+            }
             if (report.status === "both") {
               setNotice(
                 `Veto ${report.glyph}: el bloque contradice el archivo. Hace falta intervención manual.`,
               );
+              setReview(null);
               break;
             }
-            if (report.applied) {
-              setNotice(`Auto-Apply ${report.glyph}: escrito en ${report.path}:${report.line}.`);
-            } else {
-              setNotice(`Auto-Apply ${report.glyph}: el bloque no se escribió.`);
+            if (!report.verified || !report.canApply) {
+              setNotice(
+                report.blockReason ||
+                  report.unverifiedReason ||
+                  `Auto-Apply ${report.glyph}: propuesta no verificada; no se escribe.`,
+              );
+              setReview(null);
+              break;
             }
+            setReview({ patch: block, report });
+            setNotice(
+              `Auto-Apply ${report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`,
+            );
+            break;
           } catch (error) {
             setNotice(reasonOf(error));
+            setReview(null);
             break;
           }
         }
@@ -329,6 +349,52 @@ export default function ChatPanel({
       setPending(false);
     }
   }, [attachments, autoApply, config, draft, messages, offline, onJudge, pending, system]);
+
+  const acceptReview = useCallback(async () => {
+    if (!review) {
+      return;
+    }
+    try {
+      const report = await onConfirm(review.patch);
+      if (report.applied) {
+        setLastBackup(
+          report.backupPath
+            ? { path: report.path, backupPath: report.backupPath }
+            : null,
+        );
+        setNotice(
+          `Aplicado ${report.glyph}: ${report.path}:${report.line}. Respaldo en ${report.backupPath || "(sin ruta)"}.`,
+        );
+      } else {
+        setNotice(report.blockReason || `No se escribió (${report.glyph}).`);
+      }
+      setReview(null);
+    } catch (error) {
+      setNotice(reasonOf(error));
+    }
+  }, [onConfirm, review]);
+
+  const rejectReview = useCallback(() => {
+    setReview(null);
+    setNotice("Diff rechazado: no se escribió nada.");
+  }, []);
+
+  const undoLast = useCallback(async () => {
+    if (!lastBackup) {
+      return;
+    }
+    try {
+      const report = await onUndo(lastBackup.path, lastBackup.backupPath);
+      if (report.applied) {
+        setNotice(`Deshacer: restaurado ${report.path} desde ${lastBackup.backupPath}.`);
+      } else {
+        setNotice(report.blockReason || "No se pudo deshacer.");
+      }
+      setLastBackup(null);
+    } catch (error) {
+      setNotice(reasonOf(error));
+    }
+  }, [lastBackup, onUndo]);
 
 
   /** Cancela el turno en curso (el proveedor corta en cuanto se interrumpe). */
@@ -691,6 +757,32 @@ export default function ChatPanel({
 
             {translations.borrador ? (
               <TranslationBox result={translations.borrador} onUseCode={onUseCode} />
+            ) : null}
+            {review ? (
+              <div className="ai-review" role="region" aria-label="Vista previa del parche">
+                <p className="muted">
+                  Diff propuesto ({review.report.glyph}
+                  {review.report.verified ? " · verificado" : " · no verificado"}). Aceptar escribe
+                  con respaldo; rechazar no toca el disco.
+                </p>
+                <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
+                <div className="row">
+                  <button type="button" onClick={() => void acceptReview()}>
+                    Aceptar
+                  </button>
+                  <button type="button" onClick={rejectReview}>
+                    Rechazar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {lastBackup ? (
+              <div className="row">
+                <button type="button" onClick={() => void undoLast()}>
+                  Deshacer
+                </button>
+                <span className="muted">{lastBackup.backupPath}</span>
+              </div>
             ) : null}
             {notice ? <p className="muted">{notice}</p> : null}
             {report ? (

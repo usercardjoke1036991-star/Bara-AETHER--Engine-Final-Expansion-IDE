@@ -18,5 +18,6 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["web/src", "vite.config.ts"]
+  "include": ["web/src", "vite.config.ts"],
+  "exclude": ["web/src/**/*.test.ts", "web/src/**/*.test.tsx"]
 }

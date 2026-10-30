@@ -1,15 +1,25 @@
-//! Veto de Belnap para el modo autónomo.
+//! Veto de Belnap y escritura segura para el modo autónomo.
 //!
 //! El WebView manda el bloque, la ruta relativa y la línea. El núcleo parsea
-//! el bloque y sólo un veredicto `∅` llega a disco. `⊤∧⊥` no escribe.
+//! el bloque con `syntax::judge_patch` (léxico *Shoresh* incluido).
+//!
+//! Reglas duras:
+//! * `judge` **nunca** escribe: sólo devuelve juicio, verificación y diff.
+//! * `∅` (Neither) jamás se aplica — ni en automático ni tras aceptar.
+//! * `confirm` escribe sólo con `⊤`, léxico verificado y aceptación explícita;
+//!   antes crea una copia en `.bara-backup/<fecha>/`.
+//! * `undo` restaura ese respaldo.
 
 #![forbid(unsafe_code)]
 
 use bara::autopoietic::BelnapValue;
 use bara::log_lattice::status_key;
-use bara::syntax;
+use bara::syntax::{self, shoresh_unverified_reason};
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::workspace::{self, WorkspaceDocument};
 
@@ -30,6 +40,18 @@ pub struct AutoApplyReport {
     /// Líneas que ocupó el bloque insertado. Cero si no se escribió.
     pub inserted: u32,
     pub source: String,
+    /// `true` si el léxico del kernel reconoce el bloque.
+    pub verified: bool,
+    /// Motivo de «propuesta no verificada», o vacío.
+    pub unverified_reason: String,
+    /// Diff unificado (vista previa). Vacío si no hay candidato.
+    pub preview_diff: String,
+    /// `true` sólo cuando el juicio es `⊤`, está verificado y aún no se escribió.
+    pub can_apply: bool,
+    /// Aviso legible si no se puede escribir (p. ej. `∅ falta información`).
+    pub block_reason: String,
+    /// Ruta relativa del respaldo tras un `confirm` exitoso.
+    pub backup_path: String,
 }
 
 /// Inserta `patch` en la línea 1-based. `line == 0` añade al final.
@@ -74,7 +96,188 @@ fn language_of_path(path: &str) -> bara::transmuter::SourceLanguage {
     }
 }
 
-/// Juzga y, si el valor es `∅`, escribe el archivo dentro de la raíz activa.
+fn stamp() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Fecha UTC compacta a partir del epoch (sin dependencia de calendario).
+    let days = secs / 86_400;
+    let time = secs % 86_400;
+    let hh = time / 3600;
+    let mm = (time % 3600) / 60;
+    let ss = time % 60;
+    // 1970-01-01 + days → YYYYMMDD aproximado civil via algoritmo civil.
+    let (y, m, d) = civil_from_days(days as i64);
+    format!("{y:04}{m:02}{d:02}_{hh:02}{mm:02}{ss:02}")
+}
+
+/// Algoritmo civil de Howard Hinnant (días desde 1970-01-01 → Y-M-D).
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m, d)
+}
+
+fn safe_relative(relative: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    if relative.trim().is_empty() || path.is_absolute() {
+        return Err("la ruta del respaldo debe ser relativa al workspace".to_string());
+    }
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "la ruta «{relative}» contiene componentes no permitidos"
+        ));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn write_backup(root: &str, relative: &str, contents: &str) -> Result<String, String> {
+    let root_path = workspace::resolve_root(root)?;
+    let stamp = stamp();
+    let safe = relative.replace('\\', "/");
+    let backup_rel = format!(".bara-backup/{stamp}/{safe}.bak");
+    let member = safe_relative(&backup_rel)?;
+    let target = root_path.join(&member);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("no se pudo crear el respaldo: {err}"))?;
+        let canonical_parent = fs::canonicalize(parent)
+            .map_err(|err| format!("no se pudo validar el respaldo: {err}"))?;
+        if !canonical_parent.starts_with(&root_path) {
+            return Err("el respaldo quedaría fuera del workspace".to_string());
+        }
+    }
+    fs::write(&target, contents).map_err(|err| format!("no se pudo guardar el respaldo: {err}"))?;
+    Ok(backup_rel.replace('\\', "/"))
+}
+
+fn unified_diff(path: &str, before: &str, after: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("--- a/{path}\n+++ b/{path}\n"));
+    let left: Vec<&str> = before.split('\n').collect();
+    let right: Vec<&str> = after.split('\n').collect();
+    let max = left.len().max(right.len());
+    for index in 0..max {
+        let a = left.get(index).copied().unwrap_or("");
+        let b = right.get(index).copied().unwrap_or("");
+        if a == b {
+            out.push(' ');
+            out.push_str(a);
+            out.push('\n');
+        } else {
+            if index < left.len() {
+                out.push('-');
+                out.push_str(a);
+                out.push('\n');
+            }
+            if index < right.len() {
+                out.push('+');
+                out.push_str(b);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+fn evaluate(
+    path: &str,
+    line: u32,
+    host: &str,
+    patch: &str,
+) -> Result<(BelnapValue, bool, String, String, u32, u32, bool, String), String> {
+    if path.len() > 512 || line > 1_000_000 {
+        return Err("la ruta o la línea quedan fuera de la cota".to_string());
+    }
+    if patch.len() > MAX_PATCH || host.len() > MAX_HOST {
+        return Err("el bloque supera la cota del parche".to_string());
+    }
+    let unverified = shoresh_unverified_reason(patch);
+    let verified = unverified.is_none();
+    let unverified_reason = unverified.unwrap_or_default();
+    let value = syntax::judge_patch(language_of_path(path), host, patch);
+    let (next, at, inserted) = splice(host, patch, line);
+    let preview = if value == BelnapValue::True && verified {
+        unified_diff(path, host, &next)
+    } else {
+        String::new()
+    };
+    let (can_apply, block_reason) = match value {
+        BelnapValue::Neither => (
+            false,
+            if unverified_reason.is_empty() {
+                "∅ falta información: no se escribe".to_string()
+            } else {
+                format!("∅ {unverified_reason}")
+            },
+        ),
+        BelnapValue::Both => (
+            false,
+            "⊤∧⊥ veto: el bloque contradice el archivo".to_string(),
+        ),
+        BelnapValue::False => (false, "⊥ bloque vacío: no hay hecho que escribir".to_string()),
+        BelnapValue::True if !verified => (
+            false,
+            if unverified_reason.is_empty() {
+                "propuesta no verificada: auto-aplicado bloqueado".to_string()
+            } else {
+                unverified_reason.clone()
+            },
+        ),
+        BelnapValue::True => (true, String::new()),
+    };
+    Ok((
+        value,
+        verified,
+        unverified_reason,
+        preview,
+        at,
+        inserted,
+        can_apply,
+        block_reason,
+    ))
+}
+
+fn empty_report(
+    path: &str,
+    line: u32,
+    value: BelnapValue,
+    verified: bool,
+    unverified_reason: String,
+    preview_diff: String,
+    can_apply: bool,
+    block_reason: String,
+) -> AutoApplyReport {
+    AutoApplyReport {
+        glyph: value.glyph().to_string(),
+        status: status_key(value).to_string(),
+        applied: false,
+        path: path.replace('\\', "/"),
+        line,
+        inserted: 0,
+        source: String::new(),
+        verified,
+        unverified_reason,
+        preview_diff,
+        can_apply,
+        block_reason,
+        backup_path: String::new(),
+    }
+}
+
+/// Juzga el bloque **sin escribir**. Devuelve diff y si se puede confirmar.
 pub fn judge(
     root: &str,
     path: &str,
@@ -82,42 +285,144 @@ pub fn judge(
     host: &str,
     patch: &str,
 ) -> Result<AutoApplyReport, String> {
-    if path.len() > 512 || line > 1_000_000 {
-        return Err("la ruta o la línea quedan fuera de la cota".to_string());
+    let (
+        value,
+        verified,
+        unverified_reason,
+        preview_diff,
+        at,
+        _inserted,
+        can_apply,
+        block_reason,
+    ) = evaluate(path, line, host, patch)?;
+    // Coherencia con disco: si el host no coincide, no hay candidato aplicable.
+    if can_apply {
+        let on_disk = workspace::read_text(root, path)?;
+        if on_disk.source != host {
+            return Ok(empty_report(
+                path,
+                line,
+                value,
+                verified,
+                unverified_reason,
+                String::new(),
+                false,
+                "el archivo en disco no coincide con el editor; no se escribe".to_string(),
+            ));
+        }
     }
-    if patch.len() > MAX_PATCH || host.len() > MAX_HOST {
-        return Err("el bloque supera la cota del parche".to_string());
-    }
-    let value = syntax::judge_patch(language_of_path(path), host, patch);
-    let glyph = value.glyph().to_string();
-    let status = status_key(value).to_string();
-    if value != BelnapValue::Neither {
-        return Ok(AutoApplyReport {
-            glyph,
-            status,
-            applied: false,
-            path: path.replace('\\', "/"),
+    Ok(empty_report(
+        path,
+        at,
+        value,
+        verified,
+        unverified_reason,
+        preview_diff,
+        can_apply,
+        block_reason,
+    ))
+}
+
+/// Escribe el parche tras aceptación explícita. Crea respaldo en `.bara-backup/`.
+pub fn confirm(
+    root: &str,
+    path: &str,
+    line: u32,
+    host: &str,
+    patch: &str,
+) -> Result<AutoApplyReport, String> {
+    let (
+        value,
+        verified,
+        unverified_reason,
+        preview_diff,
+        _at,
+        _inserted,
+        can_apply,
+        block_reason,
+    ) = evaluate(path, line, host, patch)?;
+    if !can_apply {
+        return Ok(empty_report(
+            path,
             line,
-            inserted: 0,
-            source: String::new(),
-        });
+            value,
+            verified,
+            unverified_reason,
+            preview_diff,
+            false,
+            if block_reason.is_empty() {
+                "el parche no se puede aplicar".to_string()
+            } else {
+                block_reason
+            },
+        ));
     }
-    // El veredicto `∅` usó el host del WebView. Antes de escribir, el archivo
-    // canónico de la jaula tiene que ser ese mismo texto, byte a byte.
+    if value == BelnapValue::Neither {
+        return Ok(empty_report(
+            path,
+            line,
+            value,
+            verified,
+            unverified_reason,
+            String::new(),
+            false,
+            "∅ falta información: no se escribe".to_string(),
+        ));
+    }
     let on_disk = workspace::read_text(root, path)?;
     if on_disk.source != host {
         return Err("el archivo en disco no coincide con el editor; no se escribió".to_string());
     }
+    let backup_path = write_backup(root, path, &on_disk.source)?;
     let (next, at, inserted) = splice(&on_disk.source, patch, line);
     let document: WorkspaceDocument = workspace::write_source(root, path, &next)?;
     Ok(AutoApplyReport {
-        glyph,
-        status,
+        glyph: value.glyph().to_string(),
+        status: status_key(value).to_string(),
         applied: true,
         path: document.path,
         line: at,
         inserted,
         source: document.source,
+        verified,
+        unverified_reason,
+        preview_diff,
+        can_apply: false,
+        block_reason: String::new(),
+        backup_path,
+    })
+}
+
+/// Restaura el archivo desde un respaldo relativo bajo `.bara-backup/`.
+pub fn undo(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport, String> {
+    if !backup_path.replace('\\', "/").starts_with(".bara-backup/") {
+        return Err("el respaldo debe vivir bajo .bara-backup/".to_string());
+    }
+    let root_path = workspace::resolve_root(root)?;
+    let member = safe_relative(backup_path)?;
+    let backup = root_path.join(member);
+    let canonical = fs::canonicalize(&backup)
+        .map_err(|err| format!("no se pudo abrir el respaldo: {err}"))?;
+    if !canonical.starts_with(&root_path) {
+        return Err("el respaldo queda fuera del workspace".to_string());
+    }
+    let previous = fs::read_to_string(&canonical)
+        .map_err(|err| format!("no se pudo leer el respaldo: {err}"))?;
+    let document = workspace::write_source(root, path, &previous)?;
+    Ok(AutoApplyReport {
+        glyph: "⊤".to_string(),
+        status: "true".to_string(),
+        applied: true,
+        path: document.path,
+        line: 1,
+        inserted: 0,
+        source: document.source,
+        verified: true,
+        unverified_reason: String::new(),
+        preview_diff: String::new(),
+        can_apply: false,
+        block_reason: String::new(),
+        backup_path: backup_path.replace('\\', "/"),
     })
 }
 
@@ -139,12 +444,12 @@ mod tests {
     }
 
     #[test]
-    fn el_vacio_escribe_y_el_both_no_toca_el_disco() {
+    fn el_juicio_no_escribe_y_el_confirm_crea_respaldo() {
         let root = scratch();
         let file = root.join("src").join("lib.rs");
         fs::write(&file, "fn alpha() {}\n").expect("semilla");
         let root_text = root.display().to_string();
-        let clean = judge(
+        let preview = judge(
             &root_text,
             "src/lib.rs",
             2,
@@ -152,24 +457,53 @@ mod tests {
             "fn beta() {}\n",
         )
         .expect("limpio");
-        assert!(clean.applied);
-        assert_eq!(clean.glyph, "∅");
-        assert!(clean.source.contains("fn beta()"));
-        let clash = judge(
+        assert!(!preview.applied);
+        assert!(preview.can_apply);
+        assert_eq!(preview.glyph, "⊤");
+        assert!(preview.verified);
+        assert!(!preview.preview_diff.is_empty());
+        assert_eq!(fs::read_to_string(&file).expect("disco"), "fn alpha() {}\n");
+
+        let written = confirm(
             &root_text,
             "src/lib.rs",
             2,
             "fn alpha() {}\n",
-            "fn alpha() {}\n",
+            "fn beta() {}\n",
         )
-        .expect("choque");
-        assert!(!clash.applied);
-        assert_eq!(clash.glyph, "⊤∧⊥");
+        .expect("confirm");
+        assert!(written.applied);
+        assert!(written.backup_path.starts_with(".bara-backup/"));
+        assert!(written.source.contains("fn beta()"));
         let disk = fs::read_to_string(&file).expect("disco");
         assert!(disk.contains("fn beta()"));
-        assert_eq!(disk.matches("fn alpha()").count(), 1);
-        assert!(judge(&root_text, "../fuera.rs", 1, "", "fn z() {}\n").is_err());
-        assert!(judge(&root_text, "src/notas.md", 1, "", "fn z() {}\n").is_err());
+
+        let restored = undo(&root_text, "src/lib.rs", &written.backup_path).expect("undo");
+        assert!(restored.applied);
+        assert_eq!(
+            fs::read_to_string(&file).expect("disco"),
+            "fn alpha() {}\n"
+        );
+    }
+
+    #[test]
+    fn el_vacio_nunca_escribe() {
+        let root = scratch();
+        fs::write(root.join("src").join("lib.rs"), "fn alpha() {}\n").expect("semilla");
+        let root_text = root.display().to_string();
+        // Raíz hebrea desconocida → ∅ / no verificada.
+        let report = judge(&root_text, "src/lib.rs", 1, "fn alpha() {}\n", "זזז\n").expect("∅");
+        assert!(!report.applied);
+        assert!(!report.can_apply);
+        assert_eq!(report.glyph, "∅");
+        assert!(!report.verified);
+        let denied = confirm(&root_text, "src/lib.rs", 1, "fn alpha() {}\n", "זזז\n").expect("∅");
+        assert!(!denied.applied);
+        assert!(!denied.can_apply);
+        assert_eq!(
+            fs::read_to_string(root.join("src").join("lib.rs")).expect("disco"),
+            "fn alpha() {}\n"
+        );
     }
 
     #[test]
@@ -185,18 +519,19 @@ mod tests {
         )
         .expect("veto");
         assert!(!report.applied);
+        assert!(!report.can_apply);
         assert_eq!(report.status, "both");
         let disk = fs::read_to_string(root.join("src").join("lib.rs")).expect("disco");
         assert!(!disk.contains("gamma"));
     }
 
     #[test]
-    fn el_host_distinto_no_escribe() {
+    fn el_host_distinto_no_confirma() {
         let root = scratch();
         let file = root.join("src").join("lib.rs");
         let original = "fn alpha() {}\n";
         fs::write(&file, original).expect("semilla");
-        let stale = judge(
+        let stale = confirm(
             &root.display().to_string(),
             "src/lib.rs",
             2,
@@ -212,20 +547,6 @@ mod tests {
             message.contains("no coincide"),
             "el error no dice que el disco difiere: {message}"
         );
-        assert!(!message.contains("⊤∧⊥"));
-        let disk = fs::read_to_string(&file).expect("disco");
-        assert_eq!(disk, original);
-        let fresh = judge(
-            &root.display().to_string(),
-            "src/lib.rs",
-            2,
-            original,
-            "fn beta() {}\n",
-        )
-        .expect("host igual");
-        assert!(fresh.applied);
-        assert!(fs::read_to_string(&file)
-            .expect("disco")
-            .contains("fn beta()"));
+        assert_eq!(fs::read_to_string(&file).expect("disco"), original);
     }
 }

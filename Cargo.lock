@@ -5,6 +5,7 @@ version = 4
 [[package]]
 name = "bara"
 version = "0.5.0"
+source = "git+https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git?rev=0db6304065e018fddfec7e2378e43d2abe82465d#0db6304065e018fddfec7e2378e43d2abe82465d"
 
 [[package]]
 name = "bara-ide"

@@ -45,8 +45,11 @@
 //! * `run_workspace_recipe(recipe)` — `check`, `test` o `typecheck`. El
 //!   proceso y los argumentos son literales; no hay shell. `typecheck`
 //!   (npm) se corta a los 60 s; `check` y `test` (cargo), a los 120 s.
-//! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque.
-//!   Sólo un `∅` se escribe, en la ruta relativa de la raíz activa.
+//! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque
+//!   **sin escribir**. `∅` nunca se aplica; hace falta `confirm_auto_patch`
+//!   tras aceptar el diff (con respaldo en `.bara-backup/`).
+//! * `confirm_auto_patch` / `undo_auto_patch` — escriben o restauran tras
+//!   aceptación explícita del usuario.
 //! * `load_local_weights()` — diálogo del sistema para un `.gguf`. No recibe ruta.
 //! * `local_complete(prompt)` — responde con el núcleo y los pesos ya cargados.
 //! * `transmute_global(path, from, to)` — propaga un identificador por la red.
@@ -287,7 +290,7 @@ fn workspace_read_project_file(
     workspace::read_assistant(&state.get()?, &path)
 }
 
-/// Juzga un bloque del asistente. La carpeta es la activa; `path` no la cambia.
+/// Juzga un bloque del asistente **sin escribir**. La carpeta es la activa.
 #[tauri::command]
 fn judge_auto_patch(
     window: tauri::WebviewWindow,
@@ -308,6 +311,52 @@ fn judge_auto_patch(
             "line": line,
             "host": host,
             "patch": patch,
+        }),
+    )
+}
+
+/// Escribe un bloque tras aceptación explícita; crea respaldo en `.bara-backup/`.
+#[tauri::command]
+fn confirm_auto_patch(
+    window: tauri::WebviewWindow,
+    path: String,
+    line: u32,
+    host: String,
+    patch: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    kernel_call(
+        &kernel,
+        "confirm_patch",
+        json!({
+            "root": state.get()?,
+            "path": path,
+            "line": line,
+            "host": host,
+            "patch": patch,
+        }),
+    )
+}
+
+/// Restaura un archivo desde un respaldo relativo bajo `.bara-backup/`.
+#[tauri::command]
+fn undo_auto_patch(
+    window: tauri::WebviewWindow,
+    path: String,
+    backup_path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    kernel_call(
+        &kernel,
+        "undo_patch",
+        json!({
+            "root": state.get()?,
+            "path": path,
+            "backup_path": backup_path,
         }),
     )
 }
@@ -1022,6 +1071,12 @@ pub fn run() {
                 .handle()
                 .emit("kernel-host", app.state::<KernelHost>().status().label());
             idle_loop::start(app.handle().clone());
+            // DevTools sólo con `--features devtools` (release queda apagado por
+            // defecto; en debug se puede activar la misma feature). Ver README.
+            #[cfg(feature = "devtools")]
+            if let Some(window) = app.get_webview_window("main") {
+                window.open_devtools();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1078,6 +1133,8 @@ pub fn run() {
             editor_context_get,
             run_workspace_recipe,
             judge_auto_patch,
+            confirm_auto_patch,
+            undo_auto_patch,
             load_local_weights,
             local_complete,
             transmute_global,
@@ -1123,6 +1180,8 @@ mod ipc_boundary {
         assert!(handler.contains("editor_context_get"));
         assert!(handler.contains("run_workspace_recipe"));
         assert!(handler.contains("judge_auto_patch"));
+        assert!(handler.contains("confirm_auto_patch"));
+        assert!(handler.contains("undo_auto_patch"));
         assert!(handler.contains("load_local_weights"));
         assert!(handler.contains("local_complete"));
         assert!(handler.contains("transmute_global"));

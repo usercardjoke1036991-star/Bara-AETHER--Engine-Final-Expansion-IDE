@@ -8,6 +8,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
+import { verifyBaraBlock, type BaraVerifyStatus } from "../baraVerify";
 import { writeClipboard } from "../clipboard";
 
 /** Fragmento de una respuesta: prosa o bloque cercado. */
@@ -124,12 +125,58 @@ function CopyButton({
   );
 }
 
-/** Bloque de código con acciones: copiar y enviar al editor Shoresh. */
+function verifyLabel(status: BaraVerifyStatus): string {
+  switch (status) {
+    case "verified":
+      return "verificado";
+    case "unverified":
+      return "no verificado";
+    case "pending":
+      return "comprobando…";
+    case "error":
+      return "no verificado";
+  }
+}
+
+/** Bloque de código con acciones: copiar, insignia y enviar al editor Shoresh. */
 function CodeBlock({ block, onUseCode }: { block: Block; onUseCode?: (code: string) => void }) {
+  const isBara = block.language.toLowerCase() === "bara";
+  const [status, setStatus] = useState<BaraVerifyStatus>(isBara ? "pending" : "unverified");
+
+  useEffect(() => {
+    if (!isBara) {
+      return undefined;
+    }
+    let cancel = false;
+    setStatus("pending");
+    void verifyBaraBlock(block.content).then((next) => {
+      if (!cancel) {
+        setStatus(next);
+      }
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [block.content, isBara]);
+
   return (
     <div className="ai-code">
       <div className="ai-code-head">
         <span className="muted">{block.language || "texto"}</span>
+        {isBara ? (
+          <span
+            className={
+              status === "verified" ? "ai-badge ai-badge-ok" : "ai-badge ai-badge-warn"
+            }
+            title={
+              status === "verified"
+                ? "El kernel reconoce las raíces y la sintaxis"
+                : "propuesta no verificada"
+            }
+          >
+            {verifyLabel(status)}
+          </span>
+        ) : null}
         <span className="grow" />
         <CopyButton className="ai-copy-code" label="Copiar" text={block.content} />
         {onUseCode ? (

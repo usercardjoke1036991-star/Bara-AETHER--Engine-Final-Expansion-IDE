@@ -8,7 +8,7 @@ La raíz activa es una ruta canónica. La instalan `workspace_open_dialog` y `gi
 
 `analyze_file` y `read_document` no eligen otra raíz: abren sólo un `.bara` que, ya canonizado, queda dentro de esa raíz.
 
-Antes de tocar el disco se rechaza `..` y cualquier componente que no sea un nombre normal. Después se canoniza (enlaces incluidos) y el resultado tiene que cumplir `starts_with` sobre la raíz. El guardado del editor escribe `.bara`. `judge_auto_patch` puede escribir una fuente del proyecto, con el mismo tope de 2 MiB, sólo cuando el núcleo devuelve `∅`. El árbol no sigue enlaces simbólicos, recanoniza cada carpeta, salta `target/`, `node_modules/` y `.git/`, y corta a profundidad 24.
+Antes de tocar el disco se rechaza `..` y cualquier componente que no sea un nombre normal. Después se canoniza (enlaces incluidos) y el resultado tiene que cumplir `starts_with` sobre la raíz. El guardado del editor escribe `.bara`. `judge_auto_patch` **no escribe**: sólo juzga y devuelve diff. La escritura exige `confirm_auto_patch` tras aceptar el diff (juicio `⊤`, léxico verificado); `∅` jamás se aplica. Antes de escribir se crea un respaldo bajo `.bara-backup/` y `undo_auto_patch` puede restaurarlo. El árbol no sigue enlaces simbólicos, recanoniza cada carpeta, salta `target/`, `node_modules/`, `.git/` y `.bara-backup/`, y corta a profundidad 24.
 
 ## Qué confía en el WebView
 
