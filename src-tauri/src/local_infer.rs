@@ -213,7 +213,7 @@ mod tests {
         assert!(reply.reply.contains("sin red"));
         assert!(!reply.reply.contains("https://"));
         let fenced = complete(&card(), "```rs\nfn nueva() {}\n```");
-        assert_eq!(fenced.glyph, "∅");
+        assert_eq!(fenced.glyph, "⊤");
         let broken = complete(&card(), "```rs\nfn nueva() {\n```");
         assert_eq!(broken.glyph, "⊤∧⊥");
     }

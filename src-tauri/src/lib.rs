@@ -45,8 +45,11 @@
 //! * `run_workspace_recipe(recipe)` — `check`, `test` o `typecheck`. El
 //!   proceso y los argumentos son literales; no hay shell. `typecheck`
 //!   (npm) se corta a los 60 s; `check` y `test` (cargo), a los 120 s.
-//! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque.
-//!   Sólo un `∅` se escribe, en la ruta relativa de la raíz activa.
+//! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque
+//!   **sin escribir**. `∅` nunca se aplica; hace falta `confirm_auto_patch`
+//!   tras aceptar el diff (con respaldo en `.bara-backup/`).
+//! * `confirm_auto_patch` / `undo_auto_patch` — escriben o restauran tras
+//!   aceptación explícita del usuario.
 //! * `load_local_weights()` — diálogo del sistema para un `.gguf`. No recibe ruta.
 //! * `local_complete(prompt)` — responde con el núcleo y los pesos ya cargados.
 //! * `transmute_global(path, from, to)` — propaga un identificador por la red.
@@ -136,6 +139,9 @@ mod ai_http;
 
 // Segunda capa de permisos: etiqueta de la ventana frente a lista fija.
 mod window_guard;
+
+// Saneado de fugas DSML / tool_call en texto del asistente.
+mod tool_leak;
 
 /// Pide una operación al proceso del kernel y devuelve el JSON ya firmado.
 fn kernel_call(kernel: &KernelHost, op: &str, args: Value) -> Result<Value, String> {
@@ -287,7 +293,23 @@ fn workspace_read_project_file(
     workspace::read_assistant(&state.get()?, &path)
 }
 
-/// Juzga un bloque del asistente. La carpeta es la activa; `path` no la cambia.
+fn auto_patch_args(
+    state: &workspace::ActiveWorkspace,
+    path: String,
+    line: u32,
+    host: String,
+    patch: String,
+) -> Result<Value, String> {
+    Ok(json!({
+        "root": state.get()?,
+        "path": path,
+        "line": line,
+        "host": host,
+        "patch": patch,
+    }))
+}
+
+/// Juzga un bloque del asistente **sin escribir**. La carpeta es la activa.
 #[tauri::command]
 fn judge_auto_patch(
     window: tauri::WebviewWindow,
@@ -302,12 +324,62 @@ fn judge_auto_patch(
     kernel_call(
         &kernel,
         "judge_patch",
+        auto_patch_args(&state, path, line, host, patch)?,
+    )
+}
+
+/// Escribe un bloque tras aceptación explícita; crea respaldo en `.bara-backup/`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // IPC Tauri: window/app/state/kernel + payload del juicio.
+fn confirm_auto_patch(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    path: String,
+    line: u32,
+    host: String,
+    patch: String,
+    judgment_id: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    let report = kernel_call(
+        &kernel,
+        "confirm_patch",
         json!({
             "root": state.get()?,
             "path": path,
             "line": line,
             "host": host,
             "patch": patch,
+            "judgment_id": judgment_id,
+        }),
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(relative) = report.get("path").and_then(Value::as_str) {
+            emit_workspace_file_changed(&app, relative);
+        }
+    }
+    Ok(report)
+}
+
+/// Restaura un archivo desde un respaldo relativo bajo `.bara-backup/`.
+#[tauri::command]
+fn undo_auto_patch(
+    window: tauri::WebviewWindow,
+    path: String,
+    backup_path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    kernel_call(
+        &kernel,
+        "undo_patch",
+        json!({
+            "root": state.get()?,
+            "path": path,
+            "backup_path": backup_path,
         }),
     )
 }
@@ -356,17 +428,32 @@ fn local_complete(prompt: String, kernel: tauri::State<'_, KernelHost>) -> Resul
 /// Propaga un identificador por el grafo de la carpeta activa.
 #[tauri::command]
 fn transmute_global(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     path: String,
     from: String,
     to: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
-    kernel_call(
+    window_guard::require(&window, window_guard::MAIN)?;
+    let report = kernel_call(
         &kernel,
         "transmute_global",
         json!({ "root": state.get()?, "path": path, "from": from, "to": to }),
-    )
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(files) = report.get("files").and_then(Value::as_array) {
+            for file in files {
+                if file.get("changed").and_then(Value::as_bool) == Some(true) {
+                    if let Some(relative) = file.get("path").and_then(Value::as_str) {
+                        emit_workspace_file_changed(&app, relative);
+                    }
+                }
+            }
+        }
+    }
+    Ok(report)
 }
 
 /// Aviso del hilo de reposo. Vacío si no hay una optimización limpia.
@@ -382,6 +469,7 @@ fn idle_proposal(slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>) -> Result
 #[tauri::command]
 fn idle_apply(
     window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
@@ -394,16 +482,24 @@ fn idle_apply(
     let Some(notice) = notice else {
         return Ok(Value::Bool(false));
     };
+    let relative = notice
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let wrote = kernel_call(
         &kernel,
         "idle_apply",
         json!({
             "root": state.get()?,
-            "path": notice.get("path").and_then(Value::as_str).unwrap_or(""),
+            "path": relative,
             "name": notice.get("name").and_then(Value::as_str).unwrap_or(""),
             "message": notice.get("message").and_then(Value::as_str).unwrap_or(""),
         }),
     )?;
+    if wrote.as_bool() == Some(true) && !relative.is_empty() {
+        emit_workspace_file_changed(&app, &relative);
+    }
     if let Ok(mut guard) = slot.lock() {
         guard.clear();
     }
@@ -452,12 +548,24 @@ fn workspace_read_document(
 #[tauri::command]
 fn workspace_write_document(
     window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     path: String,
     source: String,
+    expected_hash: Option<String>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
     window_guard::require(&window, window_guard::WRITE)?;
-    workspace::write(&state.get()?, &path, &source)
+    let document = workspace::write(&state.get()?, &path, &source, expected_hash.as_deref())?;
+    emit_workspace_file_changed(&app, &document.path);
+    Ok(document)
+}
+
+/// Avisa a todas las ventanas de que un archivo del workspace cambió en disco.
+fn emit_workspace_file_changed(app: &tauri::AppHandle, path: &str) {
+    let _ = app.emit(
+        "workspace-file-changed",
+        json!({ "path": path.replace('\\', "/") }),
+    );
 }
 
 /// Suelta la malla y el oráculo de una carpeta en el proceso del kernel.
@@ -773,6 +881,67 @@ async fn open_desk_window(app: tauri::AppHandle, vista: String) -> Result<(), St
         .map_err(|err| err.to_string())
 }
 
+/// La ventana de asistencia pide un diff en `main` (sin escribir).
+#[tauri::command]
+fn propose_editor_patch(app: tauri::AppHandle, patch: String) -> Result<(), String> {
+    let text = patch.trim();
+    if text.is_empty() {
+        return Err("el parche está vacío".to_string());
+    }
+    if text.len() > 32 * 1024 {
+        return Err("el parche supera 32 KiB".to_string());
+    }
+    app.emit("assistant-propose-patch", json!({ "patch": text }))
+        .map_err(|err| err.to_string())?;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_focus();
+    }
+    Ok(())
+}
+
+/// La ventana de asistencia envía un fragmento de contexto a `main` (solo memoria).
+#[tauri::command]
+fn propose_ai_desk_attachment(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    name: String,
+    source: String,
+) -> Result<(), String> {
+    window_guard::require(&window, window_guard::CHAT)?;
+    let label = name.trim();
+    let text = source.trim();
+    if label.is_empty() || text.is_empty() {
+        return Err("el fragmento está vacío".to_string());
+    }
+    if text.len() > 256 * 1024 {
+        return Err("el fragmento supera 256 KiB".to_string());
+    }
+    app.emit(
+        "ai-desk-attachment",
+        json!({ "name": label, "source": text }),
+    )
+    .map_err(|err| err.to_string())?;
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_focus();
+    }
+    Ok(())
+}
+
+/// Abre el inspector web. Requiere `--features devtools` (p. ej. `tauri dev`).
+#[tauri::command]
+fn open_devtools_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(feature = "devtools")]
+    {
+        window.open_devtools();
+        Ok(())
+    }
+    #[cfg(not(feature = "devtools"))]
+    {
+        let _ = window;
+        Err("DevTools desactivadas en este binario (release o sin feature)".to_string())
+    }
+}
+
 /// Estante de carpetas abiertas. Cada una es una jaula distinta.
 #[tauri::command]
 fn workspace_roots(
@@ -784,10 +953,18 @@ fn workspace_roots(
 /// Activa una carpeta por el identificador que emitió el backend.
 #[tauri::command]
 fn workspace_activate(
+    app: tauri::AppHandle,
     id: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceShelf, String> {
-    state.activate(id.trim())
+    let shelf = state.activate(id.trim())?;
+    if let Ok(root) = state.get() {
+        let _ = app.emit(
+            "workspace-root-changed",
+            json!({ "root": root, "reason": "activate" }),
+        );
+    }
+    Ok(shelf)
 }
 
 /// Cierra una carpeta del estante. La última permanece.
@@ -856,6 +1033,10 @@ async fn workspace_open_dialog(
     let folder = pick_folder(&app, "Abrir carpeta del workspace")?;
     let tree = workspace::tree(&folder.display().to_string())?;
     adopt_root(&state, &kernel, tree.root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": tree.root.clone(), "reason": "open" }),
+    );
     Ok(tree)
 }
 
@@ -884,6 +1065,10 @@ async fn github_clone(
     .map_err(|_| "el clon se interrumpió".to_string())??;
     let tree = workspace::tree(&cloned.display().to_string())?;
     adopt_root(&state, &kernel, tree.root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": tree.root.clone(), "reason": "clone" }),
+    );
     Ok(tree)
 }
 
@@ -1022,6 +1207,8 @@ pub fn run() {
                 .handle()
                 .emit("kernel-host", app.state::<KernelHost>().status().label());
             idle_loop::start(app.handle().clone());
+            // DevTools: en debug (o `--features devtools`) el front puede abrirlas
+            // con F12 / Ctrl+Shift+I. Release sin la feature no enlaza el inspector.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1039,6 +1226,9 @@ pub fn run() {
             workspace_activate,
             workspace_close_root,
             open_desk_window,
+            propose_editor_patch,
+            propose_ai_desk_attachment,
+            open_devtools_window,
             transmute_workspace,
             inspect_media_dialog,
             github_clone,
@@ -1078,6 +1268,8 @@ pub fn run() {
             editor_context_get,
             run_workspace_recipe,
             judge_auto_patch,
+            confirm_auto_patch,
+            undo_auto_patch,
             load_local_weights,
             local_complete,
             transmute_global,
@@ -1112,6 +1304,8 @@ mod ipc_boundary {
             .0;
         assert!(handler.contains("oracle_converse"));
         assert!(handler.contains("open_desk_window"));
+        assert!(handler.contains("propose_editor_patch"));
+        assert!(handler.contains("open_devtools_window"));
         assert!(handler.contains("workspace_activate"));
         assert!(handler.contains("transmute_workspace"));
         assert!(handler.contains("inspect_media_dialog"));
@@ -1123,6 +1317,8 @@ mod ipc_boundary {
         assert!(handler.contains("editor_context_get"));
         assert!(handler.contains("run_workspace_recipe"));
         assert!(handler.contains("judge_auto_patch"));
+        assert!(handler.contains("confirm_auto_patch"));
+        assert!(handler.contains("undo_auto_patch"));
         assert!(handler.contains("load_local_weights"));
         assert!(handler.contains("local_complete"));
         assert!(handler.contains("transmute_global"));
@@ -1232,8 +1428,8 @@ mod ipc_boundary {
                 assert!(has_llavero, "la asistencia necesita el llavero");
                 assert!(!has_receta, "la asistencia no lanza recetas");
                 assert!(!has_github, "la asistencia no clona");
-                // A3: Ctrl+S / edición en el escritorio de asistencia.
-                assert!(has_write, "la asistencia debe poder guardar el workspace");
+                // A2: Asistencia no escribe a disco; solo adjuntos al chat principal.
+                assert!(!has_write, "la asistencia no guarda el workspace");
             }
             if label == "main" {
                 assert!(has_llavero && has_receta && has_github && has_write);

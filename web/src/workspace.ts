@@ -48,6 +48,19 @@ export interface WorkspaceDocument {
   name: string;
   /** Contenido UTF-8 persistido. */
   source: string;
+  /** Huella FNV-1a del contenido en disco (escritura optimista). */
+  contentHash: string;
+}
+
+/** Misma huella que `workspace::content_hash` (FNV-1a 64). */
+export function contentHashOf(source: string): string {
+  let hash = 0xcbf29ce484222325n;
+  const bytes = new TextEncoder().encode(source);
+  for (const byte of bytes) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x00000100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
 }
 
 /** Directorio de lanzamiento. No cambia la jaula activa. */
@@ -119,6 +132,11 @@ export function workspaceCloseRoot(id: string): Promise<WorkspaceShelf> {
 export function workspaceWriteDocument(
   path: string,
   source: string,
+  expectedHash?: string,
 ): Promise<WorkspaceDocument> {
-  return invoke<WorkspaceDocument>("workspace_write_document", { path, source });
+  return invoke<WorkspaceDocument>("workspace_write_document", {
+    path,
+    source,
+    expectedHash: expectedHash ?? null,
+  });
 }

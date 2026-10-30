@@ -1,0 +1,9 @@
+# Copia este archivo a `Cargo.toml.local` (está en .gitignore) y ejecuta:
+#   npm run kernel:local
+#
+# Eso inyecta el bloque entre marcadores en el `Cargo.toml` de la raíz para
+# que Cargo use el checkout hermano `../BAR` en local. El CI no ejecuta el
+# script y sigue el pin git.
+
+[patch."https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git"]
+bara = { path = "../BAR" }

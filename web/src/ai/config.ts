@@ -133,7 +133,7 @@ export function loadStoredConfig(
 export function loadConfig(store: KeyValueStore | null = defaultStore()): AiConfig {
   const stored = loadStoredConfig(store);
   const config: AiConfig = { ...DEFAULT_CONFIG, ...(stored ?? {}), apiKey: "", hasKey: false };
-  if (!isApiRoot(config.baseUrl)) {
+  if (!allowedApiRoot(config.provider, config.baseUrl) && !isLocalApiRoot(config.baseUrl)) {
     config.baseUrl = PROVIDER_ENDPOINTS[config.provider];
   } else if (
     config.provider === "anthropic" &&
@@ -234,8 +234,46 @@ export function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
-/** `https` con anfitrión, o `http` sólo en la máquina local. Sin usuario ni clave en la URL. */
-export function isApiRoot(value: string): boolean {
+/** Raíces HTTPS permitidas para OpenAI-compatible (incluye DeepSeek oficial). */
+export const OPENAI_CLOUD_ROOTS: readonly string[] = [
+  PROVIDER_ENDPOINTS.openai,
+  "https://api.deepseek.com",
+  "https://api.deepseek.com/v1",
+];
+
+/** `http` sólo en la máquina local (override explícito del panel). */
+export function isLocalApiRoot(value: string): boolean {
+  const trimmed = stripTrailingSlashes(value.trim());
+  try {
+    const url = new URL(trimmed);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+      url.username.length === 0 &&
+      url.password.length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** En la nube la raíz tiene que coincidir con la del proveedor (sin HTTPS arbitrario). */
+export function allowedApiRoot(provider: ProviderId, baseUrl: string): boolean {
+  const trimmed = stripTrailingSlashes(baseUrl.trim());
+  if (isLocalApiRoot(trimmed)) {
+    return true;
+  }
+  if (provider === "anthropic") {
+    return (
+      trimmed === stripTrailingSlashes(PROVIDER_ENDPOINTS.anthropic) ||
+      trimmed === "https://api.anthropic.com"
+    );
+  }
+  return OPENAI_CLOUD_ROOTS.some((root) => stripTrailingSlashes(root) === trimmed);
+}
+
+/** `https` con anfitrión permitido, o `http` sólo en localhost. Sin credenciales en la URL. */
+export function isApiRoot(value: string, provider: ProviderId = "anthropic"): boolean {
   const trimmed = stripTrailingSlashes(value.trim());
   let url: URL;
   try {
@@ -247,10 +285,10 @@ export function isApiRoot(value: string): boolean {
     return false;
   }
   if (url.protocol === "https:") {
-    return url.hostname.length > 0;
+    return url.hostname.length > 0 && allowedApiRoot(provider, trimmed);
   }
   if (url.protocol === "http:") {
-    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    return isLocalApiRoot(trimmed);
   }
   return false;
 }
@@ -288,8 +326,10 @@ export function configProblems(config: AiConfig): string[] {
   if (!config.hasKey && !config.apiKey.trim()) {
     problems.push("Falta la clave de API del proveedor activo.");
   }
-  if (!isApiRoot(config.baseUrl)) {
-    problems.push("La raíz de la API tiene que ser https, o http en localhost.");
+  if (!isApiRoot(config.baseUrl, config.provider)) {
+    problems.push(
+      "La raíz de la API tiene que ser la oficial del proveedor, DeepSeek (OpenAI) o http en localhost.",
+    );
   }
   const { min, max } = TOKEN_RANGE;
   if (!Number.isFinite(config.maxTokens) || config.maxTokens < min || config.maxTokens > max) {

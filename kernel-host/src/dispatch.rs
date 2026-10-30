@@ -173,6 +173,19 @@ fn handle(world: &mut World, op: &str, args: &Value) -> Result<Value, String> {
             text(args, "host")?,
             text(args, "patch")?,
         )),
+        "confirm_patch" => result_of(auto_apply::confirm(
+            text(args, "root")?,
+            text(args, "path")?,
+            count_u32(args, "line")?,
+            text(args, "host")?,
+            text(args, "patch")?,
+            text(args, "judgment_id")?,
+        )),
+        "undo_patch" => result_of(auto_apply::undo(
+            text(args, "root")?,
+            text(args, "path")?,
+            text(args, "backup_path")?,
+        )),
         "transmute_global" => result_of(global_transmute::propagate(
             text(args, "root")?,
             text(args, "path")?,

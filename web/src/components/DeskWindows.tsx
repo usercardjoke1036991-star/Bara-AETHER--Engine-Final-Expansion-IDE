@@ -4,7 +4,7 @@
 // layout. Los números salen de los comandos ya tipados: el marco neuronal
 // en snake_case y el informe de autopoiesis en camelCase.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   kernelAutopoiesis,
@@ -23,11 +23,13 @@ import {
 import {
   getEditorContext,
   onEditorContext,
-  outlineTree,
+  proposeAiDeskAttachment,
   readProjectFile,
   type EditorSnapshot,
 } from "../editorBridge";
 import { inspectMediaDialog } from "../media";
+import { formatPatchDebug } from "../patchFlow";
+import { dedupeTreeByPathKey } from "../paths";
 import {
   workspaceActivate,
   workspaceCloseRoot,
@@ -35,13 +37,11 @@ import {
   workspaceReadDocument,
   workspaceRoots,
   workspaceTree,
-  workspaceWriteDocument,
   type WorkspaceEntry,
   type WorkspaceShelf,
   type WorkspaceTree,
 } from "../workspace";
 import type { DeskVista } from "../windows";
-import ChatPanel from "./ChatPanel";
 import CockpitPanel from "./CockpitPanel";
 import FileTree from "./FileTree";
 import TopologyGraph from "./TopologyGraph";
@@ -239,35 +239,53 @@ function AiDesk() {
   const [tree, setTree] = useState<WorkspaceTree | null>(null);
   const [shelf, setShelf] = useState<WorkspaceShelf | null>(null);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attachNote, setAttachNote] = useState<string | null>(null);
   const [documentName, setDocumentName] = useState("<asistencia>");
   const [documentSource, setDocumentSource] = useState("");
   const [savedSource, setSavedSource] = useState("");
-  const [videoName, setVideoName] = useState<string | null>(null);
   const [mediaNote, setMediaNote] = useState<string | null>(null);
   const [catalogue, setCatalogue] = useState<RootEntry[]>([]);
-  const [sample, setSample] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [treeOutline, setTreeOutline] = useState("");
+  const [patchBanner, setPatchBanner] = useState<string | null>(null);
   const dirty =
     documentName.endsWith(".bara") && documentSource !== savedSource && !documentName.startsWith("<");
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+
+  const resetLocalDocument = useCallback((reason: string) => {
+    setDocumentName("<asistencia>");
+    setDocumentSource("");
+    setSavedSource("");
+    setAnalysis(null);
+    setPatchBanner("Carpeta cambiada: el diff se reinició. Abre un .bara en main.");
+    console.info(formatPatchDebug({ phase: "root_reset", vista: "ai-workspace", detail: reason }));
+  }, []);
 
   const applySnapshot = useCallback((snap: EditorSnapshot) => {
+    if (dirtyRef.current) {
+      if (snap.analysis) {
+        setAnalysis(snap.analysis);
+      }
+      return;
+    }
     if (snap.path && !snap.path.startsWith("<")) {
       setDocumentName(snap.path);
       setDocumentSource(snap.source);
       setSavedSource(snap.source);
+      setPatchBanner(null);
     } else if (snap.source.trim().length > 0) {
       setDocumentName(snap.name || snap.path || "<editor>");
       setDocumentSource(snap.source);
       setSavedSource(snap.source);
+    } else if (snap.path === "<editor>" || snap.name === "<editor>") {
+      setDocumentName("<asistencia>");
+      setDocumentSource("");
+      setSavedSource("");
+      setAnalysis(null);
     }
     if (snap.analysis) {
       setAnalysis(snap.analysis);
-    }
-    if (snap.treeOutline) {
-      setTreeOutline(snap.treeOutline);
     }
   }, []);
 
@@ -280,8 +298,8 @@ function AiDesk() {
         return workspaceTree();
       })
       .then((next) => {
-        setTree(next);
-        setTreeOutline(outlineTree(next.entries));
+        const deduped = { ...next, entries: dedupeTreeByPathKey(next.entries) };
+        setTree(deduped);
       })
       .catch((reason: unknown) => setError(describeError(reason)))
       .finally(() => setLoading(false));
@@ -292,14 +310,39 @@ function AiDesk() {
   }, [reload]);
 
   useEffect(() => {
+    let cancel = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<{ root?: string; reason?: string }>(
+          "workspace-root-changed",
+          (event) => {
+            if (cancel) {
+              return;
+            }
+            resetLocalDocument(event.payload?.reason ?? "event");
+            reload();
+          },
+        );
+      } catch {
+        // Sin Tauri no hay evento entre ventanas.
+      }
+    })();
+    return () => {
+      cancel = true;
+      unlisten?.();
+    };
+  }, [reload, resetLocalDocument]);
+
+  useEffect(() => {
     let alive = true;
-    void Promise.all([kernelCatalogue(), sampleGenesis()])
-      .then(([roots, genesis]) => {
+    void kernelCatalogue()
+      .then((roots) => {
         if (!alive) {
           return;
         }
         setCatalogue(roots);
-        setSample(genesis);
       })
       .catch((reason: unknown) => {
         if (alive) {
@@ -345,13 +388,6 @@ function AiDesk() {
     };
   }, [documentSource]);
 
-  const context = useMemo(() => {
-    const note = videoName
-      ? `\n\n[video local «${videoName}»: previsualización en la ventana, sin enviar píxeles]`
-      : "";
-    return `${documentSource}${note}`;
-  }, [documentSource, videoName]);
-
   function openEntry(entry: WorkspaceEntry) {
     if (!tree) {
       return;
@@ -395,31 +431,18 @@ function AiDesk() {
       .catch((reason: unknown) => setError(describeError(reason)));
   }
 
-  const saveDocument = useCallback(() => {
-    if (!dirty) {
+  function sendFragmentToMain() {
+    if (!documentSource.trim()) {
+      setError("no hay fragmento para enviar");
       return;
     }
-    setSaving(true);
-    workspaceWriteDocument(documentName, documentSource)
-      .then((document) => {
-        setDocumentSource(document.source);
-        setSavedSource(document.source);
+    proposeAiDeskAttachment(documentName, documentSource)
+      .then(() => {
+        setAttachNote("Fragmento enviado a la ventana principal (solo memoria).");
         setError(null);
       })
-      .catch((reason: unknown) => setError(describeError(reason)))
-      .finally(() => setSaving(false));
-  }, [dirty, documentName, documentSource]);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        saveDocument();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [saveDocument]);
+      .catch((reason: unknown) => setError(describeError(reason)));
+  }
 
   return (
     <div className="desk-split">
@@ -434,7 +457,10 @@ function AiDesk() {
                   className={slot.active ? "shelf-active" : undefined}
                   onClick={() => {
                     workspaceActivate(slot.id)
-                      .then(() => reload())
+                      .then(() => {
+                        resetLocalDocument("shelf-activate");
+                        reload();
+                      })
                       .catch((reason: unknown) => setError(describeError(reason)));
                   }}
                 >
@@ -476,8 +502,9 @@ function AiDesk() {
               setLoading(true);
               workspaceOpenDialog()
                 .then((next) => {
-                  setTree(next);
-                  setTreeOutline(outlineTree(next.entries));
+                  const deduped = { ...next, entries: dedupeTreeByPathKey(next.entries) };
+                  setTree(deduped);
+                  resetLocalDocument("open-dialog");
                   setError(null);
                 })
                 .catch((reason: unknown) => {
@@ -508,13 +535,19 @@ function AiDesk() {
           <div className="row">
             <span className="status" title={documentName}>
               {documentName}
-              {dirty ? " · sin guardar" : documentName.endsWith(".bara") ? " · guardado" : ""}
+              {dirty ? " · borrador local" : " · solo memoria"}
             </span>
             <span className="grow" />
-            <button type="button" disabled={!dirty || saving} onClick={saveDocument}>
-              {saving ? "Guardando…" : "Guardar"}
+            <button
+              type="button"
+              disabled={!documentSource.trim()}
+              title="Emite ai-desk-attachment hacia main; no escribe al disco"
+              onClick={sendFragmentToMain}
+            >
+              Enviar a main
             </button>
           </div>
+          {attachNote ? <p className="muted">{attachNote}</p> : null}
           {documentName.endsWith(".bara") || documentSource.length > 0 ? (
             <textarea
               className="desk-source"
@@ -543,9 +576,8 @@ function AiDesk() {
             onClick={() => {
               inspectMediaDialog()
                 .then((inspection) => {
-                  setVideoName(inspection.name);
                   setMediaNote(
-                    `${inspection.kind} · ${inspection.bytes} bytes · el backend no entregó píxeles`,
+                    `${inspection.name} · ${inspection.kind} · ${inspection.bytes} bytes · el backend no entregó píxeles`,
                   );
                   setError(null);
                 })
@@ -567,28 +599,18 @@ function AiDesk() {
             {analysis ? ` · análisis ${analysis.summary.total} tokens` : ""}
           </p>
         </div>
-        <ChatPanel
-          open
-          documentName={documentName}
-          documentSource={context}
-          analysis={analysis}
-          catalogue={catalogue}
-          sample={sample}
-          treeOutline={treeOutline}
-          onUseCode={(code) => {
-            setDocumentName("<fragmento>");
-            setDocumentSource(code);
-          }}
-          onJudge={async () => ({
-            glyph: "⊥",
-            status: "false",
-            applied: false,
-            path: "",
-            line: 1,
-            inserted: 0,
-            source: "",
-          })}
-        />
+        {patchBanner ? (
+          <div className="patch-banner" role="status">
+            <span>{patchBanner}</span>
+            <button type="button" onClick={() => setPatchBanner(null)}>
+              ok
+            </button>
+          </div>
+        ) : null}
+        <p className="muted">
+          El chat vive en la ventana principal. Aquí sólo fragmentos y multimedia; usa «Enviar a
+          main» (evento <code className="inline-code">ai-desk-attachment</code>).
+        </p>
       </section>
     </div>
   );

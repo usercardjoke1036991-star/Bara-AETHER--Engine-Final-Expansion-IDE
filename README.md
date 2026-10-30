@@ -250,10 +250,16 @@ desde el kernel por IPC.
   al llavero y se borra del WebView. No hay variables `VITE_*` de clave: el
   haz no puede llevar un secreto. La raíz tiene que ser uno de los tres hosts
   oficiales o HTTP en la máquina local; otro host no sale del proceso.
-* **Cómo llega el código al editor**: los bloques cercados (```) de cada
-  respuesta se pueden copiar o enviar al editor con «usar en el editor». El
-  bloque se **añade** al final del documento, nunca lo sustituye, y el kernel lo
-  vuelve a analizar en 200 ms.
+* **Cómo llega el código al editor**: «usar en el editor» abre un **diff**
+  (antes/después) sobre el `.bara` activo del workspace, con Aceptar / Rechazar.
+  Rechazar no escribe. Aceptar crea copia en `.bara-backup/` y luego escribe;
+  Deshacer restaura desde ese backup. Desde la ventana Asistencia el parche se
+  emite a la ventana principal (`propose_editor_patch`) y se enfoca `main`.
+  Sin archivo `.bara` activo: «Abre un archivo .bara primero». Nunca se escribe
+  sin diff. El botón **Guardar** de `<fragmento>` en Asistencia **solo guarda en
+  memoria** (no toca disco); Guardar de un `.bara` real del árbol sí escribe con
+  `workspace_write_document` (edición manual del contexto, distinto del flujo de
+  diff).
 * **Traducción a Shoresh**: el botón «Shoresh» de cualquier mensaje (y el del
   redactor) llama a `shoresh_translate`, es decir, al mismo traductor del REPL
   del kernel. Si el léxico desconoce una raíz, el oráculo la sintetiza y el
@@ -316,6 +322,29 @@ $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = Join-Path $sc 'x86_64-w64-mingw
 
 En CI (ubuntu-latest) `build-essential` aporta `gcc` y ring se compila sin
 pasos extra; el workflow no necesita MinGW.
+
+## DevTools
+
+El inspector web **no** va en `tauri build` / `dist:windows` (release).
+
+* `npm run dev:win` lanza `tauri dev --features devtools`.
+* Con esa feature, **F12** o **Ctrl+Shift+I** abren el inspector en la ventana
+  activa (`open_devtools_window`).
+* Sin la feature, el comando responde error y el binario no enlaza DevTools.
+
+## Kernel fijado por git
+
+El crate `bara` se declara con `git` + `rev` SHA en los `Cargo.toml` del IDE
+(CI y clon limpio). Para desarrollo local contra un checkout hermano:
+
+1. Copia `Cargo.toml.local.example` → `Cargo.toml.local` (gitignored).
+2. Ejecuta `npm run kernel:local` (inyecta el `[patch]` path `../BAR` entre
+   marcadores en el `Cargo.toml` de la raíz).
+3. En CI **no** existe `Cargo.toml.local` ni se corre el script: manda el pin.
+
+Si además hay un `Downloads/Cargo.toml` workspace padre, Cargo puede seguir
+resolviendo por path; el dual queda documentado aquí. Para dist/CI limpio,
+renombra temporalmente ese workspace padre.
 
 ## Notas
 

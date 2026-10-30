@@ -19,14 +19,24 @@ import {
   stripStoredSecret,
 } from "../ai/config";
 import { MAX_ATTACHMENTS, filesFromDataTransfer, formatBytes, prepareImages } from "../ai/images";
-import { baraSystemPrompt } from "../ai/prompt";
+import { baraSystemPrompt, promptBudgetParts, summarizeBudget } from "../ai/prompt";
 import { deleteKey, inDesktop, keyExists, probeConnection, saveKey } from "../ai/keyring";
 import { listModels, sendChat } from "../ai/providers";
+import { READ_FILE_TOOL } from "../ai/tools";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
+import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
+import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
 import { loadLocalWeights, localComplete } from "../offline";
+import {
+  formatPatchDebug,
+  preflightPatch,
+  resolvePatchAttempt,
+  shouldListenForPropose,
+} from "../patchFlow";
 import { shoreshTranslate, type Analysis, type RootEntry, type Translation } from "../engine";
+import { currentVista, openDeskWindow } from "../windows";
 import AiSettings from "./AiSettings";
 import AssistantText, { codeBlocks } from "./AssistantText";
 
@@ -85,10 +95,28 @@ export interface ChatPanelProps {
   sample: string;
   /** Árbol de la carpeta abierta, ya formateado para el prompt. */
   treeOutline?: string;
-  /** Envía un bloque de código al editor del IDE. */
-  onUseCode: (code: string) => void;
-  /** Pide al núcleo el veto de Belnap y, si es `∅`, la escritura. */
+  /**
+   * Opcional: pegar código en el editor sin diff (p. ej. Visual Builder).
+   * «usar en el editor» del chat **no** usa esto: abre previewDiff.
+   */
+  onUseCode?: (code: string) => void;
+  /** Juzga un bloque sin escribir (diff + canApply). */
   onJudge: (patch: string) => Promise<AutoApplyReport>;
+  /** Escribe tras aceptar el diff (con respaldo). */
+  onConfirm: (patch: string, judgmentId: string) => Promise<AutoApplyReport>;
+  /** Restaura el respaldo del último apply. */
+  onUndo: (path: string, backupPath: string) => Promise<AutoApplyReport>;
+  /** Abre el panel si estaba cerrado (p. ej. parche desde Asistencia). */
+  onEnsureOpen?: () => void;
+  /** Aviso visible a nivel app (banner); nunca silencio. */
+  onPatchNotice?: (message: string) => void;
+  /** Generación al cambiar de carpeta: limpia diff y avisos. */
+  workspaceEpoch?: number;
+  /**
+   * Sólo `main` debe escuchar `assistant-propose-patch`.
+   * La ventana Asistencia emite; no re-escucha (evitar juez stub).
+   */
+  acceptRemotePatches?: boolean;
 }
 
 export default function ChatPanel({
@@ -100,8 +128,13 @@ export default function ChatPanel({
   catalogue,
   sample,
   treeOutline = "",
-  onUseCode,
   onJudge,
+  onConfirm,
+  onUndo,
+  onEnsureOpen,
+  onPatchNotice,
+  workspaceEpoch = 0,
+  acceptRemotePatches = false,
 }: ChatPanelProps) {
   const [config, setConfig] = useState<AiConfig>(() => loadConfig());
   useEffect(() => {
@@ -155,13 +188,11 @@ export default function ChatPanel({
   const [dragging, setDragging] = useState(false);
   const [offline, setOffline] = useState(false);
   const [weights, setWeights] = useState<string | null>(null);
-  const [autoApply, setAutoApply] = useState(() => {
-    try {
-      return localStorage.getItem("bara.autoApply") === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [autoApply, setAutoApply] = useState(() => readAutoApplyEnabled());
+  const [review, setReview] = useState<{ patch: string; report: AutoApplyReport } | null>(null);
+  const [lastBackup, setLastBackup] = useState<{ path: string; backupPath: string } | null>(
+    null,
+  );
 
   const abortRef = useRef<AbortController | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
@@ -171,18 +202,16 @@ export default function ChatPanel({
   const problems = configProblems(config);
   const sendGate = chatSendGate(config, draft, pending, offline);
 
-  // El contexto del sistema se recalcula sólo cuando cambia el kernel: el
-  // prompt que viaja al proveedor es exactamente el que se puede inspeccionar.
-  const system = useMemo(
-    () =>
-      baraSystemPrompt({
-        catalogue,
-        sample,
-        documentName,
-        documentSource,
-        analysis,
-        treeOutline,
-      }),
+  /** Prompt base (sin texto de usuario); el envío añade `userText` del turno. */
+  const promptContextBase = useMemo(
+    () => ({
+      catalogue,
+      sample,
+      documentName,
+      documentSource,
+      analysis,
+      treeOutline,
+    }),
     [catalogue, sample, documentName, documentSource, analysis, treeOutline],
   );
 
@@ -193,12 +222,169 @@ export default function ChatPanel({
   }, [open, settings]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("bara.autoApply", autoApply ? "1" : "0");
-    } catch {
-      // El almacén puede estar cerrado. El interruptor sigue valiendo en esta sesión.
-    }
+    writeAutoApplyEnabled(autoApply);
   }, [autoApply]);
+
+  const publishNotice = useCallback(
+    (message: string) => {
+      setNotice(message);
+      onPatchNotice?.(message);
+    },
+    [onPatchNotice],
+  );
+
+  useEffect(() => {
+    setReview(null);
+    setLastBackup(null);
+    setNotice(null);
+    console.info(
+      formatPatchDebug({
+        phase: "root_reset",
+        document: documentName,
+        detail: `epoch=${workspaceEpoch}`,
+      }),
+    );
+    // Sólo al cambiar de carpeta (epoch), no en cada rename del documento.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- workspaceEpoch es la señal
+  }, [workspaceEpoch]);
+
+  /** Abre el panel de diff (sin escribir). Siempre deja un aviso visible. */
+  const beginReview = useCallback(
+    async (patch: string) => {
+      onEnsureOpen?.();
+      const early = preflightPatch(patch, documentName);
+      if (!early.ok) {
+        console.info(formatPatchDebug(early.log));
+        setReview(null);
+        publishNotice(early.notice);
+        return;
+      }
+      try {
+        console.info(
+          formatPatchDebug({
+            phase: "judge",
+            document: documentName,
+            detail: `len=${early.code.length}`,
+          }),
+        );
+        const report = await onJudge(early.code);
+        const resolved = resolvePatchAttempt(early.code, documentName, report);
+        console.info(formatPatchDebug(resolved.log));
+        if (resolved.outcome.kind === "review") {
+          setReview({ patch: resolved.outcome.patch, report: resolved.outcome.report });
+          publishNotice(resolved.notice);
+          return;
+        }
+        setReview(null);
+        publishNotice(resolved.notice);
+      } catch (error) {
+        setReview(null);
+        const message = reasonOf(error);
+        console.info(
+          formatPatchDebug({
+            phase: "error",
+            document: documentName,
+            detail: message.slice(0, 160),
+          }),
+        );
+        publishNotice(message);
+      }
+    },
+    [documentName, onEnsureOpen, onJudge, publishNotice],
+  );
+
+  /**
+   * «usar en el editor»: en `main` abre el diff; desde Asistencia emite a
+   * la ventana principal y la enfoca.
+   */
+  const useInEditor = useCallback(
+    (code: string) => {
+      void (async () => {
+        try {
+          const vista = await currentVista();
+          if (vista !== "main") {
+            console.info(
+              formatPatchDebug({
+                phase: "emit",
+                vista,
+                document: documentName,
+                detail: `len=${code.trim().length}`,
+              }),
+            );
+            publishNotice("Enviando diff a la ventana principal…");
+            await proposeEditorPatch(code);
+            await openDeskWindow("main");
+            publishNotice("Diff enviado a la ventana principal. Si no ves el panel, ábrelo en main.");
+            return;
+          }
+          console.info(
+            formatPatchDebug({
+              phase: "ensure_open",
+              vista: "main",
+              document: documentName,
+            }),
+          );
+          await beginReview(code);
+        } catch (error) {
+          const message = reasonOf(error);
+          console.info(
+            formatPatchDebug({
+              phase: "error",
+              document: documentName,
+              detail: message.slice(0, 160),
+            }),
+          );
+          publishNotice(message);
+        }
+      })();
+    },
+    [beginReview, documentName, publishNotice],
+  );
+
+  // Parches desde Asistencia: main escucha aunque el chat esté cerrado.
+  useEffect(() => {
+    if (!acceptRemotePatches || !shouldListenForPropose(inDesktop(), open)) {
+      return undefined;
+    }
+    let cancel = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<{ patch?: string }>(PROPOSE_PATCH_EVENT, (event) => {
+          if (cancel) {
+            return;
+          }
+          const patch = typeof event.payload?.patch === "string" ? event.payload.patch : "";
+          console.info(
+            formatPatchDebug({
+              phase: "recv",
+              vista: "main",
+              document: documentName,
+              detail: `len=${patch.trim().length}`,
+            }),
+          );
+          onEnsureOpen?.();
+          if (!patch.trim()) {
+            publishNotice("Se recibió un parche vacío desde Asistencia.");
+            return;
+          }
+          void beginReview(patch);
+        });
+      } catch (error) {
+        console.info(
+          formatPatchDebug({
+            phase: "error",
+            detail: `listen: ${reasonOf(error).slice(0, 120)}`,
+          }),
+        );
+      }
+    })();
+    return () => {
+      cancel = true;
+      unlisten?.();
+    };
+  }, [acceptRemotePatches, beginReview, documentName, onEnsureOpen, open, publishNotice]);
 
   /** Adjunta archivos (arrastrados, pegados o elegidos) al mensaje en curso. */
   const attach = useCallback(
@@ -256,6 +442,14 @@ export default function ChatPanel({
         ]);
         return;
       }
+      const system = baraSystemPrompt({ ...promptContextBase, userText: text });
+      if (typeof console !== "undefined" && console.debug) {
+        const budget = summarizeBudget(promptBudgetParts({ ...promptContextBase, userText: text }));
+        console.debug(
+          `[bara-prompt] «${text.slice(0, 40)}» ≈${budget.totalTokensEst} tok (est.) · ${budget.totalChars} chars`,
+          budget.byName,
+        );
+      }
       const result = await sendChat(
         await commitKey(config, setConfig, () => {
           keyEpochRef.current += 1;
@@ -263,6 +457,29 @@ export default function ChatPanel({
         history,
         system,
         controller.signal,
+        async (name, argsJson) => {
+          if (name !== READ_FILE_TOOL) {
+            return `herramienta no soportada: ${name}`;
+          }
+          let path = "";
+          try {
+            const parsed = JSON.parse(argsJson) as { path?: unknown };
+            path = typeof parsed.path === "string" ? parsed.path.trim() : "";
+          } catch {
+            path = "";
+          }
+          if (!path) {
+            return "falta el parámetro path";
+          }
+          const doc = await readProjectFile(path);
+          const body = doc.source ?? "";
+          const cap = 24_000;
+          const clipped =
+            [...body].length > cap
+              ? `${[...body].slice(0, cap).join("")}\n# … recortado`
+              : body;
+          return `archivo: ${doc.path || path}\n\n${clipped}`;
+        },
       );
       if (result.acceptedModel && result.acceptedModel !== config.model) {
         const next = { ...config, model: result.acceptedModel };
@@ -274,6 +491,7 @@ export default function ChatPanel({
       }
       const id = newId();
       const usage = result.usage;
+      const toolsUsed = result.toolsUsed;
       setMessages((previous) => [
         ...previous,
         {
@@ -284,31 +502,19 @@ export default function ChatPanel({
           model: result.model,
           createdAt: Date.now(),
           error: null,
+          toolsUsed,
         },
       ]);
       if (usage) {
         setUsages((previous) => ({ ...previous, [id]: usage }));
       }
+      if (toolsUsed && toolsUsed.length > 0) {
+        setNotice(`📄 leyó ${toolsUsed.join(", ")}`);
+      }
       if (autoApply) {
-        const blocks = codeBlocks(result.text);
-        for (const block of blocks) {
-          try {
-            const report = await onJudge(block);
-            if (report.status === "both") {
-              setNotice(
-                `Veto ${report.glyph}: el bloque contradice el archivo. Hace falta intervención manual.`,
-              );
-              break;
-            }
-            if (report.applied) {
-              setNotice(`Auto-Apply ${report.glyph}: escrito en ${report.path}:${report.line}.`);
-            } else {
-              setNotice(`Auto-Apply ${report.glyph}: el bloque no se escribió.`);
-            }
-          } catch (error) {
-            setNotice(reasonOf(error));
-            break;
-          }
+        const block = codeBlocks(result.text)[0];
+        if (block) {
+          await beginReview(block);
         }
       }
     } catch (error) {
@@ -328,7 +534,63 @@ export default function ChatPanel({
       abortRef.current = null;
       setPending(false);
     }
-  }, [attachments, autoApply, config, draft, messages, offline, onJudge, pending, system]);
+  }, [
+    attachments,
+    autoApply,
+    beginReview,
+    config,
+    draft,
+    messages,
+    offline,
+    pending,
+    promptContextBase,
+  ]);
+
+  const acceptReview = useCallback(async () => {
+    if (!review) {
+      return;
+    }
+    try {
+      const report = await onConfirm(review.patch, review.report.judgmentId);
+      if (report.applied) {
+        setLastBackup(
+          report.backupPath
+            ? { path: report.path, backupPath: report.backupPath }
+            : null,
+        );
+        setNotice(
+          `Aplicado ${report.glyph}: ${report.path}:${report.line}. Respaldo en ${report.backupPath || "(sin ruta)"}.`,
+        );
+      } else {
+        setNotice(report.blockReason || `No se escribió (${report.glyph}).`);
+      }
+      setReview(null);
+    } catch (error) {
+      setNotice(reasonOf(error));
+    }
+  }, [onConfirm, review]);
+
+  const rejectReview = useCallback(() => {
+    setReview(null);
+    setNotice("Diff rechazado: no se escribió nada.");
+  }, []);
+
+  const undoLast = useCallback(async () => {
+    if (!lastBackup) {
+      return;
+    }
+    try {
+      const report = await onUndo(lastBackup.path, lastBackup.backupPath);
+      if (report.applied) {
+        setNotice(`Deshacer: restaurado ${report.path} desde ${lastBackup.backupPath}.`);
+      } else {
+        setNotice(report.blockReason || "No se pudo deshacer.");
+      }
+      setLastBackup(null);
+    } catch (error) {
+      setNotice(reasonOf(error));
+    }
+  }, [lastBackup, onUndo]);
 
 
   /** Cancela el turno en curso (el proveedor corta en cuanto se interrumpe). */
@@ -537,8 +799,13 @@ export default function ChatPanel({
             onClose={() => setSettings(false)}
           />
           <details className="ai-report">
-            <summary className="muted">prompt del sistema ({system.length} caracteres)</summary>
-            <pre className="ai-code-body">{system}</pre>
+            <summary className="muted">
+              prompt del sistema (
+              {baraSystemPrompt({ ...promptContextBase, userText: draft }).length} caracteres)
+            </summary>
+            <pre className="ai-code-body">
+              {baraSystemPrompt({ ...promptContextBase, userText: draft })}
+            </pre>
           </details>
         </div>
       ) : (
@@ -580,7 +847,7 @@ export default function ChatPanel({
                 message={message}
                 usage={usages[message.id]}
                 translation={translations[message.id]}
-                onUseCode={onUseCode}
+                onUseCode={useInEditor}
                 onTranslate={(id, text) => {
                   void translate(id, text);
                 }}
@@ -690,7 +957,33 @@ export default function ChatPanel({
             </div>
 
             {translations.borrador ? (
-              <TranslationBox result={translations.borrador} onUseCode={onUseCode} />
+              <TranslationBox result={translations.borrador} onUseCode={useInEditor} />
+            ) : null}
+            {review ? (
+              <div className="ai-review" role="region" aria-label="Vista previa del parche">
+                <p className="muted">
+                  Diff propuesto ({review.report.glyph}
+                  {review.report.verified ? " · verificado" : " · no verificado"}). Aceptar escribe
+                  con respaldo; rechazar no toca el disco.
+                </p>
+                <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
+                <div className="row">
+                  <button type="button" onClick={() => void acceptReview()}>
+                    Aceptar
+                  </button>
+                  <button type="button" onClick={rejectReview}>
+                    Rechazar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {lastBackup ? (
+              <div className="row">
+                <button type="button" onClick={() => void undoLast()}>
+                  Deshacer
+                </button>
+                <span className="muted">{lastBackup.backupPath}</span>
+              </div>
             ) : null}
             {notice ? <p className="muted">{notice}</p> : null}
             {report ? (
@@ -732,6 +1025,11 @@ function MessageRow({
         {usage ? (
           <span className="muted">
             {usage.inputTokens}→{usage.outputTokens} tokens
+          </span>
+        ) : null}
+        {message.toolsUsed && message.toolsUsed.length > 0 ? (
+          <span className="muted" title="Herramienta leer_archivo">
+            📄 leyó {message.toolsUsed.join(", ")}
           </span>
         ) : null}
         {hasText ? (
@@ -780,6 +1078,32 @@ function TranslationBox({
 }) {
   const roots = result.roots.length > 0 ? `raíces: ${result.roots.join(" ")}` : "sin raíces";
   const extra = result.synthesized > 0 ? ` · ${result.synthesized} sintetizada(s)` : "";
+  const [verified, setVerified] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setVerified(false);
+    if (!result.program.trim()) {
+      return () => {
+        alive = false;
+      };
+    }
+    void import("../baraVerify")
+      .then(({ verifyBaraBlock }) => verifyBaraBlock(result.program))
+      .then((status) => {
+        if (alive) {
+          setVerified(status === "verified");
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setVerified(false);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [result.program]);
 
   return (
     <div className="ai-code">
@@ -787,9 +1111,10 @@ function TranslationBox({
         <span className="muted">
           Shoresh · {roots}
           {extra}
+          {result.program ? (verified ? " · verificado" : " · no verificado") : ""}
         </span>
         <span className="grow" />
-        {result.program ? (
+        {result.program && verified ? (
           <button type="button" onClick={() => onUseCode(result.program)}>
             usar en el editor
           </button>

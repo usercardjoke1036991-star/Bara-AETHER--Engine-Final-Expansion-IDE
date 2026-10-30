@@ -200,7 +200,10 @@ const CHECKS: Check[] = [
         saveConfig({ ...readyConfig(), baseUrl: propia, rememberKey: false }, store),
         "no se guardó la raíz propia",
       );
-      expect(loadConfig(store).baseUrl === propia, "la raíz guardada volvió a la oficial");
+      expect(
+        loadConfig(store).baseUrl === PROVIDER_ENDPOINTS.anthropic,
+        "una raíz HTTPS arbitraria no debe persistir",
+      );
       const local = { ...readyConfig(), baseUrl: "http://127.0.0.1:11434/v1" };
       expect(
         !configProblems(local).some((problem) => problem.includes("raíz")),
@@ -376,7 +379,7 @@ const CHECKS: Check[] = [
             : assistantMessage(`respuesta ${index}`),
         );
       }
-      expect(wireMessages(larga).length === 12, "el historial debería recortarse a 12 turnos");
+      expect(wireMessages(larga).length === 6, "el historial debería recortarse a 6 turnos");
       const conFallo = wireMessages([
         userMessage("una"),
         assistantMessage("", "boom"),
@@ -424,10 +427,11 @@ const CHECKS: Check[] = [
       }
       expect(prompt.includes(rootTable(catalogue)), "la tabla de raíces no se inyectó");
       expect(prompt.includes(inventoryLine(analysis)), "el análisis del kernel no se inyectó");
-      expect(prompt.includes("inventario: ברא ×2"), "falta el inventario medido por el kernel");
+      expect(prompt.includes("ברא×2"), "falta el inventario medido por el kernel");
       expect(prompt.includes("genesis.bara"), "falta el nombre del documento abierto");
       expect(prompt.includes("ברא שמר"), "falta el documento de ejemplo del kernel");
       expect(prompt.includes("autopoiesis") && prompt.includes("Belnap"), "faltan los principios");
+      // Con userText vacío se asume contexto de código (needsCodeContext → true).
       const extracto = excerpt("x".repeat(MAX_DOCUMENT_CHARS + 50));
       expect(extracto.includes("extracto recortado"), "el extracto no se acota");
       expect([...extracto].length < MAX_DOCUMENT_CHARS + 200, "el extracto supera el límite");

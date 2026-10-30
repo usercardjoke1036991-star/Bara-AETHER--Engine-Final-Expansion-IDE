@@ -7,6 +7,7 @@ use bara::idle_audit;
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
 
+use crate::auto_apply;
 use crate::graph;
 use crate::workspace;
 
@@ -53,8 +54,18 @@ pub fn apply(root: &str, notice: &IdleNotice) -> Result<bool, String> {
     if proposal.name != notice.name {
         return Ok(false);
     }
-    workspace::write_source(root, &notice.path, &proposal.revised)?;
+    write_backup(root, &notice.path, &document.source)?;
+    workspace::write_source_checked(
+        root,
+        &notice.path,
+        &proposal.revised,
+        Some(document.content_hash.as_str()),
+    )?;
     Ok(true)
+}
+
+fn write_backup(root: &str, relative: &str, contents: &str) -> Result<(), String> {
+    auto_apply::write_backup(root, relative, contents).map(|_| ())
 }
 
 #[cfg(test)]

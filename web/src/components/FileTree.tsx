@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 
+import { pathKey, pathsEqual } from "../paths";
 import type { WorkspaceEntry } from "../workspace";
 
 interface FileTreeProps {
@@ -34,7 +35,7 @@ export default function FileTree({
     <ul className="file-tree" role="tree" aria-label="Archivos del workspace">
       {entries.map((entry) => (
         <FileTreeNode
-          key={entry.path}
+          key={pathKey(entry.path)}
           entry={entry}
           activePath={activePath}
           onOpen={onOpen}
@@ -84,7 +85,7 @@ function FileTreeNode({ entry, activePath, onOpen, depth }: FileTreeNodeProps) {
     );
   }
 
-  const active = activePath === entry.path;
+  const active = pathsEqual(activePath, entry.path);
   return (
     <li role="treeitem" aria-selected={active}>
       <button

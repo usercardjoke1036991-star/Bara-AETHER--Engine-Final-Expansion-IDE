@@ -36,6 +36,8 @@ export interface ChatMessage {
   createdAt: number;
   /** Error del proveedor, si el turno falló. */
   error: string | null;
+  /** Rutas leídas con `leer_archivo` en este turno (si las hubo). */
+  toolsUsed?: string[];
 }
 
 /**
@@ -67,6 +69,13 @@ export interface ChatUsage {
   outputTokens: number;
 }
 
+/** Llamada a herramienta en una respuesta del modelo (OpenAI tool_calls). */
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 /** Respuesta normalizada de cualquiera de los dos proveedores. */
 export interface ChatResult {
   text: string;
@@ -74,6 +83,10 @@ export interface ChatResult {
   usage: ChatUsage | null;
   /** Nombre que el servidor aceptó, si no era el que estaba escrito en ajustes. */
   acceptedModel?: string;
+  /** Llamadas nativas; vacío si el turno ya es texto final. */
+  toolCalls?: ChatToolCall[];
+  /** Rutas leídas vía herramientas en el bucle (p. ej. leer_archivo). */
+  toolsUsed?: string[];
 }
 
 /** Modelo ofrecido por el proveedor (`GET /models`). */

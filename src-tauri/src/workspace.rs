@@ -14,12 +14,13 @@
 //! del sistema de archivos.
 
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 /// Directorios que nunca se enumeran (artefactos y metadatos del repositorio).
-const EXCLUDED_DIRS: [&str; 3] = ["target", "node_modules", ".git"];
+const EXCLUDED_DIRS: [&str; 4] = ["target", "node_modules", ".git", ".bara-backup"];
 
 /// Cota de profundidad del árbol (evita ciclos patológicos de junctions).
 const MAX_DEPTH: usize = 24;
@@ -32,6 +33,9 @@ const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Cota del árbol y de la herramienta «leer archivo» del asistente.
 const MAX_TREE_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Cota de lectura del asistente (herramienta «leer archivo»).
+const MAX_ASSISTANT_BYTES: u64 = 256 * 1024;
 
 /// Tipo de entrada del árbol tal como lo consume React.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -85,6 +89,29 @@ pub struct WorkspaceDocument {
     pub name: String,
     /// Contenido UTF-8 del documento.
     pub source: String,
+    /// Huella FNV-1a del contenido (escritura optimista / A3).
+    pub content_hash: String,
+}
+
+/// Huella determinista del texto (misma familia que [`root_id`]).
+pub fn content_hash(source: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in source.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn document_of(root: String, path: String, name: String, source: String) -> WorkspaceDocument {
+    let content_hash = content_hash(&source);
+    WorkspaceDocument {
+        root,
+        path,
+        name,
+        source,
+        content_hash,
+    }
 }
 
 /// Raíz por defecto del IDE: el workspace del repositorio, no `src-tauri/`.
@@ -139,7 +166,11 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
     let canonical = resolve_root(root)?;
     let mut budget = MAX_ENTRIES;
     let mut files = 0usize;
-    let (entries, truncated) = collect(&canonical, &canonical, "", 0, &mut budget, &mut files)?;
+    let (mut entries, truncated) = collect(&canonical, &canonical, "", 0, &mut budget, &mut files)?;
+    // Windows: el mismo archivo no puede existir con dos capitalizaciones; si el
+    // índice o un enumerator las duplica, el UI no debe mostrar dos nodos.
+    dedupe_entries_case_insensitive(&mut entries);
+    let files = count_bara(&entries);
 
     Ok(WorkspaceTree {
         root: canonical.display().to_string(),
@@ -151,6 +182,31 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
         files,
         truncated,
     })
+}
+
+fn count_bara(entries: &[WorkspaceEntry]) -> usize {
+    let mut n = 0usize;
+    for entry in entries {
+        if entry.bara {
+            n += 1;
+        }
+        n += count_bara(&entry.children);
+    }
+    n
+}
+
+/// Conserva la primera aparición por path en minúsculas (ASCII).
+fn dedupe_entries_case_insensitive(entries: &mut Vec<WorkspaceEntry>) {
+    let mut seen = HashSet::new();
+    entries.retain(|entry| {
+        let key = entry.path.to_ascii_lowercase();
+        seen.insert(key)
+    });
+    for entry in entries.iter_mut() {
+        if !entry.children.is_empty() {
+            dedupe_entries_case_insensitive(&mut entry.children);
+        }
+    }
 }
 
 /// Tope de carpetas abiertas a la vez. Cada una conserva su propia jaula.
@@ -466,16 +522,33 @@ pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String
     ensure_file_size(&canonical)?;
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
+    Ok(document_of(
+        canonical_root.display().to_string(),
+        normalize_relative(relative),
+        file_name(&canonical),
         source,
-    })
+    ))
 }
 
-/// Lectura de solo lectura para el asistente (cota 1 MiB, sin salir de la jaula).
+fn assistant_path_denied(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    let name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    let lower = name.to_ascii_lowercase();
+    let rel_lower = normalized.to_ascii_lowercase();
+    if lower == ".env" || rel_lower.ends_with("/.env") || lower.starts_with(".env.") {
+        return true;
+    }
+    if lower.ends_with(".key") || lower.ends_with(".pem") {
+        return true;
+    }
+    lower.contains("secret") || lower.contains("credential")
+}
+
+/// Lectura de solo lectura para el asistente (cota 256 KiB, sin salir de la jaula).
 pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» no es legible por el asistente"));
+    }
     let canonical_root = resolve_root(root)?;
     let canonical = resolve_member(&canonical_root, relative)?;
     let allowed = canonical
@@ -491,19 +564,19 @@ pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, S
     }
     let metadata = fs::metadata(&canonical)
         .map_err(|err| format!("no se pudo inspeccionar «{relative}»: {err}"))?;
-    if metadata.len() > MAX_TREE_FILE_BYTES {
+    if metadata.len() > MAX_ASSISTANT_BYTES {
         return Err(format!(
-            "«{relative}» supera 1 MiB y el asistente no lo lee"
+            "«{relative}» supera 256 KiB y el asistente no lo lee"
         ));
     }
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
+    Ok(document_of(
+        canonical_root.display().to_string(),
+        normalize_relative(relative),
+        file_name(&canonical),
         source,
-    })
+    ))
 }
 
 /// Lee un `.bara` del workspace, validando que la ruta pertenezca a la raíz.
@@ -516,16 +589,43 @@ pub fn read(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
 
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
+    Ok(document_of(
+        canonical_root.display().to_string(),
+        normalize_relative(relative),
+        file_name(&canonical),
         source,
-    })
+    ))
+}
+
+fn ensure_expected_hash(
+    canonical: &Path,
+    relative: &str,
+    expected_hash: Option<&str>,
+) -> Result<(), String> {
+    let Some(expected) = expected_hash.map(str::trim).filter(|h| !h.is_empty()) else {
+        return Ok(());
+    };
+    if !canonical.exists() {
+        return Ok(());
+    }
+    let on_disk = fs::read_to_string(canonical)
+        .map_err(|err| format!("no se pudo leer «{relative}» antes de guardar: {err}"))?;
+    let actual = content_hash(&on_disk);
+    if actual != expected {
+        return Err(format!(
+            "«{relative}» cambió en disco (hash distinto); recarga antes de guardar"
+        ));
+    }
+    Ok(())
 }
 
 /// Guarda un `.bara` dentro del workspace (guardado en caliente del editor).
-pub fn write(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocument, String> {
+pub fn write(
+    root: &str,
+    relative: &str,
+    source: &str,
+    expected_hash: Option<&str>,
+) -> Result<WorkspaceDocument, String> {
     let canonical_root = resolve_root(root)?;
     ensure_bara(Path::new(relative))?;
     if source.len() as u64 > MAX_FILE_BYTES {
@@ -536,15 +636,16 @@ pub fn write(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocume
     }
 
     let canonical = resolve_for_write(&canonical_root, relative)?;
-    fs::write(&canonical, source)
+    ensure_expected_hash(&canonical, relative, expected_hash)?;
+    write_atomic(&canonical, source)
         .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
 
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
-        source: source.to_string(),
-    })
+    Ok(document_of(
+        canonical_root.display().to_string(),
+        normalize_relative(relative),
+        file_name(&canonical),
+        source.to_string(),
+    ))
 }
 
 /// Guarda una fuente del proyecto (`.bara` o una extensión del lote).
@@ -552,6 +653,16 @@ pub fn write(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocume
 /// La usa el modo autónomo después de un veredicto `∅`. La jaula es la misma
 /// que [`write`]: ruta relativa, sin `..`, y la forma canónica dentro de la raíz.
 pub fn write_source(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocument, String> {
+    write_source_checked(root, relative, source, None)
+}
+
+/// Como [`write_source`], con huella esperada del contenido previo en disco.
+pub fn write_source_checked(
+    root: &str,
+    relative: &str,
+    source: &str,
+    expected_hash: Option<&str>,
+) -> Result<WorkspaceDocument, String> {
     let canonical_root = resolve_root(root)?;
     if !is_project_source(Path::new(relative)) {
         return Err(format!("«{relative}» no es una fuente del proyecto"));
@@ -566,14 +677,31 @@ pub fn write_source(root: &str, relative: &str, source: &str) -> Result<Workspac
     if !is_project_source(&canonical) {
         return Err(format!("«{relative}» no es una fuente del proyecto"));
     }
-    fs::write(&canonical, source)
+    ensure_expected_hash(&canonical, relative, expected_hash)?;
+    write_atomic(&canonical, source)
         .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
-        source: source.to_string(),
-    })
+    Ok(document_of(
+        canonical_root.display().to_string(),
+        normalize_relative(relative),
+        file_name(&canonical),
+        source.to_string(),
+    ))
+}
+
+/// Escribe bytes: `create_new` si el archivo no existe; truncado seguro si ya existe.
+fn write_atomic(canonical: &Path, source: &str) -> Result<(), std::io::Error> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    if fs::symlink_metadata(canonical).is_ok() {
+        let mut file = fs::File::create(canonical)?;
+        file.write_all(source.as_bytes())?;
+        return Ok(());
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(canonical)?;
+    file.write_all(source.as_bytes())
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -713,12 +841,12 @@ fn open_absolute(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
         .map_err(|_| format!("«{path}» queda fuera del workspace"))?;
     let source =
         fs::read_to_string(&canonical).map_err(|err| format!("no se pudo leer «{path}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(&relative.to_string_lossy()),
-        name: file_name(&canonical),
+    Ok(document_of(
+        canonical_root.display().to_string(),
+        normalize_relative(&relative.to_string_lossy()),
+        file_name(&canonical),
         source,
-    })
+    ))
 }
 
 /// `..` no se normaliza: se rechaza antes de tocar el disco.
@@ -744,36 +872,50 @@ fn resolve_member(root: &Path, relative: &str) -> Result<PathBuf, String> {
 /// ya exista, pero nunca salir de la raíz canónica.
 fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let member = safe_relative(relative)?;
-    let candidate = root.join(member);
+    let candidate = root.join(&member);
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|err| format!("no se pudo abrir la raíz del workspace: {err}"))?;
 
-    if candidate.exists() {
-        let canonical = fs::canonicalize(&candidate)
-            .map_err(|err| format!("no se pudo abrir «{relative}»: {err}"))?;
-        if !canonical.starts_with(root) {
-            return Err(format!("«{relative}» queda fuera del workspace"));
+    match fs::symlink_metadata(&candidate) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "«{relative}» es un enlace simbólico; no se escribe"
+        )),
+        Ok(_) => {
+            let canonical = fs::canonicalize(&candidate)
+                .map_err(|err| format!("no se pudo abrir «{relative}»: {err}"))?;
+            if !canonical.starts_with(&canonical_root) {
+                return Err(format!("«{relative}» queda fuera del workspace"));
+            }
+            Ok(canonical)
         }
-        return Ok(canonical);
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let parent = candidate
+                .parent()
+                .ok_or_else(|| format!("«{relative}» no tiene un directorio padre válido"))?;
+            let canonical_parent = fs::canonicalize(parent)
+                .map_err(|err| format!("no se pudo abrir el directorio de «{relative}»: {err}"))?;
+            if !canonical_parent.starts_with(&canonical_root) {
+                return Err(format!("«{relative}» queda fuera del workspace"));
+            }
+            if fs::symlink_metadata(&candidate).is_ok() {
+                return Err(format!(
+                    "«{relative}» es un enlace simbólico colgante; no se crea"
+                ));
+            }
+            let name = candidate
+                .file_name()
+                .ok_or_else(|| format!("«{relative}» no tiene nombre de archivo"))?;
+            Ok(canonical_parent.join(name))
+        }
+        Err(err) => Err(format!("no se pudo inspeccionar «{relative}»: {err}")),
     }
-
-    let parent = candidate
-        .parent()
-        .ok_or_else(|| format!("«{relative}» no tiene un directorio padre válido"))?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|err| format!("no se pudo abrir el directorio de «{relative}»: {err}"))?;
-    if !canonical_parent.starts_with(root) {
-        return Err(format!("«{relative}» queda fuera del workspace"));
-    }
-    let name = candidate
-        .file_name()
-        .ok_or_else(|| format!("«{relative}» no tiene nombre de archivo"))?;
-    Ok(canonical_parent.join(name))
 }
 
 /// Sólo componentes normales: sin raíz, prefijo, `..` ni `.` explícitos.
-fn safe_relative(relative: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_relative(relative: &str) -> Result<PathBuf, String> {
     let path = Path::new(relative);
     if relative.trim().is_empty() || path.is_absolute() {
-        return Err("la ruta del documento debe ser relativa al workspace".to_string());
+        return Err("la ruta debe ser relativa al workspace".to_string());
     }
     if path
         .components()
@@ -877,12 +1019,28 @@ mod tests {
         let document = read(root.to_str().expect("utf-8"), "samples/uno.bara").expect("leer");
         assert_eq!(document.source, "ברא");
 
-        let saved =
-            write(root.to_str().expect("utf-8"), "samples/uno.bara", "ברא חדש").expect("guardar");
+        let saved = write(
+            root.to_str().expect("utf-8"),
+            "samples/uno.bara",
+            "ברא חדש",
+            Some(document.content_hash.as_str()),
+        )
+        .expect("guardar");
         assert_eq!(saved.path, "samples/uno.bara");
         assert_eq!(
             fs::read_to_string(root.join("samples/uno.bara")).expect("releer"),
             "ברא חדש"
+        );
+
+        let stale = write(
+            root.to_str().expect("utf-8"),
+            "samples/uno.bara",
+            "otro",
+            Some(document.content_hash.as_str()),
+        );
+        assert!(
+            stale.is_err(),
+            "un hash esperado obsoleto debe rechazar el guardado"
         );
 
         fs::remove_dir_all(&root).expect("limpiar");
@@ -896,8 +1054,8 @@ mod tests {
 
         assert!(read(root.to_str().expect("utf-8"), "../secreto.bara").is_err());
         assert!(read(root.to_str().expect("utf-8"), "src/uno.txt").is_err());
-        assert!(write(root.to_str().expect("utf-8"), "../fuera.bara", "x").is_err());
-        assert!(write(root.to_str().expect("utf-8"), "src/nuevo.txt", "x").is_err());
+        assert!(write(root.to_str().expect("utf-8"), "../fuera.bara", "x", None).is_err());
+        assert!(write(root.to_str().expect("utf-8"), "src/nuevo.txt", "x", None).is_err());
 
         fs::remove_dir_all(&root).expect("limpiar");
     }
@@ -994,6 +1152,62 @@ mod tests {
 
         fs::remove_dir_all(&first).expect("limpiar a");
         fs::remove_dir_all(&second).expect("limpiar b");
+    }
+
+    #[test]
+    fn dedupe_elimina_pares_solo_por_mayusculas() {
+        let mut entries = vec![
+            WorkspaceEntry {
+                name: "Hello.bara".into(),
+                path: "Hello.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+            WorkspaceEntry {
+                name: "hELLO.bara".into(),
+                path: "hELLO.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+            WorkspaceEntry {
+                name: "other.bara".into(),
+                path: "other.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+        ];
+        dedupe_entries_case_insensitive(&mut entries);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "Hello.bara");
+        assert_eq!(entries[1].path, "other.bara");
+    }
+
+    #[test]
+    fn la_escritura_rechaza_enlaces_simbolicos() {
+        let root = scratch("symlink");
+        fs::write(root.join("ok.bara"), "ברא").expect("dentro");
+        let root_s = root.to_str().expect("utf-8");
+        let link = root.join("link.bara");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("ok.bara"), &link).expect("symlink");
+            assert!(write(root_s, "link.bara", "x", None).is_err());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            let linked = symlink_file(root.join("ok.bara"), &link)
+                .or_else(|_| symlink_file(root.join("missing.bara"), &link));
+            if linked.is_err() {
+                eprintln!("Windows sin privilegio de symlink: prueba omitida");
+            } else {
+                assert!(write(root_s, "link.bara", "x", None).is_err());
+            }
+        }
+        fs::remove_dir_all(&root).expect("limpiar");
     }
 
     #[test]
