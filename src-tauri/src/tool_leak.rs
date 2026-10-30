@@ -10,7 +10,11 @@ pub const TOOL_LEAK_NOTICE: &str = "el modelo intentó usar una herramienta y fa
 
 /// ¿El texto parece una fuga de DSML / tool_call?
 pub fn looks_like_tool_leak(text: &str) -> bool {
-    let sample = if text.len() > 4000 { &text[..4000] } else { text };
+    let sample = if text.len() > 4000 {
+        &text[..4000]
+    } else {
+        text
+    };
     let lower = sample.to_ascii_lowercase();
     lower.contains("dsml")
         || lower.contains("<tool_call")
@@ -66,7 +70,9 @@ fn extract_bara_path(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
     let idx = lower.find(".bara")?;
     let start = text[..idx]
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '/' || c == '\\' || c == '.' || c == '-'))
+        .rfind(|c: char| {
+            !(c.is_alphanumeric() || c == '_' || c == '/' || c == '\\' || c == '.' || c == '-')
+        })
         .map(|i| i + 1)
         .unwrap_or(0);
     let end = idx + ".bara".len();
@@ -93,10 +99,7 @@ mod tests {
     fn dsml_en_texto_se_oculta_y_extrae_path() {
         let dsml = r#"<|DSML| calls><|DSML| invoke name="leer archivo"><|DSML| parameter name="path" string="true">hELLO.bara</parameter></invoke></calls>"#;
         assert!(looks_like_tool_leak(dsml));
-        assert_eq!(
-            parse_dsml_read_path(dsml).as_deref(),
-            Some("hELLO.bara")
-        );
+        assert_eq!(parse_dsml_read_path(dsml).as_deref(), Some("hELLO.bara"));
         assert_eq!(sanitize_tool_leak(dsml), TOOL_LEAK_NOTICE);
         assert!(!sanitize_tool_leak(dsml).contains("DSML"));
     }
