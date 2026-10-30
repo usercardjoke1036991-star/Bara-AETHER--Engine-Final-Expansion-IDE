@@ -192,12 +192,19 @@ fn unified_diff(path: &str, before: &str, after: &str) -> String {
     out
 }
 
-fn evaluate(
-    path: &str,
-    line: u32,
-    host: &str,
-    patch: &str,
-) -> Result<(BelnapValue, bool, String, String, u32, u32, bool, String), String> {
+/// Juicio intermedio antes de serializar el informe al WebView.
+struct Verdict {
+    value: BelnapValue,
+    verified: bool,
+    unverified_reason: String,
+    preview_diff: String,
+    at: u32,
+    inserted: u32,
+    can_apply: bool,
+    block_reason: String,
+}
+
+fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, String> {
     if path.len() > 512 || line > 1_000_000 {
         return Err("la ruta o la línea quedan fuera de la cota".to_string());
     }
@@ -209,7 +216,7 @@ fn evaluate(
     let unverified_reason = unverified.unwrap_or_default();
     let value = syntax::judge_patch(language_of_path(path), host, patch);
     let (next, at, inserted) = splice(host, patch, line);
-    let preview = if value == BelnapValue::True && verified {
+    let preview_diff = if value == BelnapValue::True && verified {
         unified_diff(path, host, &next)
     } else {
         String::new()
@@ -238,41 +245,32 @@ fn evaluate(
         ),
         BelnapValue::True => (true, String::new()),
     };
-    Ok((
+    Ok(Verdict {
         value,
         verified,
         unverified_reason,
-        preview,
+        preview_diff,
         at,
         inserted,
         can_apply,
         block_reason,
-    ))
+    })
 }
 
-fn empty_report(
-    path: &str,
-    line: u32,
-    value: BelnapValue,
-    verified: bool,
-    unverified_reason: String,
-    preview_diff: String,
-    can_apply: bool,
-    block_reason: String,
-) -> AutoApplyReport {
+fn empty_report(path: &str, line: u32, verdict: Verdict) -> AutoApplyReport {
     AutoApplyReport {
-        glyph: value.glyph().to_string(),
-        status: status_key(value).to_string(),
+        glyph: verdict.value.glyph().to_string(),
+        status: status_key(verdict.value).to_string(),
         applied: false,
         path: path.replace('\\', "/"),
         line,
         inserted: 0,
         source: String::new(),
-        verified,
-        unverified_reason,
-        preview_diff,
-        can_apply,
-        block_reason,
+        verified: verdict.verified,
+        unverified_reason: verdict.unverified_reason,
+        preview_diff: verdict.preview_diff,
+        can_apply: verdict.can_apply,
+        block_reason: verdict.block_reason,
         backup_path: String::new(),
     }
 }
@@ -285,42 +283,20 @@ pub fn judge(
     host: &str,
     patch: &str,
 ) -> Result<AutoApplyReport, String> {
-    let (
-        value,
-        verified,
-        unverified_reason,
-        preview_diff,
-        at,
-        _inserted,
-        can_apply,
-        block_reason,
-    ) = evaluate(path, line, host, patch)?;
+    let mut verdict = evaluate(path, line, host, patch)?;
     // Coherencia con disco: si el host no coincide, no hay candidato aplicable.
-    if can_apply {
+    if verdict.can_apply {
         let on_disk = workspace::read_text(root, path)?;
         if on_disk.source != host {
-            return Ok(empty_report(
-                path,
-                line,
-                value,
-                verified,
-                unverified_reason,
-                String::new(),
-                false,
-                "el archivo en disco no coincide con el editor; no se escribe".to_string(),
-            ));
+            verdict.can_apply = false;
+            verdict.preview_diff.clear();
+            verdict.block_reason =
+                "el archivo en disco no coincide con el editor; no se escribe".to_string();
+            return Ok(empty_report(path, line, verdict));
         }
     }
-    Ok(empty_report(
-        path,
-        at,
-        value,
-        verified,
-        unverified_reason,
-        preview_diff,
-        can_apply,
-        block_reason,
-    ))
+    let at = verdict.at;
+    Ok(empty_report(path, at, verdict))
 }
 
 /// Escribe el parche tras aceptación explícita. Crea respaldo en `.bara-backup/`.
@@ -331,43 +307,18 @@ pub fn confirm(
     host: &str,
     patch: &str,
 ) -> Result<AutoApplyReport, String> {
-    let (
-        value,
-        verified,
-        unverified_reason,
-        preview_diff,
-        _at,
-        _inserted,
-        can_apply,
-        block_reason,
-    ) = evaluate(path, line, host, patch)?;
-    if !can_apply {
-        return Ok(empty_report(
-            path,
-            line,
-            value,
-            verified,
-            unverified_reason,
-            preview_diff,
-            false,
-            if block_reason.is_empty() {
-                "el parche no se puede aplicar".to_string()
-            } else {
-                block_reason
-            },
-        ));
+    let mut verdict = evaluate(path, line, host, patch)?;
+    if !verdict.can_apply {
+        if verdict.block_reason.is_empty() {
+            verdict.block_reason = "el parche no se puede aplicar".to_string();
+        }
+        return Ok(empty_report(path, line, verdict));
     }
-    if value == BelnapValue::Neither {
-        return Ok(empty_report(
-            path,
-            line,
-            value,
-            verified,
-            unverified_reason,
-            String::new(),
-            false,
-            "∅ falta información: no se escribe".to_string(),
-        ));
+    if verdict.value == BelnapValue::Neither {
+        verdict.can_apply = false;
+        verdict.preview_diff.clear();
+        verdict.block_reason = "∅ falta información: no se escribe".to_string();
+        return Ok(empty_report(path, line, verdict));
     }
     let on_disk = workspace::read_text(root, path)?;
     if on_disk.source != host {
@@ -377,16 +328,16 @@ pub fn confirm(
     let (next, at, inserted) = splice(&on_disk.source, patch, line);
     let document: WorkspaceDocument = workspace::write_source(root, path, &next)?;
     Ok(AutoApplyReport {
-        glyph: value.glyph().to_string(),
-        status: status_key(value).to_string(),
+        glyph: verdict.value.glyph().to_string(),
+        status: status_key(verdict.value).to_string(),
         applied: true,
         path: document.path,
         line: at,
         inserted,
         source: document.source,
-        verified,
-        unverified_reason,
-        preview_diff,
+        verified: verdict.verified,
+        unverified_reason: verdict.unverified_reason,
+        preview_diff: verdict.preview_diff,
         can_apply: false,
         block_reason: String::new(),
         backup_path,
