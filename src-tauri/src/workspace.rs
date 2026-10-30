@@ -830,9 +830,8 @@ fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String> {
             let parent = candidate
                 .parent()
                 .ok_or_else(|| format!("«{relative}» no tiene un directorio padre válido"))?;
-            let canonical_parent = fs::canonicalize(parent).map_err(|err| {
-                format!("no se pudo abrir el directorio de «{relative}»: {err}")
-            })?;
+            let canonical_parent = fs::canonicalize(parent)
+                .map_err(|err| format!("no se pudo abrir el directorio de «{relative}»: {err}"))?;
             if !canonical_parent.starts_with(&canonical_root) {
                 return Err(format!("«{relative}» queda fuera del workspace"));
             }

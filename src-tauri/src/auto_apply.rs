@@ -212,9 +212,7 @@ fn bara_patch_verified(patch: &str) -> Result<(), String> {
     for token in tokens {
         match token.kind {
             TokenKind::Identifier(_) => {
-                return Err(
-                    "propuesta no verificada: identificador ASCII/Latin libre".to_string(),
-                );
+                return Err("propuesta no verificada: identificador ASCII/Latin libre".to_string());
             }
             TokenKind::Root { keyword, .. } if keyword.is_some() => {
                 known_roots = known_roots.saturating_add(1);
@@ -299,7 +297,13 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
     })
 }
 
-fn empty_report(path: &str, line: u32, host: &str, patch: &str, verdict: Verdict) -> AutoApplyReport {
+fn empty_report(
+    path: &str,
+    line: u32,
+    host: &str,
+    patch: &str,
+    verdict: Verdict,
+) -> AutoApplyReport {
     let _ = verdict;
     let token = if patch.trim().is_empty() {
         String::new()
@@ -361,9 +365,7 @@ pub fn confirm(
         return Err("falta el token de juicio; vuelve a abrir el diff".to_string());
     }
     if judgment_id != judgment_token(line, host, patch) {
-        return Err(
-            "el token de juicio no coincide con la línea, el host o el parche".to_string(),
-        );
+        return Err("el token de juicio no coincide con la línea, el host o el parche".to_string());
     }
     let mut verdict = evaluate(path, line, host, patch)?;
     if !verdict.can_apply {
