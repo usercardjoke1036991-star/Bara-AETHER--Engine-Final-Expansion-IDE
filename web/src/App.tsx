@@ -10,6 +10,20 @@ import {
   type ReactNode,
 } from "react";
 
+import { statusFromAnalysis } from "./baraVerify";
+import ActivityBar from "./shell/ActivityBar";
+import CommandPalette from "./shell/CommandPalette";
+import { buildCommands } from "./shell/commands";
+import {
+  loadPanelLayout,
+  savePanelLayout,
+  type BottomTab,
+  type SideMode,
+} from "./shell/layoutState";
+import PortalMenu, { type PortalMenuItem } from "./shell/PortalMenu";
+import StatusBar from "./shell/StatusBar";
+import { bottomHeightCss, EXPERT_VIEW_BLURBS, nextEscTarget } from "./shell/uxRules";
+
 import {
   CLASS_LABEL,
   analyzeSource,
@@ -157,32 +171,31 @@ export default function App() {
   const [cloneProgress, setCloneProgress] = useState<string | null>(null);
   /** Documento de ejemplo del kernel (contexto del asistente). */
   const [sample, setSample] = useState("");
+  const initialLayout = useMemo(() => loadPanelLayout(), []);
   /** Chat dockeado a la derecha (único chat). */
-  const [aiOpen, setAiOpen] = useState(true);
-  /** Explorador de archivos colapsable. */
-  const [sideOpen, setSideOpen] = useState(true);
+  const [aiOpen, setAiOpen] = useState(initialLayout.chatOpen);
+  /** Panel lateral: archivos / buscar / ajustes (null = cerrado). */
+  const [sideMode, setSideMode] = useState<SideMode>(initialLayout.sideMode);
+  const sideOpen = sideMode !== null;
   /** Anchos flexibles de laterales (fracción CSS, no px fijos del layout). */
-  const [sideFrac, setSideFrac] = useState(0.2);
-  const [chatFrac, setChatFrac] = useState(0.28);
+  const [sideFrac, setSideFrac] = useState(initialLayout.sideFrac);
+  const [chatFrac, setChatFrac] = useState(initialLayout.chatFrac);
   /** Banner de parche visible aunque el chat estuviera cerrado. */
   const [patchBanner, setPatchBanner] = useState<string | null>(null);
   /** Sugerencia al recibir diff sin archivo activo. */
   const [suggestOpen, setSuggestOpen] = useState<string | null>(null);
   /** Sube al cambiar de carpeta: limpia diff en ChatPanel. */
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
-  /** Cajón Kernel inferior (cerrado por defecto). */
-  const [kernelDockOpen, setKernelDockOpen] = useState(false);
-  const [kernelTab, setKernelTab] = useState<
-    "resumen" | "tokens" | "oraculo" | "catalogo" | "bilattice"
-  >("resumen");
-  /** Menú «Más» de acciones secundarias. */
-  const [moreOpen, setMoreOpen] = useState(false);
-  /** Visibilidad del panel de proyecciones del kernel AETHER-Ω. */
-  const [kernelOpen, setKernelOpen] = useState(false);
-  /** Visibilidad del panel del constructor visual (lienzo → Shoresh firmado). */
-  const [visualOpen, setVisualOpen] = useState(false);
-  /** Visibilidad del Cockpit de telemetría (censo, transmutador, Shoresh, caja negra). */
-  const [cockpitOpen, setCockpitOpen] = useState(false);
+  /** Panel inferior tipo terminal (cerrado por defecto). */
+  const [bottomOpen, setBottomOpen] = useState(initialLayout.bottomOpen);
+  const [bottomMaximized, setBottomMaximized] = useState(initialLayout.bottomMaximized);
+  const [bottomFrac, setBottomFrac] = useState(initialLayout.bottomFrac);
+  const [bottomTab, setBottomTab] = useState<BottomTab>(initialLayout.bottomTab);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [expertMenuOpen, setExpertMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const expertBtnRef = useRef<HTMLButtonElement | null>(null);
+  const editorFocusRef = useRef<HTMLDivElement | null>(null);
   const [idle, setIdle] = useState<IdleNotice | null>(null);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
@@ -209,6 +222,87 @@ export default function App() {
   useEffect(() => {
     void restoreMainWindow();
   }, []);
+
+  useEffect(() => {
+    savePanelLayout({
+      sideMode,
+      chatOpen: aiOpen,
+      bottomOpen,
+      bottomMaximized,
+      bottomFrac,
+      sideFrac,
+      chatFrac,
+      bottomTab,
+    });
+  }, [sideMode, aiOpen, bottomOpen, bottomMaximized, bottomFrac, sideFrac, chatFrac, bottomTab]);
+
+  const toggleSide = useCallback((mode: Exclude<SideMode, null>) => {
+    setSideMode((current) => (current === mode ? null : mode));
+  }, []);
+
+  const openBottomTab = useCallback((tab: BottomTab) => {
+    setBottomTab(tab);
+    setBottomOpen(true);
+  }, []);
+
+  const closeAllOverlays = useCallback(() => {
+    setExpertMenuOpen(false);
+    setPaletteOpen(false);
+  }, []);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const key = event.key.toLowerCase();
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.shiftKey && key === "p") {
+        event.preventDefault();
+        setPaletteOpen(true);
+        return;
+      }
+      if (mod && key === "j") {
+        event.preventDefault();
+        setBottomOpen((v) => !v);
+        return;
+      }
+      // Chat: Ctrl+Alt+A (teclado ES, sin depender de `Ñ`).
+      if (mod && event.altKey && key === "a") {
+        event.preventDefault();
+        setAiOpen((v) => !v);
+        return;
+      }
+      if (mod && key === "b") {
+        event.preventDefault();
+        toggleSide("files");
+        return;
+      }
+      if (event.key === "Escape") {
+        const layer = nextEscTarget({
+          menuOpen: expertMenuOpen,
+          paletteOpen,
+          bottomOpen,
+          chatOpen: aiOpen,
+          sideOpen,
+        });
+        if (layer === "none") {
+          return;
+        }
+        event.preventDefault();
+        if (layer === "menu") {
+          setExpertMenuOpen(false);
+        } else if (layer === "palette") {
+          setPaletteOpen(false);
+        } else if (layer === "bottom") {
+          setBottomOpen(false);
+        } else if (layer === "chat") {
+          setAiOpen(false);
+        } else if (layer === "side") {
+          setSideMode(null);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expertMenuOpen, paletteOpen, bottomOpen, aiOpen, sideOpen, toggleSide]);
 
   useEffect(() => {
     let alive = true;
@@ -1008,6 +1102,26 @@ export default function App() {
     [analysis],
   );
 
+  const searchHits = useMemo(() => {
+    if (!workspace || !searchQuery.trim()) {
+      return [] as WorkspaceEntry[];
+    }
+    const q = searchQuery.trim().toLocaleLowerCase("es");
+    const hits: WorkspaceEntry[] = [];
+    const walk = (entries: WorkspaceEntry[]) => {
+      for (const entry of entries) {
+        if (entry.kind === "file" && entry.name.toLocaleLowerCase("es").includes(q)) {
+          hits.push(entry);
+        }
+        if (entry.children.length) {
+          walk(entry.children);
+        }
+      }
+    };
+    walk(workspace.entries);
+    return hits.slice(0, 80);
+  }, [workspace, searchQuery]);
+
   if (vista === null) {
     return <p className="muted">Abriendo ventana…</p>;
   }
@@ -1016,108 +1130,130 @@ export default function App() {
   }
 
   const suggestedBara = suggestOpen ?? firstBaraPath(workspace?.entries);
+  const verifiedStatus = analysis ? statusFromAnalysis(analysis) : null;
+  const verifiedBool =
+    verifiedStatus === null ? null : verifiedStatus === "verified";
+  const titleLabel = activeTab?.name ?? workspace?.name ?? "Bara IDE";
+  const statusBusy = importing
+    ? (cloneProgress ?? "clonando…")
+    : workspaceLoading
+      ? "sincronizando…"
+      : saving
+        ? "guardando…"
+        : busy
+          ? "analizando…"
+          : "listo";
+
+  const expertItems: PortalMenuItem[] = [
+    {
+      id: "nucleo",
+      label: EXPERT_VIEW_BLURBS.nucleo.title,
+      description: EXPERT_VIEW_BLURBS.nucleo.blurb,
+      onSelect: () => openBottomTab("nucleo"),
+    },
+    {
+      id: "telemetria",
+      label: EXPERT_VIEW_BLURBS.telemetria.title,
+      description: EXPERT_VIEW_BLURBS.telemetria.blurb,
+      onSelect: () => openBottomTab("telemetria"),
+    },
+    {
+      id: "lienzo",
+      label: EXPERT_VIEW_BLURBS.lienzo.title,
+      description: EXPERT_VIEW_BLURBS.lienzo.blurb,
+      onSelect: () => openBottomTab("lienzo"),
+    },
+    {
+      id: "topologia",
+      label: EXPERT_VIEW_BLURBS.topologia.title,
+      description: EXPERT_VIEW_BLURBS.topologia.blurb,
+      onSelect: () => openBottomTab("topologia"),
+    },
+    {
+      id: "ledger",
+      label: EXPERT_VIEW_BLURBS.ledger.title,
+      description: EXPERT_VIEW_BLURBS.ledger.blurb,
+      onSelect: () => openBottomTab("ledger"),
+    },
+  ];
+
+  const commands = buildCommands({
+    toggleSide,
+    toggleChat: () => setAiOpen((v) => !v),
+    toggleBottom: () => setBottomOpen((v) => !v),
+    openBottomTab,
+    openPalette: () => setPaletteOpen(true),
+    openAssistMedia: () => {
+      void openDeskWindow("ai-workspace").catch((reason: unknown) => setError(describeError(reason)));
+    },
+    save: () => {
+      void saveActive();
+    },
+    openFolder: () => {
+      void pickFolder();
+    },
+    focusEditor: () => {
+      editorFocusRef.current?.focus();
+    },
+    maximizeBottom: () => {
+      setBottomOpen(true);
+      setBottomMaximized(true);
+    },
+    minimizeBottom: () => {
+      setBottomOpen(true);
+      setBottomMaximized(false);
+      setBottomFrac(0.15);
+    },
+    closeBottom: () => setBottomOpen(false),
+    closeMenus: closeAllOverlays,
+  });
+
+  const bottomTabs: Array<[BottomTab, string]> = [
+    ["resumen", "Resumen"],
+    ["tokens", "Tokens"],
+    ["oraculo", "Oráculo"],
+    ["catalogo", "Catálogo"],
+    ["bilattice", "Bilattice"],
+    ["telemetria", "Telemetría"],
+    ["topologia", "Topología"],
+    ["ledger", "Ledger"],
+    ["lienzo", "Lienzo"],
+    ["nucleo", "Núcleo"],
+  ];
 
   return (
     <div
-      className={`app ide-shell${aiOpen ? " ai-open" : ""}${sideOpen ? " side-open" : ""}${kernelDockOpen ? " kernel-dock-open" : ""}${kernelOpen ? " kernel-open" : ""}${cockpitOpen ? " cockpit-open" : ""}`}
+      className={`app ide-shell${aiOpen ? " ai-open" : ""}${sideOpen ? " side-open" : ""}${bottomOpen ? " bottom-open" : ""}`}
       style={
         {
           "--side-frac": String(sideFrac),
           "--chat-frac": String(chatFrac),
+          "--bottom-h": bottomHeightCss(bottomOpen, bottomMaximized, bottomFrac),
         } as CSSProperties
       }
     >
-      <header className="bar">
-        <h1>Bara IDE</h1>
+      <header className="title-bar">
+        <h1 title={workspaceRoot || "Bara IDE"}>{titleLabel}</h1>
         <span className={`kernel-pill kernel-pill-${kernelTone(kernelPill)}`} title="Estado del proceso kernel">
           kernel {kernelPill}
         </span>
+        <span className="status title-busy">{statusBusy}</span>
         <span className="grow" />
-        <span className="status">
-          {importing
-            ? cloneProgress ?? "clonando…"
-            : workspaceLoading
-              ? "sincronizando…"
-              : saving
-                ? "guardando…"
-                : busy
-                  ? "analizando…"
-                  : "listo"}
-        </span>
-        <button type="button" title="Mostrar u ocultar explorador" aria-pressed={sideOpen} onClick={() => setSideOpen((v) => !v)}>
-          {sideOpen ? "Archivos" : "Archivos ▸"}
-        </button>
-        <button type="button" title="Mostrar u ocultar chat" aria-pressed={aiOpen} onClick={() => setAiOpen((v) => !v)}>
-          {aiOpen ? "Chat" : "Chat ▸"}
+        <button
+          type="button"
+          title="Paleta de comandos (Ctrl+Shift+P)"
+          onClick={() => setPaletteOpen(true)}
+        >
+          Paleta
         </button>
         <button
           type="button"
-          title="Panel Kernel (tokens, oráculo, catálogo…)"
-          aria-pressed={kernelDockOpen}
-          onClick={() => setKernelDockOpen((v) => !v)}
+          title="Mostrar u ocultar chat (Ctrl+Alt+A)"
+          aria-pressed={aiOpen}
+          onClick={() => setAiOpen((v) => !v)}
         >
-          Kernel
+          {aiOpen ? "Chat" : "Chat ▸"}
         </button>
-        <div className="bar-more">
-          <button type="button" title="Más herramientas" aria-expanded={moreOpen} onClick={() => setMoreOpen((v) => !v)}>
-            Más ▾
-          </button>
-          {moreOpen ? (
-            <ul className="bar-menu" role="menu">
-              <li>
-                <button type="button" role="menuitem" onClick={() => { setKernelOpen(true); setMoreOpen(false); }}>
-                  Núcleo AETHER-Ω
-                </button>
-              </li>
-              <li>
-                <button type="button" role="menuitem" onClick={() => { setCockpitOpen(true); setMoreOpen(false); }}>
-                  Telemetría
-                </button>
-              </li>
-              <li>
-                <button type="button" role="menuitem" onClick={() => { setVisualOpen(true); setMoreOpen(false); }}>
-                  Lienzo visual
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    void openDeskWindow("topology").catch((reason: unknown) => setError(describeError(reason)));
-                    setMoreOpen(false);
-                  }}
-                >
-                  Topología
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    void openDeskWindow("autopoiesis").catch((reason: unknown) => setError(describeError(reason)));
-                    setMoreOpen(false);
-                  }}
-                >
-                  Ledger
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    void openDeskWindow("ai-workspace").catch((reason: unknown) => setError(describeError(reason)));
-                    setMoreOpen(false);
-                  }}
-                >
-                  Adjuntar medios
-                </button>
-              </li>
-            </ul>
-          ) : null}
-        </div>
       </header>
       {idle ? (
         <div className="idle-note" role="status">
@@ -1174,32 +1310,118 @@ export default function App() {
         </div>
       ) : null}
 
-      <div className="ide-body">
+      <div className="ide-workbench">
+        <ActivityBar
+          sideMode={sideMode}
+          expertOpen={expertMenuOpen}
+          expertAnchorRef={expertBtnRef}
+          onToggleSide={toggleSide}
+          onKernel={() => {
+            setBottomOpen((v) => !v);
+            if (!bottomOpen) {
+              setBottomTab("resumen");
+            }
+          }}
+          onAssist={() => {
+            void openDeskWindow("ai-workspace").catch((reason: unknown) =>
+              setError(describeError(reason)),
+            );
+          }}
+          onExpert={() => setExpertMenuOpen((v) => !v)}
+        />
+        <PortalMenu
+          open={expertMenuOpen}
+          anchor={expertBtnRef.current}
+          items={expertItems}
+          onClose={() => setExpertMenuOpen(false)}
+        />
+
         {sideOpen ? (
           <>
-            <aside className="ide-side" aria-label="Explorador">
-              <WorkspaceSidebar
-                root={workspaceRoot}
-                tree={workspace}
-                loading={workspaceLoading || importing}
-                activePath={activePath}
-                onPickFolder={() => {
-                  void pickFolder();
-                }}
-                onClone={() => setShowWelcome(true)}
-                onRefresh={() => {
-                  void refreshWorkspace();
-                }}
-                onOpenFile={(entry) => {
-                  void openWorkspaceFile(entry);
-                }}
-              />
+            <aside className="ide-side" aria-label="Panel lateral">
+              <div className="side-head">
+                <strong>
+                  {sideMode === "files"
+                    ? "Archivos"
+                    : sideMode === "search"
+                      ? "Buscar"
+                      : "Ajustes"}
+                </strong>
+                <button
+                  type="button"
+                  className="side-close"
+                  title="Cerrar panel lateral"
+                  aria-label="Cerrar panel lateral"
+                  onClick={() => setSideMode(null)}
+                >
+                  ×
+                </button>
+              </div>
+              {sideMode === "files" ? (
+                <WorkspaceSidebar
+                  root={workspaceRoot}
+                  tree={workspace}
+                  loading={workspaceLoading || importing}
+                  activePath={activePath}
+                  onPickFolder={() => {
+                    void pickFolder();
+                  }}
+                  onClone={() => setShowWelcome(true)}
+                  onRefresh={() => {
+                    void refreshWorkspace();
+                  }}
+                  onOpenFile={(entry) => {
+                    void openWorkspaceFile(entry);
+                  }}
+                />
+              ) : null}
+              {sideMode === "search" ? (
+                <div className="side-search">
+                  <input
+                    className="path"
+                    value={searchQuery}
+                    placeholder="Nombre de archivo…"
+                    aria-label="Buscar archivo"
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                  />
+                  <ul className="search-hits">
+                    {searchHits.map((entry) => (
+                      <li key={entry.path}>
+                        <button
+                          type="button"
+                          title={entry.path}
+                          onClick={() => {
+                            void openWorkspaceFile(entry);
+                          }}
+                        >
+                          {entry.path}
+                        </button>
+                      </li>
+                    ))}
+                    {searchQuery.trim() && searchHits.length === 0 ? (
+                      <li className="muted">Sin coincidencias</li>
+                    ) : null}
+                  </ul>
+                </div>
+              ) : null}
+              {sideMode === "settings" ? (
+                <div className="side-settings">
+                  <p className="muted">Ajustes rápidos del escritorio.</p>
+                  <button type="button" onClick={() => setAiOpen(true)}>
+                    Abrir chat y ajustes de IA
+                  </button>
+                  <button type="button" onClick={() => setPaletteOpen(true)}>
+                    Abrir paleta de comandos
+                  </button>
+                  <p className="muted">Tipografía mínima 14px · contraste AA · Esc cierra paneles.</p>
+                </div>
+              ) : null}
             </aside>
             <div
               className="ide-split"
               role="separator"
               aria-orientation="vertical"
-              aria-label="Redimensionar explorador"
+              aria-label="Redimensionar panel lateral"
               onMouseDown={(event) => {
                 event.preventDefault();
                 const startX = event.clientX;
@@ -1219,113 +1441,186 @@ export default function App() {
           </>
         ) : null}
 
-        <section className="pane editor-pane ide-center">
-          <div className="editor-shell">
-            <div className="editor-main">
-              <div className="editor-stage">
-              {showWelcome ? (
-                <WelcomeGate
-                  busy={workspaceLoading || importing}
-                  progress={cloneProgress}
-                  onOpenFolder={() => {
-                    void pickFolder();
-                  }}
-                  onClone={(url) => {
-                    void cloneRepository(url);
-                  }}
-                  onDismiss={() => setShowWelcome(false)}
-                />
-              ) : null}
-              <div className="tabs" role="tablist" aria-label="Documentos abiertos">
-                {tabs.map((tab) => {
-                  const active = tab.path === activePath;
-                  const unsaved = tab.source !== tab.saved;
-                  const saveLabel = unsaved ? "sin guardar" : "guardado";
-                  return (
-                    <div className={`tab${active ? " active" : ""}`} key={tab.path}>
+        <div className="ide-main-column">
+          <div className="ide-center-row">
+            <section
+              className="pane editor-pane ide-center"
+              ref={editorFocusRef}
+              tabIndex={-1}
+              aria-label="Editor"
+            >
+              <div className="editor-shell">
+                <div className="editor-main">
+                  <div className="editor-stage">
+                    {showWelcome ? (
+                      <WelcomeGate
+                        busy={workspaceLoading || importing}
+                        progress={cloneProgress}
+                        onOpenFolder={() => {
+                          void pickFolder();
+                        }}
+                        onClone={(url) => {
+                          void cloneRepository(url);
+                        }}
+                        onDismiss={() => setShowWelcome(false)}
+                      />
+                    ) : null}
+                    <div className="tabs" role="tablist" aria-label="Documentos abiertos">
+                      {tabs.map((tab) => {
+                        const active = tab.path === activePath;
+                        const unsaved = tab.source !== tab.saved;
+                        const saveLabel = unsaved ? "sin guardar" : "guardado";
+                        return (
+                          <div className={`tab${active ? " active" : ""}`} key={tab.path}>
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={active}
+                              className="tab-name"
+                              title={`${tab.path} · ${saveLabel}`}
+                              aria-label={`${tab.name}, ${saveLabel}`}
+                              onClick={() => setActivePath(tab.path)}
+                            >
+                              {unsaved ? (
+                                <span className="dirty-dot" title="sin guardar" aria-hidden="true" />
+                              ) : null}
+                              {tab.name}
+                              <span className="tab-save-state muted"> · {saveLabel}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="tab-close"
+                              aria-label={`Cerrar ${tab.name}`}
+                              title="Cerrar pestaña"
+                              onClick={() => closeTab(tab.path)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                      {tabs.length === 0 ? (
+                        <span className="muted tab-empty">
+                          Abre un documento <code>.bara</code> del explorador.
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="row editor-toolbar">
+                      <span className="status" title={origin}>
+                        {activeTab ? origin : "sin documento"}
+                        {dirty ? " · sin guardar" : activeTab ? " · guardado" : ""}
+                        {activeTab && !activeTab.path.endsWith(".bara") ? " · lectura" : ""}
+                      </span>
+                      <span className="grow" />
                       <button
                         type="button"
-                        role="tab"
-                        aria-selected={active}
-                        className="tab-name"
-                        title={`${tab.path} · ${saveLabel}`}
-                        aria-label={`${tab.name}, ${saveLabel}`}
-                        onClick={() => setActivePath(tab.path)}
+                        disabled={
+                          !dirty ||
+                          saving ||
+                          (activeTab !== null && !activeTab.path.endsWith(".bara"))
+                        }
+                        onClick={() => {
+                          void saveActive();
+                        }}
+                        title="Guardar el documento activo (Ctrl+S)"
                       >
-                        {unsaved ? <span className="dirty-dot" title="sin guardar" aria-hidden="true" /> : null}
-                        {tab.name}
-                        <span className="tab-save-state muted"> · {saveLabel}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="tab-close"
-                        aria-label={`Cerrar ${tab.name}`}
-                        title="Cerrar pestaña"
-                        onClick={() => closeTab(tab.path)}
-                      >
-                        ×
+                        {saving ? "Guardando…" : "Guardar"}
                       </button>
                     </div>
-                  );
-                })}
-                {tabs.length === 0 ? (
-                  <span className="muted tab-empty">
-                    Abre un documento <code>.bara</code> del explorador.
-                  </span>
-                ) : null}
-              </div>
 
-              <div className="row editor-toolbar">
-                <span className="status" title={origin}>
-                  {activeTab ? origin : "sin documento"}
-                  {dirty ? " · sin guardar" : activeTab ? " · guardado" : ""}
-                  {activeTab && !activeTab.path.endsWith(".bara") ? " · lectura" : ""}
-                </span>
-                <span className="grow" />
-                <button
-                  type="button"
-                  disabled={!dirty || saving || (activeTab !== null && !activeTab.path.endsWith(".bara"))}
-                  onClick={() => {
-                    void saveActive();
+                    <BaraEditor
+                      value={source}
+                      path={activePath ?? ""}
+                      revealLine={
+                        reveal !== null && reveal.path === activePath ? reveal.line : null
+                      }
+                      revealToken={reveal?.token ?? 0}
+                      onChange={updateActiveSource}
+                      onSave={() => {
+                        void saveActive();
+                      }}
+                      onCursor={(line) => {
+                        cursorLineRef.current = line;
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {aiOpen ? (
+              <>
+                <div
+                  className="ide-split"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Redimensionar chat"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    const startX = event.clientX;
+                    const start = chatFrac;
+                    const onMove = (ev: MouseEvent) => {
+                      const delta = (startX - ev.clientX) / window.innerWidth;
+                      setChatFrac(Math.min(0.42, Math.max(0.22, start + delta)));
+                    };
+                    const onUp = () => {
+                      window.removeEventListener("mousemove", onMove);
+                      window.removeEventListener("mouseup", onUp);
+                    };
+                    window.addEventListener("mousemove", onMove);
+                    window.addEventListener("mouseup", onUp);
                   }}
-                  title="Guardar el documento activo (Ctrl+S)"
-                >
-                  {saving ? "Guardando…" : "Guardar"}
-                </button>
-              </div>
-
-              <BaraEditor
-                value={source}
-                path={activePath ?? ""}
-                revealLine={reveal !== null && reveal.path === activePath ? reveal.line : null}
-                revealToken={reveal?.token ?? 0}
-                onChange={updateActiveSource}
-                onSave={() => {
-                  void saveActive();
-                }}
-                onCursor={(line) => {
-                  cursorLineRef.current = line;
-                }}
-              />
-              </div>
-            </div>
+                />
+                <aside className="ide-chat" aria-label="Asistente">
+                  <ChatPanel
+                    open={aiOpen}
+                    onClose={() => setAiOpen(false)}
+                    documentName={origin}
+                    documentSource={source}
+                    analysis={analysis}
+                    catalogue={catalogue}
+                    sample={sample}
+                    treeOutline={treeOutline}
+                    onUseCode={applyCode}
+                    onJudge={judgeSuggestion}
+                    onConfirm={confirmSuggestion}
+                    onUndo={undoSuggestion}
+                    acceptRemotePatches
+                    workspaceEpoch={workspaceEpoch}
+                    onEnsureOpen={() => setAiOpen(true)}
+                    onPatchNotice={(message) => {
+                      setPatchBanner(message);
+                      if (/abre un archivo \.bara/i.test(message)) {
+                        setSuggestOpen(firstBaraPath(workspace?.entries));
+                      }
+                    }}
+                  />
+                </aside>
+              </>
+            ) : null}
           </div>
-        </section>
 
-        {aiOpen ? (
-          <>
+          <section
+            className={`bottom-panel${bottomOpen ? " open" : ""}${bottomMaximized ? " maximized" : ""}`}
+            aria-label="Panel inferior"
+          >
             <div
-              className="ide-split"
+              className="bottom-resize"
               role="separator"
-              aria-orientation="vertical"
-              aria-label="Redimensionar chat"
+              aria-orientation="horizontal"
+              aria-label="Redimensionar panel inferior"
               onMouseDown={(event) => {
                 event.preventDefault();
-                const startX = event.clientX;
-                const start = chatFrac;
+                if (!bottomOpen) {
+                  setBottomOpen(true);
+                }
+                setBottomMaximized(false);
+                const startY = event.clientY;
+                const start = bottomFrac;
                 const onMove = (ev: MouseEvent) => {
-                  const delta = (startX - ev.clientX) / window.innerWidth;
-                  setChatFrac(Math.min(0.42, Math.max(0.22, start + delta)));
+                  const delta = (startY - ev.clientY) / window.innerHeight;
+                  setBottomFrac(Math.min(0.6, Math.max(0.15, start + delta)));
                 };
                 const onUp = () => {
                   window.removeEventListener("mousemove", onMove);
@@ -1335,174 +1630,245 @@ export default function App() {
                 window.addEventListener("mouseup", onUp);
               }}
             />
-            <aside className="ide-chat" aria-label="Asistente">
-              <ChatPanel
-                open={aiOpen}
-                onClose={() => setAiOpen(false)}
-                documentName={origin}
-                documentSource={source}
-                analysis={analysis}
-                catalogue={catalogue}
-                sample={sample}
-                treeOutline={treeOutline}
-                onUseCode={applyCode}
-                onJudge={judgeSuggestion}
-                onConfirm={confirmSuggestion}
-                onUndo={undoSuggestion}
-                acceptRemotePatches
-                workspaceEpoch={workspaceEpoch}
-                onEnsureOpen={() => setAiOpen(true)}
-                onPatchNotice={(message) => {
-                  setPatchBanner(message);
-                  if (/abre un archivo \.bara/i.test(message)) {
-                    setSuggestOpen(firstBaraPath(workspace?.entries));
-                  }
+            <div className="bottom-tabs" role="tablist">
+              {bottomTabs.map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={bottomTab === id}
+                  className={bottomTab === id ? "active" : undefined}
+                  title={label}
+                  onClick={() => openBottomTab(id)}
+                >
+                  {label}
+                </button>
+              ))}
+              <span className="grow" />
+              <button
+                type="button"
+                title="Minimizar panel"
+                aria-label="Minimizar panel"
+                onClick={() => {
+                  setBottomOpen(true);
+                  setBottomMaximized(false);
+                  setBottomFrac(0.15);
                 }}
-              />
-            </aside>
-          </>
-        ) : null}
+              >
+                ▬
+              </button>
+              <button
+                type="button"
+                title={bottomMaximized ? "Restaurar panel" : "Maximizar panel (60%)"}
+                aria-label={bottomMaximized ? "Restaurar panel" : "Maximizar panel"}
+                onClick={() => {
+                  setBottomOpen(true);
+                  setBottomMaximized((v) => !v);
+                }}
+              >
+                {bottomMaximized ? "❐" : "□"}
+              </button>
+              <button
+                type="button"
+                title="Cerrar panel (Ctrl+J)"
+                aria-label="Cerrar panel inferior"
+                onClick={() => setBottomOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            {bottomOpen ? (
+              <div className="bottom-body">
+                {bottomTab === "resumen" ? (
+                  analysis ? (
+                    <SummaryPanel analysis={analysis} />
+                  ) : (
+                    <p className="muted">Sin documento analizado.</p>
+                  )
+                ) : null}
+                {bottomTab === "tokens" ? (
+                  <div className="zone-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Línea</th>
+                          <th>Col</th>
+                          <th>Clase</th>
+                          <th>Lexema</th>
+                          <th>Kernel</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((token, index) => (
+                          <tr key={`${token.line}:${token.column}:${index}`}>
+                            <td className="num">{token.line}</td>
+                            <td className="num">{token.column}</td>
+                            <td className={`cls ${token.class}`}>{CLASS_LABEL[token.class]}</td>
+                            <td className="lexeme">
+                              {token.lexeme === "\n" ? "⏎" : token.lexeme}
+                            </td>
+                            <td className="muted">{token.display}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+                {bottomTab === "oraculo" ? (
+                  <div className="kernel-oraculo zone-scroll">
+                    <div className="row">
+                      <input
+                        className="path"
+                        value={query}
+                        spellCheck={false}
+                        placeholder="consulta o raíz Shoresh"
+                        onChange={(event) => setQuery(event.target.value)}
+                      />
+                      <button type="button" disabled={busy} onClick={() => void askOracle()}>
+                        Conversar
+                      </button>
+                      <button type="button" disabled={busy || !oracle} onClick={markTimeline}>
+                        Marcar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || marker === null}
+                        onClick={() => void rollbackTimeline()}
+                      >
+                        Δ⁻¹
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void closeOracle()}
+                        title="Cerrar sesión del oráculo"
+                      >
+                        Cerrar
+                      </button>
+                    </div>
+                    {lastTurn ? <p>{lastTurn.reply}</p> : <p className="muted">Sin turnos.</p>}
+                    <KernelConsole
+                      lines={consoleLog}
+                      busy={busy}
+                      lattice={lattice}
+                      current={oracle?.timelineObservation ?? null}
+                      onSubmit={(line) => {
+                        void converse(line);
+                      }}
+                      onRecipe={(recipe) => {
+                        void runRecipe(recipe);
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {bottomTab === "catalogo" ? (
+                  <ul className="roots zone-scroll">
+                    {catalogue.map((entry) => (
+                      <li key={entry.glyph}>
+                        <span className="glyph">{entry.glyph}</span>
+                        <span className="meaning">{entry.meaning}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {bottomTab === "bilattice" ? (
+                  lattice ? (
+                    <ul className="roots zone-scroll">
+                      {lattice.values.map((point) => (
+                        <li key={point.key}>
+                          <span className="glyph">{point.observation.glyph}</span>
+                          <span className="meaning">{point.observation.name}</span>
+                          <span className="count">
+                            ⊤{point.truth} ⊥{point.falsity}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="muted">Sin biláttice.</p>
+                  )
+                ) : null}
+                {bottomTab === "telemetria" ? (
+                  <div className="zone-scroll expert-embed">
+                    <h3>{EXPERT_VIEW_BLURBS.telemetria.title}</h3>
+                    <p className="muted">{EXPERT_VIEW_BLURBS.telemetria.blurb}</p>
+                    <CockpitPanel open source={source} />
+                  </div>
+                ) : null}
+                {bottomTab === "topologia" ? (
+                  <div className="expert-embed">
+                    <h3>{EXPERT_VIEW_BLURBS.topologia.title}</h3>
+                    <p className="muted">{EXPERT_VIEW_BLURBS.topologia.blurb}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void openDeskWindow("topology").catch((reason: unknown) =>
+                          setError(describeError(reason)),
+                        );
+                      }}
+                    >
+                      Abrir ventana de topología
+                    </button>
+                  </div>
+                ) : null}
+                {bottomTab === "ledger" ? (
+                  <div className="expert-embed">
+                    <h3>{EXPERT_VIEW_BLURBS.ledger.title}</h3>
+                    <p className="muted">{EXPERT_VIEW_BLURBS.ledger.blurb}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void openDeskWindow("autopoiesis").catch((reason: unknown) =>
+                          setError(describeError(reason)),
+                        );
+                      }}
+                    >
+                      Abrir ventana del ledger
+                    </button>
+                  </div>
+                ) : null}
+                {bottomTab === "lienzo" ? (
+                  <div className="zone-scroll expert-embed">
+                    <h3>{EXPERT_VIEW_BLURBS.lienzo.title}</h3>
+                    <p className="muted">{EXPERT_VIEW_BLURBS.lienzo.blurb}</p>
+                    <PanelGuard name="lienzo" resetKey={bottomTab === "lienzo"}>
+                      <VisualBuilder open onUseCode={applyCode} />
+                    </PanelGuard>
+                  </div>
+                ) : null}
+                {bottomTab === "nucleo" ? (
+                  <div className="zone-scroll expert-embed">
+                    <h3>{EXPERT_VIEW_BLURBS.nucleo.title}</h3>
+                    <p className="muted">{EXPERT_VIEW_BLURBS.nucleo.blurb}</p>
+                    <PanelGuard name="núcleo" resetKey={bottomTab === "nucleo"}>
+                      <KernelPanel open source={source} />
+                    </PanelGuard>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        </div>
       </div>
 
-      <section className={`kernel-dock${kernelDockOpen ? " open" : ""}`} aria-label="Kernel">
-        <div className="kernel-dock-tabs" role="tablist">
-          {(
-            [
-              ["resumen", "Resumen"],
-              ["tokens", "Tokens"],
-              ["oraculo", "Oráculo"],
-              ["catalogo", "Catálogo"],
-              ["bilattice", "Bilattice"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={kernelTab === id}
-              className={kernelTab === id ? "active" : undefined}
-              onClick={() => {
-                setKernelTab(id);
-                setKernelDockOpen(true);
-              }}
-            >
-              {label}
-            </button>
-          ))}
-          <span className="grow" />
-          <button type="button" title="Cerrar panel Kernel" onClick={() => setKernelDockOpen(false)}>
-            {kernelDockOpen ? "▾" : "▴"}
-          </button>
-        </div>
-        {kernelDockOpen ? (
-          <div className="kernel-dock-body">
-            {kernelTab === "resumen" ? (
-              analysis ? <SummaryPanel analysis={analysis} /> : <p className="muted">Sin documento analizado.</p>
-            ) : null}
-            {kernelTab === "tokens" ? (
-              <div className="scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Línea</th>
-                      <th>Col</th>
-                      <th>Clase</th>
-                      <th>Lexema</th>
-                      <th>Kernel</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((token, index) => (
-                      <tr key={`${token.line}:${token.column}:${index}`}>
-                        <td className="num">{token.line}</td>
-                        <td className="num">{token.column}</td>
-                        <td className={`cls ${token.class}`}>{CLASS_LABEL[token.class]}</td>
-                        <td className="lexeme">{token.lexeme === "\n" ? "⏎" : token.lexeme}</td>
-                        <td className="muted">{token.display}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-            {kernelTab === "oraculo" ? (
-              <div className="kernel-oraculo">
-                <div className="row">
-                  <input
-                    className="path"
-                    value={query}
-                    spellCheck={false}
-                    placeholder="consulta o raíz Shoresh"
-                    onChange={(event) => setQuery(event.target.value)}
-                  />
-                  <button type="button" disabled={busy} onClick={() => void askOracle()}>
-                    Conversar
-                  </button>
-                  <button type="button" disabled={busy || !oracle} onClick={markTimeline}>
-                    Marcar
-                  </button>
-                  <button type="button" disabled={busy || marker === null} onClick={() => void rollbackTimeline()}>
-                    Δ⁻¹
-                  </button>
-                  <button type="button" disabled={busy} onClick={() => void closeOracle()} title="Cerrar sesión del oráculo">
-                    Cerrar
-                  </button>
-                </div>
-                {lastTurn ? <p>{lastTurn.reply}</p> : <p className="muted">Sin turnos.</p>}
-                <KernelConsole
-                  lines={consoleLog}
-                  busy={busy}
-                  lattice={lattice}
-                  current={oracle?.timelineObservation ?? null}
-                  onSubmit={(line) => {
-                    void converse(line);
-                  }}
-                  onRecipe={(recipe) => {
-                    void runRecipe(recipe);
-                  }}
-                />
-              </div>
-            ) : null}
-            {kernelTab === "catalogo" ? (
-              <ul className="roots">
-                {catalogue.map((entry) => (
-                  <li key={entry.glyph}>
-                    <span className="glyph">{entry.glyph}</span>
-                    <span className="meaning">{entry.meaning}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {kernelTab === "bilattice" ? (
-              lattice ? (
-                <ul className="roots">
-                  {lattice.values.map((point) => (
-                    <li key={point.key}>
-                      <span className="glyph">{point.observation.glyph}</span>
-                      <span className="meaning">{point.observation.name}</span>
-                      <span className="count">
-                        ⊤{point.truth} ⊥{point.falsity}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted">Sin biláttice.</p>
-              )
-            ) : null}
-          </div>
-        ) : null}
-      </section>
+      <StatusBar
+        fileLabel={activeTab ? activeTab.path : "sin archivo"}
+        kernel={kernelPill}
+        verified={verifiedBool}
+        tokenCount={analysis ? analysis.summary.total : null}
+        onFile={() => {
+          editorFocusRef.current?.focus();
+        }}
+        onKernel={() => openBottomTab("resumen")}
+        onVerified={() => openBottomTab("resumen")}
+        onTokens={() => openBottomTab("tokens")}
+      />
 
-      <PanelGuard name="núcleo" resetKey={kernelOpen}>
-        <KernelPanel open={kernelOpen} source={source} />
-      </PanelGuard>
-
-      <CockpitPanel open={cockpitOpen} source={source} />
-
-      <PanelGuard name="lienzo" resetKey={visualOpen}>
-        <VisualBuilder open={visualOpen} onUseCode={applyCode} />
-      </PanelGuard>
+      <CommandPalette
+        open={paletteOpen}
+        commands={commands}
+        onClose={() => setPaletteOpen(false)}
+      />
     </div>
   );
 }

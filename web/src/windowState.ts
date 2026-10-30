@@ -60,7 +60,8 @@ export async function restoreMainWindow(): Promise<void> {
     const availW = Math.floor(screenW / scale);
     const availH = Math.floor(screenH / scale);
 
-    if (saved?.maximized || saved === null && (availW < 1280 || availH < 720)) {
+    // Arranque: maximizada si el monitor lógico ≤1440 de ancho (o si ya lo estaba).
+    if (saved?.maximized || (saved === null && availW <= 1440)) {
       await current.maximize();
       return;
     }

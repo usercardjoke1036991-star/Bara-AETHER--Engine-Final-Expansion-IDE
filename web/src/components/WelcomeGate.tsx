@@ -40,11 +40,10 @@ export default function WelcomeGate({
   return (
     <section className="welcome" role="dialog" aria-modal="false" aria-label="Abrir un workspace">
       <p className="welcome-kicker">Bara IDE</p>
-      <h2>Abre un workspace</h2>
+      <h2>Empieza por una carpeta</h2>
       <p className="muted">
-        Elige una carpeta de este equipo o clona un repositorio de GitHub. El
-        árbol ignora <code>target/</code>, <code>node_modules/</code> y{" "}
-        <code>.git/</code>. Sólo se editan documentos <code>.bara</code>.
+        Abre un proyecto de este equipo o clónalo desde GitHub. Luego edita los
+        archivos <code>.bara</code> en el centro; el chat queda a la derecha.
       </p>
 
       <div className="welcome-actions">
