@@ -18,7 +18,6 @@ use bara::syntax::{self, shoresh_unverified_reason};
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
 use std::fs;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::workspace::{self, WorkspaceDocument};
