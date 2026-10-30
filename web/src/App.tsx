@@ -261,7 +261,12 @@ export default function App() {
       }
       if (mod && key === "j") {
         event.preventDefault();
-        setBottomOpen((v) => !v);
+        setBottomOpen((v) => {
+          if (v) {
+            setBottomMaximized(false);
+          }
+          return !v;
+        });
         return;
       }
       // Chat: Ctrl+Alt+A (teclado ES, sin depender de `Ñ`).
@@ -293,6 +298,7 @@ export default function App() {
           setPaletteOpen(false);
         } else if (layer === "bottom") {
           setBottomOpen(false);
+          setBottomMaximized(false);
         } else if (layer === "chat") {
           setAiOpen(false);
         } else if (layer === "side") {
@@ -1204,7 +1210,10 @@ export default function App() {
       setBottomMaximized(false);
       setBottomFrac(0.15);
     },
-    closeBottom: () => setBottomOpen(false),
+    closeBottom: () => {
+      setBottomOpen(false);
+      setBottomMaximized(false);
+    },
     closeMenus: closeAllOverlays,
   });
 
@@ -1672,7 +1681,10 @@ export default function App() {
                 type="button"
                 title="Cerrar panel (Ctrl+J)"
                 aria-label="Cerrar panel inferior"
-                onClick={() => setBottomOpen(false)}
+                onClick={() => {
+                  setBottomOpen(false);
+                  setBottomMaximized(false);
+                }}
               >
                 ×
               </button>

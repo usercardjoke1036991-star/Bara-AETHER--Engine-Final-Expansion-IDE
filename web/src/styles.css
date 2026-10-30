@@ -259,7 +259,7 @@ body,
   height: var(--bottom-h, 35%);
 }
 
-.bottom-panel.maximized {
+.bottom-panel.open.maximized {
   height: 60%;
 }
 

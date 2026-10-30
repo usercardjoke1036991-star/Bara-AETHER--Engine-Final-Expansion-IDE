@@ -98,6 +98,7 @@ describe("reglas UX", () => {
 
   it("altura del panel inferior respeta el tope del 60%", () => {
     expect(bottomHeightCss(false, false, 0.4)).toBe("0px");
+    expect(bottomHeightCss(false, true, 0.9)).toBe("0px");
     expect(bottomHeightCss(true, true, 0.2)).toBe("60%");
     expect(bottomHeightCss(true, false, 0.9)).toBe("60.0%");
     expect(bottomHeightCss(true, false, 0.35)).toBe("35.0%");
