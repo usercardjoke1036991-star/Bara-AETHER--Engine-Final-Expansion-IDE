@@ -18,7 +18,8 @@
   --space-4: 24px;
   --side-frac: 0.18;
   --chat-frac: 0.48;
-  /* Verde del emblem AETHER-Ω (muestreado del JPG; sin neón #39ff14). */
+  /* Verde emblem AETHER-Ω muestreado del JPG web/public/brand/aether-omega.jpg
+     (cluster mid-tono emblema ~#187038–#187838; token #1a843c; sin #39ff14). */
   --brand-green: #1a843c;
   --font-min: 14px;
   font-family: "Segoe UI", system-ui, sans-serif;
@@ -139,6 +140,11 @@ body,
   flex-shrink: 0;
 }
 
+.activity-brand .brand-mark {
+  border: 1px solid var(--brand-green);
+  box-shadow: 0 0 10px rgba(26, 132, 60, 0.45);
+}
+
 .activity-brand-text {
   display: flex;
   flex-direction: column;
@@ -181,7 +187,7 @@ body,
 .activity-glyph {
   font-size: 0.95rem;
   line-height: 1;
-  color: var(--root);
+  color: var(--brand-green);
 }
 
 .activity-label {
@@ -206,6 +212,8 @@ body,
 .title-brand {
   margin-right: 2px;
   border-radius: 6px;
+  border: 1px solid var(--brand-green);
+  box-shadow: 0 0 8px rgba(26, 132, 60, 0.4);
 }
 
 .ide-side {
@@ -1451,13 +1459,13 @@ td {
   border-radius: 50%;
   border: 1px solid var(--brand-green);
   background: #000;
-  box-shadow: none;
+  box-shadow: 0 0 8px rgba(26, 132, 60, 0.4);
 }
 
 .brand-mark-rail {
   object-fit: cover;
   object-position: 50% 36%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--brand-green);
   background: #000;
 }
 
@@ -1465,8 +1473,9 @@ td {
   object-fit: cover;
   object-position: 50% 40%;
   border-radius: 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--brand-green);
   background: #000;
+  box-shadow: 0 0 10px rgba(26, 132, 60, 0.35);
 }
 
 .ai-chip-file {
