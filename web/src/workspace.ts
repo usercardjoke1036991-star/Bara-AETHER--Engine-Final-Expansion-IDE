@@ -128,6 +128,11 @@ export function workspaceCloseRoot(id: string): Promise<WorkspaceShelf> {
   return invoke<WorkspaceShelf>("workspace_close_root", { id });
 }
 
+/** Readmite un path reciente (absoluto, existente) y lo vuelve activo. */
+export function workspaceReopen(path: string): Promise<WorkspaceShelf> {
+  return invoke<WorkspaceShelf>("workspace_reopen", { path });
+}
+
 /** Guarda un `.bara` relativo a la raíz activa y devuelve lo persistido. */
 export function workspaceWriteDocument(
   path: string,

@@ -34,6 +34,11 @@ import { listModels, sendChat } from "../ai/providers";
 import { READ_FILE_TOOL } from "../ai/tools";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
+import {
+  clearChatHistory,
+  loadChatHistory,
+  saveChatHistory,
+} from "../ai/chatHistory";
 import type { AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
 import { buildReviewChrome, type ReviewChromeLive } from "../reviewChrome";
@@ -132,6 +137,8 @@ export interface ChatPanelProps {
    * La ventana Asistencia emite; no re-escucha (evitar juez stub).
    */
   acceptRemotePatches?: boolean;
+  /** Clave de historial local por proyecto (sin API keys). */
+  projectId?: string;
 }
 
 export default function ChatPanel({
@@ -151,6 +158,7 @@ export default function ChatPanel({
   onReviewChrome,
   workspaceEpoch = 0,
   acceptRemotePatches = false,
+  projectId = "",
 }: ChatPanelProps) {
   const [config, setConfig] = useState<AiConfig>(() => loadConfig());
   useEffect(() => {
@@ -191,7 +199,9 @@ export default function ChatPanel({
     };
   }, [config.provider]);
   const [settings, setSettings] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    projectId ? loadChatHistory(projectId) : [],
+  );
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [usages, setUsages] = useState<Record<string, ChatUsage>>({});
@@ -212,8 +222,32 @@ export default function ChatPanel({
 
   const abortRef = useRef<AbortController | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
+  const projectIdRef = useRef(projectId);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   /** Generación del llavero: invalida lecturas `keyExists` anteriores a un Guardar. */
   const keyEpochRef = useRef(0);
+
+  // Historial por proyecto: guarda el hilo saliente y carga el entrante.
+  useEffect(() => {
+    const previous = projectIdRef.current;
+    if (previous && previous !== projectId) {
+      saveChatHistory(previous, messagesRef.current);
+    }
+    projectIdRef.current = projectId;
+    setMessages(projectId ? loadChatHistory(projectId) : []);
+    setUsages({});
+    setTranslations({});
+    setDraft("");
+    setAttachments([]);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) {
+      return;
+    }
+    saveChatHistory(projectId, messages);
+  }, [projectId, messages]);
   const storeAvailable = useMemo(() => defaultStore() !== null, []);
   const problems = configProblems(config);
   const composerPayload = [draft.trim(), fileNotesForPrompt(attachments)]
@@ -851,6 +885,23 @@ export default function ChatPanel({
         <span className="grow" />
         <button type="button" onClick={() => setSettings(!settings)}>
           {settings ? "chat" : "ajustes"}
+        </button>
+        <button
+          type="button"
+          title="Borrar historial de este proyecto (local)"
+          disabled={messages.length === 0 || !projectId}
+          onClick={() => {
+            if (!projectId) {
+              return;
+            }
+            clearChatHistory(projectId);
+            setMessages([]);
+            setUsages({});
+            setTranslations({});
+            setNotice("Historial de este proyecto borrado.");
+          }}
+        >
+          borrar historial
         </button>
         {onClose ? (
           <button type="button" onClick={onClose}>

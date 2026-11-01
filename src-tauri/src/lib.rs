@@ -970,13 +970,41 @@ fn workspace_activate(
 /// Cierra una carpeta del estante. La última permanece.
 #[tauri::command]
 fn workspace_close_root(
+    app: tauri::AppHandle,
     id: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceShelf, String> {
     let (path, shelf) = state.release(id.trim())?;
     release_folder(&kernel, &path);
+    if let Ok(root) = state.get() {
+        let _ = app.emit(
+            "workspace-root-changed",
+            json!({ "root": root, "reason": "close" }),
+        );
+    }
     Ok(shelf)
+}
+
+/// Readmite una carpeta reciente ya conocida (ruta absoluta existente).
+///
+/// Sirve para restaurar ≥2 proyectos tras reiniciar: el front sólo envía
+/// paths que guardó en locales; aquí se canonizan como en el diálogo.
+#[tauri::command]
+fn workspace_reopen(
+    app: tauri::AppHandle,
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<workspace::WorkspaceShelf, String> {
+    let canonical = workspace::resolve_root(path.trim())?;
+    let root = canonical.display().to_string();
+    adopt_root(&state, &kernel, root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": root, "reason": "reopen" }),
+    );
+    state.list()
 }
 
 /// Transmuta el árbol de la carpeta activa. La ruta no la elige el WebView.
@@ -1225,6 +1253,7 @@ pub fn run() {
             workspace_roots,
             workspace_activate,
             workspace_close_root,
+            workspace_reopen,
             open_desk_window,
             propose_editor_patch,
             propose_ai_desk_attachment,
@@ -1307,6 +1336,7 @@ mod ipc_boundary {
         assert!(handler.contains("propose_editor_patch"));
         assert!(handler.contains("open_devtools_window"));
         assert!(handler.contains("workspace_activate"));
+        assert!(handler.contains("workspace_reopen"));
         assert!(handler.contains("transmute_workspace"));
         assert!(handler.contains("inspect_media_dialog"));
         assert!(handler.contains("get_local_completions"));

@@ -56,6 +56,7 @@ import {
   type WorkspaceTree,
 } from "./workspace";
 import { analysisStillCurrent } from "./analysisGate";
+import { projectKey } from "./ai/projectKey";
 import {
   confirmAutoPatch,
   emptyReport,
@@ -1510,6 +1511,7 @@ export default function App() {
                 onUndo={undoSuggestion}
                 acceptRemotePatches
                 workspaceEpoch={workspaceEpoch}
+                projectId={projectKey(workspaceRoot)}
                 onEnsureOpen={() => setAiOpen(true)}
                 onPatchNotice={(message) => {
                   setPatchBanner(message);
