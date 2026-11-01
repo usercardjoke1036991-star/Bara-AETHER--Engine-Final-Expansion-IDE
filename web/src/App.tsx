@@ -12,6 +12,7 @@ import {
 
 import { statusFromAnalysis } from "./baraVerify";
 import ActivityBar from "./shell/ActivityBar";
+import BrandMark from "./shell/BrandMark";
 import CommandPalette from "./shell/CommandPalette";
 import { buildCommands } from "./shell/commands";
 import {
@@ -1245,6 +1246,7 @@ export default function App() {
       }
     >
       <header className="title-bar">
+        <BrandMark size={28} variant="mark" title="AETHER-Ω" className="title-brand" />
         <h1 title={workspaceRoot || "Bara IDE"}>{titleLabel}</h1>
         <span className={`kernel-pill kernel-pill-${kernelTone(kernelPill)}`} title="Estado del proceso kernel">
           kernel {kernelPill}
@@ -1260,7 +1262,7 @@ export default function App() {
         </button>
         <button
           type="button"
-          title="Mostrar u ocultar chat (Ctrl+Alt+A)"
+          title="Mostrar u ocultar asistente (Ctrl+Alt+A)"
           aria-pressed={aiOpen}
           onClick={() => setAiOpen((v) => !v)}
         >
@@ -1485,6 +1487,65 @@ export default function App() {
 
         <div className="ide-main-column">
           <div className="ide-center-row">
+            {/* Modelo mockup: Asistente al CENTRO · editor a la DERECHA.
+                Chat siempre montado (listener propose-patch). Sticky review intacto. */}
+            <aside
+              className={`ide-chat ide-chat-main${aiOpen ? "" : " is-closed"}`}
+              aria-label="Asistente"
+              aria-hidden={!aiOpen}
+              hidden={!aiOpen}
+            >
+              <ChatPanel
+                open={aiOpen}
+                onClose={() => setAiOpen(false)}
+                documentName={origin}
+                documentSource={source}
+                analysis={analysis}
+                catalogue={catalogue}
+                sample={sample}
+                treeOutline={treeOutline}
+                onUseCode={applyCode}
+                onJudge={judgeSuggestion}
+                onConfirm={confirmSuggestion}
+                onUndo={undoSuggestion}
+                acceptRemotePatches
+                workspaceEpoch={workspaceEpoch}
+                onEnsureOpen={() => setAiOpen(true)}
+                onPatchNotice={(message) => {
+                  setPatchBanner(message);
+                  if (/abre un archivo \.bara/i.test(message)) {
+                    setSuggestOpen(firstBaraPath(workspace?.entries));
+                  }
+                }}
+                onReviewChrome={setReviewChrome}
+              />
+            </aside>
+
+            {aiOpen ? (
+              <div
+                className="ide-split"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Redimensionar asistente"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  const startX = event.clientX;
+                  const start = chatFrac;
+                  const onMove = (ev: MouseEvent) => {
+                    // Chat a la izquierda del editor: arrastrar a la derecha ensancha el chat.
+                    const delta = (ev.clientX - startX) / window.innerWidth;
+                    setChatFrac(Math.min(0.62, Math.max(0.32, start + delta)));
+                  };
+                  const onUp = () => {
+                    window.removeEventListener("mousemove", onMove);
+                    window.removeEventListener("mouseup", onUp);
+                  };
+                  window.addEventListener("mousemove", onMove);
+                  window.addEventListener("mouseup", onUp);
+                }}
+              />
+            ) : null}
+
             <section
               className="pane editor-pane ide-center"
               ref={editorFocusRef}
@@ -1590,63 +1651,6 @@ export default function App() {
                 </div>
               </div>
             </section>
-
-            {aiOpen ? (
-              <div
-                className="ide-split"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Redimensionar chat"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  const startX = event.clientX;
-                  const start = chatFrac;
-                  const onMove = (ev: MouseEvent) => {
-                    const delta = (startX - ev.clientX) / window.innerWidth;
-                    setChatFrac(Math.min(0.42, Math.max(0.18, start + delta)));
-                  };
-                  const onUp = () => {
-                    window.removeEventListener("mousemove", onMove);
-                    window.removeEventListener("mouseup", onUp);
-                  };
-                  window.addEventListener("mousemove", onMove);
-                  window.addEventListener("mouseup", onUp);
-                }}
-              />
-            ) : null}
-            {/* Siempre montado: el listener de assistant-propose-patch vive aquí
-                aunque el chat esté cerrado («usar en el editor» / Asistencia). */}
-            <aside
-              className={`ide-chat${aiOpen ? "" : " is-closed"}`}
-              aria-label="Asistente"
-              aria-hidden={!aiOpen}
-              hidden={!aiOpen}
-            >
-              <ChatPanel
-                open={aiOpen}
-                onClose={() => setAiOpen(false)}
-                documentName={origin}
-                documentSource={source}
-                analysis={analysis}
-                catalogue={catalogue}
-                sample={sample}
-                treeOutline={treeOutline}
-                onUseCode={applyCode}
-                onJudge={judgeSuggestion}
-                onConfirm={confirmSuggestion}
-                onUndo={undoSuggestion}
-                acceptRemotePatches
-                workspaceEpoch={workspaceEpoch}
-                onEnsureOpen={() => setAiOpen(true)}
-                onPatchNotice={(message) => {
-                  setPatchBanner(message);
-                  if (/abre un archivo \.bara/i.test(message)) {
-                    setSuggestOpen(firstBaraPath(workspace?.entries));
-                  }
-                }}
-                onReviewChrome={setReviewChrome}
-              />
-            </aside>
           </div>
 
           <section

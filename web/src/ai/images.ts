@@ -57,19 +57,23 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Separa los archivos aceptados de los rechazados, con motivo legible. */
+/** ¿Es un MIME de visión admitido por los proveedores? */
+export function isVisionMedia(mediaType: string): boolean {
+  return ACCEPTED_TYPES.includes(mediaType);
+}
+
+/** Cupo de bytes para adjuntos no-imagen embebidos en el mensaje. */
+export const MAX_FILE_BYTES = 256 * 1024;
+
+/** Separa imágenes de visión de cualquier otro archivo (todos admitidos). */
 export function acceptedFiles(files: File[]): { ok: File[]; rejected: string[] } {
-  const ok: File[] = [];
-  const rejected: string[] = [];
-  for (const file of files) {
-    if (ACCEPTED_TYPES.includes(file.type)) {
-      ok.push(file);
-    } else {
-      const name = file.name || "imagen";
-      rejected.push(`${name}: tipo no admitido (${file.type || "desconocido"})`);
-    }
-  }
-  return { ok, rejected };
+  // Compat: todo archivo entra; el rechazo queda para cupos/tamaño en prepare*.
+  return { ok: [...files], rejected: [] };
+}
+
+/** ¿El adjunto viaja como imagen multimodal? */
+export function isVisionAttachment(attachment: ImageAttachment): boolean {
+  return (attachment.kind ?? "image") === "image" && isVisionMedia(attachment.mediaType);
 }
 
 /** Lee un archivo como data URL. */
@@ -159,8 +163,76 @@ export async function prepareImage(file: File, index = 0): Promise<ImageAttachme
   };
 }
 
+/** Adjunta un archivo no-imagen: se embebe como texto en el turno. */
+export async function prepareFile(file: File, index = 0): Promise<ImageAttachment> {
+  const name = file.name || `archivo-${index + 1}`;
+  if (file.size > MAX_FILE_BYTES) {
+    throw new Error(`${name}: supera ${formatBytes(MAX_FILE_BYTES)}; divide el archivo`);
+  }
+  let textContent = "";
+  try {
+    textContent = await file.text();
+  } catch {
+    throw new Error(`${name}: no se pudo leer el archivo`);
+  }
+  if (textContent.length > MAX_FILE_BYTES) {
+    textContent = textContent.slice(0, MAX_FILE_BYTES);
+  }
+  return {
+    id: attachmentId(index),
+    name,
+    mediaType: file.type || "application/octet-stream",
+    base64: "",
+    dataUrl: "",
+    width: 0,
+    height: 0,
+    bytes: file.size,
+    kind: "file",
+    textContent,
+  };
+}
+
+/** Prepara un archivo cualquiera: imagen multimodal o adjunto de texto. */
+export async function prepareAnyFile(file: File, index = 0): Promise<ImageAttachment> {
+  if (isVisionMedia(file.type)) {
+    const image = await prepareImage(file, index);
+    return { ...image, kind: "image" };
+  }
+  // Algunos SO no rellenan MIME en PNG/JPEG; intenta por extensión.
+  const lower = (file.name || "").toLowerCase();
+  if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
+    try {
+      const image = await prepareImage(
+        new File([file], file.name, {
+          type:
+            lower.endsWith(".png")
+              ? "image/png"
+              : lower.endsWith(".webp")
+                ? "image/webp"
+                : lower.endsWith(".gif")
+                  ? "image/gif"
+                  : "image/jpeg",
+        }),
+        index,
+      );
+      return { ...image, kind: "image" };
+    } catch {
+      // cae a archivo de texto
+    }
+  }
+  return prepareFile(file, index);
+}
+
 /** Prepara varios archivos respetando el cupo de adjuntos por mensaje. */
 export async function prepareImages(
+  files: File[],
+  already: number,
+): Promise<{ attachments: ImageAttachment[]; errors: string[] }> {
+  return prepareAttachments(files, already);
+}
+
+/** Prepara imágenes y archivos de cualquier tipo (cupo compartido). */
+export async function prepareAttachments(
   files: File[],
   already: number,
 ): Promise<{ attachments: ImageAttachment[]; errors: string[] }> {
@@ -170,15 +242,30 @@ export async function prepareImages(
   const attachments: ImageAttachment[] = [];
   for (let index = 0; index < ok.length && index < room; index += 1) {
     try {
-      attachments.push(await prepareImage(ok[index], already + index));
+      attachments.push(await prepareAnyFile(ok[index], already + index));
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
   if (ok.length > room) {
-    errors.push(`sólo se admiten ${MAX_ATTACHMENTS} imágenes por mensaje`);
+    errors.push(`sólo se admiten ${MAX_ATTACHMENTS} adjuntos por mensaje`);
   }
   return { attachments, errors };
+}
+
+/** Texto a inyectar en el mensaje a partir de adjuntos no-imagen. */
+export function fileNotesForPrompt(attachments: ImageAttachment[]): string {
+  const notes = attachments.filter((item) => !isVisionAttachment(item));
+  if (notes.length === 0) {
+    return "";
+  }
+  return notes
+    .map((item) => {
+      const body = (item.textContent ?? "").trim();
+      const header = `--- adjunto: ${item.name} (${formatBytes(item.bytes)}) ---`;
+      return body.length > 0 ? `${header}\n${body}` : header;
+    })
+    .join("\n\n");
 }
 
 /** Archivos de un evento de arrastrar y soltar (o del portapapeles). */

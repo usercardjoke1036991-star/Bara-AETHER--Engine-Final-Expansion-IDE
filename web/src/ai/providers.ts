@@ -65,7 +65,17 @@ export function wireMessages(messages: ChatMessage[], limit = MAX_WIRE_MESSAGES)
     .filter((message) => message.error === null)
     .filter((message) => message.text.trim().length > 0 || message.images.length > 0)
     .slice(-limit)
-    .map((message) => ({ role: message.role, text: message.text, images: message.images }));
+    .map((message) => ({
+      role: message.role,
+      text: message.text,
+      // Sólo imágenes de visión: los adjuntos de archivo ya van en el texto.
+      images: message.images.filter(
+        (image) =>
+          (image.kind ?? "image") === "image" &&
+          image.dataUrl.length > 0 &&
+          image.mediaType.startsWith("image/"),
+      ),
+    }));
 }
 
 /** Raíz de la API normalizada (sin barra final); vacía ⇒ la del proveedor. */

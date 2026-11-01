@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import BrandMark from "../shell/BrandMark";
+
 interface WelcomeGateProps {
   /** Hay una apertura o un clon en curso. */
   busy: boolean;
@@ -39,11 +41,14 @@ export default function WelcomeGate({
 
   return (
     <section className="welcome" role="dialog" aria-modal="false" aria-label="Abrir un workspace">
-      <p className="welcome-kicker">Bara IDE</p>
+      <div className="welcome-brand">
+        <BrandMark size={96} variant="mark" title="AETHER-Ω" />
+        <p className="welcome-kicker">בָּרָא · Bara · AETHER-Ω</p>
+      </div>
       <h2>Empieza por una carpeta</h2>
       <p className="muted">
-        Abre un proyecto de este equipo o clónalo desde GitHub. Luego edita los
-        archivos <code>.bara</code> en el centro; el chat queda a la derecha.
+        Abre un proyecto de este equipo o clónalo desde GitHub. El asistente queda
+        al centro; el código <code>.bara</code> a la derecha.
       </p>
 
       <div className="welcome-actions">

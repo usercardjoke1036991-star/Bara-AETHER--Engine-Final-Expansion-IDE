@@ -7,22 +7,26 @@ export type ProviderId = "anthropic" | "openai";
 /** Rol de un mensaje dentro de la conversación. */
 export type ChatRole = "user" | "assistant";
 
-/** Imagen adjunta ya normalizada (data URL + carga útil base64). */
+/** Adjunto ya normalizado (imagen multimodal o archivo de texto embebido). */
 export interface ImageAttachment {
   /** Identificador local (clave de React y de la lista de adjuntos). */
   id: string;
   /** Nombre original del archivo o `pegado-<n>`. */
   name: string;
-  /** Tipo MIME real de la imagen (`image/png`, `image/jpeg`…). */
+  /** Tipo MIME real (`image/png`, `text/plain`, `application/octet-stream`…). */
   mediaType: string;
-  /** Carga útil base64 **sin** el prefijo `data:`. */
+  /** Carga útil base64 **sin** el prefijo `data:` (vacío en adjuntos de archivo). */
   base64: string;
-  /** Data URL completa, la forma que consume OpenAI. */
+  /** Data URL completa, la forma que consume OpenAI (vacío si no es imagen). */
   dataUrl: string;
   width: number;
   height: number;
   /** Peso aproximado de la carga útil en bytes. */
   bytes: number;
+  /** `image` (visión) o `file` (se inyecta como texto en el mensaje). */
+  kind?: "image" | "file";
+  /** Contenido de texto del archivo no-imagen (si cabe). */
+  textContent?: string;
 }
 
 /** Mensaje de la conversación tal como lo ve y lo pinta la interfaz. */

@@ -1,7 +1,4 @@
-// Barra lateral del workspace: raíz activa, recarga y árbol recursivo.
-//
-// La carpeta entra por el diálogo del sistema o por un clon de GitHub.
-// El campo de ruta es de sólo lectura: el WebView no impone otra raíz.
+// Barra lateral: PROYECTOS arriba (estante de roots) · ARCHIVOS abajo (árbol).
 
 import { useEffect, useState } from "react";
 
@@ -35,7 +32,7 @@ interface WorkspaceSidebarProps {
   onOpenFile: (entry: WorkspaceEntry) => void;
 }
 
-/** Panel lateral con el explorador recursivo del workspace. */
+/** Panel lateral: proyectos (multi-root) + archivos del activo. */
 export default function WorkspaceSidebar({
   root,
   tree,
@@ -62,111 +59,127 @@ export default function WorkspaceSidebar({
 
   return (
     <aside className="workspace" aria-label="Explorador del workspace">
-      <div className="workspace-head">
-        <h2>Workspace</h2>
-        <button
-          type="button"
-          className="icon-button"
-          disabled={loading || root.length === 0}
-          onClick={onRefresh}
-          title="Volver a enumerar la raíz"
-          aria-label="Recargar el árbol del workspace"
-        >
-          ↻
-        </button>
-      </div>
+      <header className="ws-title">
+        <h1>Workspace</h1>
+      </header>
+      <section className="ws-section ws-projects" aria-label="Proyectos">
+        <div className="ws-section-head">
+          <h2>PROYECTOS</h2>
+          <button
+            type="button"
+            className="icon-button"
+            disabled={loading || root.length === 0}
+            onClick={onRefresh}
+            title="Volver a enumerar la raíz"
+            aria-label="Recargar el árbol del workspace"
+          >
+            ↻
+          </button>
+        </div>
 
-      <div className="workspace-actions">
-        <button type="button" disabled={loading} onClick={onPickFolder}>
-          Abrir carpeta
-        </button>
-        <button type="button" disabled={loading} onClick={onClone}>
-          Clonar
-        </button>
-      </div>
+        <div className="workspace-actions">
+          <button type="button" disabled={loading} onClick={onPickFolder}>
+            Abrir carpeta
+          </button>
+          <button type="button" disabled={loading} onClick={onClone}>
+            Clonar
+          </button>
+        </div>
 
-      {shelf && shelf.roots.length > 0 ? (
-        <ul className="shelf">
-          {shelf.roots.map((slot) => {
-            const onlyRoot = shelf.roots.length <= 1;
-            return (
-            <li key={slot.id}>
-              <button
-                type="button"
-                className={slot.active ? "shelf-active" : undefined}
-                disabled={loading}
-                onClick={() => {
-                  // `workspace-root-changed` reinicia editor/diff en todas las ventanas.
-                  void workspaceActivate(slot.id)
-                    .then(() => onRefresh())
-                    .catch((reason: unknown) => {
-                      setShelfError(describeError(reason));
-                    });
-                }}
-              >
-                {slot.name}
-              </button>
-              <button
-                type="button"
-                className="shelf-close"
-                aria-label={onlyRoot ? `No se cierra la última carpeta (${slot.name})` : `Cerrar ${slot.name}`}
-                title={onlyRoot ? "La última carpeta del estante no se cierra" : "Cerrar carpeta"}
-                disabled={loading || onlyRoot}
-                onClick={() => {
-                  if (onlyRoot) {
-                    return;
-                  }
-                  void workspaceCloseRoot(slot.id)
-                    .then((next) => {
-                      setShelf(next);
-                      setShelfError(null);
-                      onRefresh();
-                    })
-                    .catch((reason: unknown) => {
-                      setShelfError(describeError(reason));
-                    });
-                }}
-              >
-                ×
-              </button>
-            </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {shelfError ? <p className="error">{shelfError}</p> : null}
-
-      <p className="workspace-root path" title={root}>
-        {root || "Sin carpeta activa"}
-      </p>
-
-      {tree ? (
-        <p className="workspace-meta" title={tree.root}>
-          {tree.name} · {tree.files} .bara
-          {tree.truncated ? " · vista recortada" : ""}
-        </p>
-      ) : (
-        <p className="workspace-meta">Sin explorador cargado.</p>
-      )}
-
-      <div className="workspace-tree">
-        {loading ? (
-          <p className="muted">Enumerando…</p>
-        ) : tree ? (
-          <FileTree
-            entries={tree.entries}
-            activePath={activePath}
-            onOpen={onOpenFile}
-          />
+        {shelf && shelf.roots.length > 0 ? (
+          <ul className="shelf">
+            {shelf.roots.map((slot) => {
+              const onlyRoot = shelf.roots.length <= 1;
+              return (
+                <li key={slot.id}>
+                  <button
+                    type="button"
+                    className={slot.active ? "shelf-active" : undefined}
+                    disabled={loading}
+                    onClick={() => {
+                      void workspaceActivate(slot.id)
+                        .then(() => onRefresh())
+                        .catch((reason: unknown) => {
+                          setShelfError(describeError(reason));
+                        });
+                    }}
+                  >
+                    {slot.name}
+                  </button>
+                  <button
+                    type="button"
+                    className="shelf-close"
+                    aria-label={
+                      onlyRoot
+                        ? `No se cierra la última carpeta (${slot.name})`
+                        : `Cerrar ${slot.name}`
+                    }
+                    title={
+                      onlyRoot
+                        ? "La última carpeta del estante no se cierra"
+                        : "Cerrar carpeta"
+                    }
+                    disabled={loading || onlyRoot}
+                    onClick={() => {
+                      if (onlyRoot) {
+                        return;
+                      }
+                      void workspaceCloseRoot(slot.id)
+                        .then((next) => {
+                          setShelf(next);
+                          setShelfError(null);
+                          onRefresh();
+                        })
+                        .catch((reason: unknown) => {
+                          setShelfError(describeError(reason));
+                        });
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         ) : (
-          <p className="muted">Abre una carpeta con el diálogo del sistema.</p>
+          <p className="muted ws-empty">Sin proyectos en el estante. Abre o clona una carpeta.</p>
         )}
-      </div>
+        {shelfError ? <p className="error">{shelfError}</p> : null}
+      </section>
 
-      <p className="workspace-note">
-        Se excluyen <code>target/</code>, <code>node_modules/</code> y{" "}
-        <code>.git/</code>. Sólo se editan documentos <code>.bara</code>.
-      </p>
+      <section className="ws-section ws-files" aria-label="Archivos">
+        <div className="ws-section-head">
+          <h2>ARCHIVOS</h2>
+        </div>
+
+        <p className="workspace-root path" title={root}>
+          {root || "Sin carpeta activa"}
+        </p>
+
+        {tree ? (
+          <p className="workspace-meta" title={tree.root}>
+            {tree.name} · {tree.files} .bara
+            {tree.truncated ? " · vista recortada" : ""}
+          </p>
+        ) : (
+          <p className="workspace-meta">Sin explorador cargado.</p>
+        )}
+
+        <div className="workspace-tree">
+          {loading ? (
+            <p className="muted">Enumerando…</p>
+          ) : tree ? (
+            <FileTree entries={tree.entries} activePath={activePath} onOpen={onOpenFile} />
+          ) : (
+            <p className="muted">Abre una carpeta con el diálogo del sistema.</p>
+          )}
+        </div>
+
+        <p className="workspace-note">
+          Se excluyen <code>target/</code>, <code>node_modules/</code> y{" "}
+          <code>.git/</code>. Sólo se editan documentos <code>.bara</code>.
+        </p>
+      </section>
     </aside>
   );
 }

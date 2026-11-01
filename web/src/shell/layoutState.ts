@@ -1,6 +1,6 @@
 // Persistencia de paneles abiertos (sin secretos).
 
-const KEY = "bara.panels.v1";
+const KEY = "bara.panels.v2";
 
 export type SideMode = "files" | "search" | "settings" | null;
 
@@ -33,8 +33,9 @@ export const DEFAULT_PANEL_LAYOUT: PanelLayout = {
   bottomOpen: false,
   bottomMaximized: false,
   bottomFrac: 0.35,
-  sideFrac: 0.2,
-  chatFrac: 0.28,
+  sideFrac: 0.18,
+  // Chat centro = panel principal; editor a la derecha más estrecho.
+  chatFrac: 0.48,
   bottomTab: "resumen",
 };
 
@@ -49,8 +50,8 @@ export function loadPanelLayout(): PanelLayout {
       ...DEFAULT_PANEL_LAYOUT,
       ...parsed,
       bottomFrac: clamp(parsed.bottomFrac ?? 0.35, 0.15, 0.6),
-      sideFrac: clamp(parsed.sideFrac ?? 0.2, 0.14, 0.36),
-      chatFrac: clamp(parsed.chatFrac ?? 0.28, 0.22, 0.42),
+      sideFrac: clamp(parsed.sideFrac ?? 0.18, 0.12, 0.32),
+      chatFrac: clamp(parsed.chatFrac ?? 0.48, 0.32, 0.62),
     };
   } catch {
     return { ...DEFAULT_PANEL_LAYOUT };

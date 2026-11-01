@@ -16,8 +16,9 @@
   --space-2: 12px;
   --space-3: 16px;
   --space-4: 24px;
-  --side-frac: 0.2;
-  --chat-frac: 0.28;
+  --side-frac: 0.18;
+  --chat-frac: 0.48;
+  --brand-green: #39ff14;
   --font-min: 14px;
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: var(--font-min);
@@ -114,26 +115,79 @@ body,
 }
 
 .activity-bar {
-  flex: 0 0 3rem;
+  flex: 0 0 4.75rem;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   padding: var(--space-1) 0;
   border-right: 1px solid var(--line);
-  background: #0a0e13;
+  background: #070a0e;
   z-index: 20;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.activity-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.activity-brand-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.activity-brand-he {
+  color: var(--brand-green);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.activity-brand-en {
+  color: var(--root);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .activity-btn {
-  width: 3rem;
-  min-height: 2.75rem;
+  width: 100%;
+  min-height: 3.1rem;
   border: none;
   border-radius: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.62rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+}
+
+.activity-glyph {
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--root);
+}
+
+.activity-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-btn:hover,
@@ -141,6 +195,16 @@ body,
   color: var(--text);
   background: var(--pane);
   border-left: 2px solid var(--accent);
+}
+
+.activity-btn:hover .activity-glyph,
+.activity-btn.active .activity-glyph {
+  color: var(--accent);
+}
+
+.title-brand {
+  margin-right: 2px;
+  border-radius: 6px;
 }
 
 .ide-side {
@@ -215,8 +279,9 @@ body,
 }
 
 .ide-center {
+  /* Editor a la derecha: ocupa el resto tras el chat principal. */
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: 12rem;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -225,13 +290,19 @@ body,
 
 .ide-chat {
   flex: 0 0 calc(var(--chat-frac) * 100%);
-  max-width: 42%;
-  min-width: 12rem;
+  max-width: 62%;
+  min-width: 16rem;
   min-height: 0;
   overflow: hidden;
-  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  border-left: none;
   display: flex;
   flex-direction: column;
+}
+
+.ide-chat-main {
+  /* Panel principal del modelo «chat centro». */
+  background: var(--pane);
 }
 
 .ide-chat.is-closed,
@@ -627,6 +698,68 @@ body,
   height: 100%;
 }
 
+.ws-title {
+  flex-shrink: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ws-title h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--root);
+  letter-spacing: 0.02em;
+}
+
+.ws-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+}
+
+.ws-projects {
+  flex: 0 0 auto;
+  max-height: 42%;
+  overflow: auto;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.ws-files {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ws-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.ws-section-head h2 {
+  margin: 0;
+  flex: 1;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.ws-empty {
+  margin: 0.25rem 0;
+  font-size: 0.75rem;
+}
+
+.workspace-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 .workspace-head {
   display: flex;
   align-items: center;
@@ -667,6 +800,19 @@ body,
   background: var(--pane);
 }
 
+.welcome-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.welcome-brand .brand-mark {
+  border-radius: 10px;
+  box-shadow: 0 0 18px rgba(57, 255, 20, 0.18);
+}
+
 .welcome h2,
 .welcome p {
   margin: 0.25rem 0 0.5rem;
@@ -674,10 +820,9 @@ body,
 
 .welcome-kicker {
   margin: 0;
-  color: var(--accent);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  color: var(--brand-green);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
 }
 
 .welcome-actions,
@@ -1189,12 +1334,29 @@ td {
   flex-wrap: wrap;
 }
 
-.ai-head h2 {
+.ai-head h2,
+.ai-head-title {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   color: var(--accent);
+  font-weight: 700;
+}
+
+.ai-avatar {
+  flex-shrink: 0;
+}
+
+.ai-chip-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 4px;
+  background: #0b0f14;
+  border: 1px solid var(--line);
 }
 
 .ai-body {
@@ -2304,8 +2466,8 @@ tr.vb-selected td {
 /* Ventana pequeña: chrome siempre visible; scroll por zona, no corte. */
 @media (max-width: 1100px) {
   :root {
-    --side-frac: 0.18;
-    --chat-frac: 0.3;
+    --side-frac: 0.16;
+    --chat-frac: 0.44;
     --font-min: 13px;
   }
 
@@ -2315,8 +2477,8 @@ tr.vb-selected td {
   }
 
   .ide-chat {
-    min-width: 10rem;
-    max-width: 46%;
+    min-width: 12rem;
+    max-width: 58%;
   }
 
   .title-bar h1 {
@@ -2324,20 +2486,24 @@ tr.vb-selected td {
   }
 
   .activity-bar {
-    flex: 0 0 2.5rem;
+    flex: 0 0 4.25rem;
+  }
+
+  .activity-brand .brand-mark {
+    width: 36px !important;
+    height: 36px !important;
   }
 
   .activity-btn {
-    width: 2.5rem;
-    min-height: 2.4rem;
-    font-size: 0.7rem;
+    min-height: 2.7rem;
+    font-size: 0.58rem;
   }
 }
 
 @media (max-width: 900px), (max-height: 620px) {
   :root {
-    --side-frac: 0.16;
-    --chat-frac: 0.34;
+    --side-frac: 0.14;
+    --chat-frac: 0.48;
     --font-min: 12px;
   }
 

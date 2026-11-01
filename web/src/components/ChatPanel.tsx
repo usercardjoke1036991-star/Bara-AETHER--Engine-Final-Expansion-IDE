@@ -18,7 +18,16 @@ import {
   saveConfig,
   stripStoredSecret,
 } from "../ai/config";
-import { MAX_ATTACHMENTS, filesFromDataTransfer, formatBytes, prepareImages } from "../ai/images";
+import {
+  MAX_ATTACHMENTS,
+  fileNotesForPrompt,
+  filesFromDataTransfer,
+  formatBytes,
+  isVisionAttachment,
+  prepareAttachments,
+} from "../ai/images";
+import BrandMark from "../shell/BrandMark";
+import { writeClipboard } from "../clipboard";
 import { baraSystemPrompt, promptBudgetParts, summarizeBudget } from "../ai/prompt";
 import { deleteKey, inDesktop, keyExists, probeConnection, saveKey } from "../ai/keyring";
 import { listModels, sendChat } from "../ai/providers";
@@ -207,7 +216,10 @@ export default function ChatPanel({
   const keyEpochRef = useRef(0);
   const storeAvailable = useMemo(() => defaultStore() !== null, []);
   const problems = configProblems(config);
-  const sendGate = chatSendGate(config, draft, pending, offline);
+  const composerPayload = [draft.trim(), fileNotesForPrompt(attachments)]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  const sendGate = chatSendGate(config, composerPayload, pending, offline);
 
   /** Prompt base (sin texto de usuario); el envío añade `userText` del turno. */
   const promptContextBase = useMemo(
@@ -419,13 +431,13 @@ export default function ChatPanel({
     };
   }, [acceptRemotePatches, beginReview, documentName, onEnsureOpen, open, publishNotice]);
 
-  /** Adjunta archivos (arrastrados, pegados o elegidos) al mensaje en curso. */
+  /** Adjunta archivos de cualquier tipo (arrastrados, pegados o elegidos). */
   const attach = useCallback(
     async (files: File[]) => {
       if (files.length === 0) {
         return;
       }
-      const { attachments: added, errors } = await prepareImages(files, attachments.length);
+      const { attachments: added, errors } = await prepareAttachments(files, attachments.length);
       if (added.length > 0) {
         setAttachments((previous) => [...previous, ...added]);
       }
@@ -436,7 +448,8 @@ export default function ChatPanel({
 
   /** Envía el turno actual al proveedor elegido. */
   const send = useCallback(async () => {
-    const text = draft.trim();
+    const notes = fileNotesForPrompt(attachments);
+    const text = [draft.trim(), notes].filter((part) => part.length > 0).join("\n\n");
     if (chatSendGate(config, text, pending, offline) !== null) {
       return;
     }
@@ -444,7 +457,7 @@ export default function ChatPanel({
       id: newId(),
       role: "user",
       text,
-      images: attachments,
+      images: attachments.filter(isVisionAttachment),
       model: "",
       createdAt: Date.now(),
       error: null,
@@ -804,7 +817,8 @@ export default function ChatPanel({
       }}
     >
       <header className="ai-head">
-        <h2>Asistente</h2>
+        <BrandMark size={22} variant="avatar" title="AETHER-Ω" />
+        <h2 className="ai-head-title">ASISTENTE</h2>
         <button
           type="button"
           className={offline ? "ai-offline-on" : ""}
@@ -984,7 +998,13 @@ export default function ChatPanel({
               <div className="ai-chips">
                 {attachments.map((image) => (
                   <span className="ai-chip" key={image.id}>
-                    <img src={image.dataUrl} alt={image.name} />
+                    {isVisionAttachment(image) && image.dataUrl ? (
+                      <img src={image.dataUrl} alt={image.name} />
+                    ) : (
+                      <span className="ai-chip-file" aria-hidden="true">
+                        📎
+                      </span>
+                    )}
                     <span className="ai-chip-name">
                       {image.name}
                       <span className="muted"> · {formatBytes(image.bytes)}</span>
@@ -1011,7 +1031,7 @@ export default function ChatPanel({
               rows={3}
               dir="auto"
               spellCheck={false}
-              placeholder="Pregunte sobre Shoresh, pegue un fragmento o suelte una imagen…"
+              placeholder="Pregunte sobre Shoresh, pegue un fragmento o suelte un archivo…"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onPaste={(event) => {
@@ -1039,11 +1059,11 @@ export default function ChatPanel({
                   Enviar
                 </button>
               )}
-              <label className="ai-attach">
-                imagen
+              <label className="ai-attach" title="Subir archivo (cualquier tipo)">
+                📎 Subir archivo (cualquier tipo)
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="*/*"
                   multiple
                   hidden
                   onChange={(event) => {
@@ -1112,6 +1132,9 @@ function MessageRow({
   return (
     <article className={`ai-msg ${message.role}`}>
       <div className="ai-msg-head">
+        {!mine ? (
+          <BrandMark size={22} variant="avatar" className="ai-avatar" title="AETHER-Ω" />
+        ) : null}
         <span className="muted">{mine ? "tú" : message.model || "asistente"}</span>
         <span className="grow" />
         {usage ? (
@@ -1123,6 +1146,17 @@ function MessageRow({
           <span className="muted" title="Herramienta leer_archivo">
             📄 leyó {message.toolsUsed.join(", ")}
           </span>
+        ) : null}
+        {hasText ? (
+          <button
+            type="button"
+            title="Copiar mensaje"
+            onClick={() => {
+              void writeClipboard(message.text);
+            }}
+          >
+            Copiar
+          </button>
         ) : null}
         {hasText ? (
           <button
