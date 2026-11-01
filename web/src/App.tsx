@@ -67,6 +67,7 @@ import { publishVeto } from "./topology";
 import { openDevtools, outlineTree, publishEditorContext } from "./editorBridge";
 import { formatPatchDebug } from "./patchFlow";
 import { dedupeTreeByPathKey, pathsEqual } from "./paths";
+import type { ReviewChromeLive } from "./reviewChrome";
 import BaraEditor from "./components/BaraEditor";
 import ChatPanel from "./components/ChatPanel";
 import CockpitPanel from "./components/CockpitPanel";
@@ -182,6 +183,8 @@ export default function App() {
   const [chatFrac, setChatFrac] = useState(initialLayout.chatFrac);
   /** Banner de parche visible aunque el chat estuviera cerrado. */
   const [patchBanner, setPatchBanner] = useState<string | null>(null);
+  /** Aceptar/Rechazar/Deshacer elevados desde ChatPanel (siempre visibles). */
+  const [reviewChrome, setReviewChrome] = useState<ReviewChromeLive | null>(null);
   /** Sugerencia al recibir diff sin archivo activo. */
   const [suggestOpen, setSuggestOpen] = useState<string | null>(null);
   /** Sube al cambiar de carpeta: limpia diff en ChatPanel. */
@@ -1287,10 +1290,14 @@ export default function App() {
       ) : null}
 
       {error ? <div className="error">{error}</div> : null}
-      {patchBanner ? (
-        <div className="patch-banner" role="status">
-          <span>{patchBanner}</span>
-          {suggestedBara && /abre un archivo \.bara/i.test(patchBanner) ? (
+      {patchBanner || reviewChrome ? (
+        <div
+          className={`patch-banner${reviewChrome ? " patch-banner-review" : ""}`}
+          role="status"
+          aria-label={reviewChrome ? "Revisión del parche" : "Aviso"}
+        >
+          <span>{patchBanner || reviewChrome?.notice}</span>
+          {suggestedBara && patchBanner && /abre un archivo \.bara/i.test(patchBanner) ? (
             <button
               type="button"
               title={`Abrir ${suggestedBara}`}
@@ -1313,9 +1320,35 @@ export default function App() {
               ¿Abrir {suggestedBara}?
             </button>
           ) : null}
-          <button type="button" onClick={() => setPatchBanner(null)}>
-            ok
-          </button>
+          {reviewChrome?.showAccept ? (
+            <button type="button" className="patch-banner-accept" onClick={reviewChrome.accept}>
+              Aceptar
+            </button>
+          ) : null}
+          {reviewChrome?.showReject ? (
+            <button type="button" onClick={reviewChrome.reject}>
+              Rechazar
+            </button>
+          ) : null}
+          {reviewChrome?.showUndo ? (
+            <button
+              type="button"
+              title={reviewChrome.undoLabel || "Deshacer"}
+              onClick={reviewChrome.undo}
+            >
+              Deshacer
+            </button>
+          ) : null}
+          {patchBanner && !reviewChrome ? (
+            <button type="button" onClick={() => setPatchBanner(null)}>
+              ok
+            </button>
+          ) : null}
+          {patchBanner && reviewChrome ? (
+            <button type="button" title="Ocultar aviso" onClick={() => setPatchBanner(null)}>
+              ok
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1611,6 +1644,7 @@ export default function App() {
                     setSuggestOpen(firstBaraPath(workspace?.entries));
                   }
                 }}
+                onReviewChrome={setReviewChrome}
               />
             </aside>
           </div>

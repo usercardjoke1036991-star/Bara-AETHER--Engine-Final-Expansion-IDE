@@ -27,6 +27,7 @@ import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import type { AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
+import { buildReviewChrome, type ReviewChromeLive } from "../reviewChrome";
 import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
 import { loadLocalWeights, localComplete } from "../offline";
 import {
@@ -110,6 +111,11 @@ export interface ChatPanelProps {
   onEnsureOpen?: () => void;
   /** Aviso visible a nivel app (banner); nunca silencio. */
   onPatchNotice?: (message: string) => void;
+  /**
+   * Eleva Aceptar/Rechazar/Deshacer al banner de App para que no queden
+   * cortados por overflow del chat.
+   */
+  onReviewChrome?: (chrome: ReviewChromeLive | null) => void;
   /** Generación al cambiar de carpeta: limpia diff y avisos. */
   workspaceEpoch?: number;
   /**
@@ -133,6 +139,7 @@ export default function ChatPanel({
   onUndo,
   onEnsureOpen,
   onPatchNotice,
+  onReviewChrome,
   workspaceEpoch = 0,
   acceptRemotePatches = false,
 }: ChatPanelProps) {
@@ -544,6 +551,13 @@ export default function ChatPanel({
         }
       }
     } catch (error) {
+      const aborted =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        /abort|cancel/i.test(reasonOf(error));
+      if (aborted) {
+        setNotice("Consulta cancelada.");
+        return;
+      }
       setMessages((previous) => [
         ...previous,
         {
@@ -584,9 +598,9 @@ export default function ChatPanel({
             ? { path: report.path, backupPath: report.backupPath }
             : null,
         );
-        setNotice(
-          `Aplicado ${report.glyph}: ${report.path}:${report.line}. Respaldo en ${report.backupPath || "(sin ruta)"}.`,
-        );
+        const msg = `Aplicado ${report.glyph}: ${report.path}:${report.line}. Respaldo en ${report.backupPath || "(sin ruta)"}.`;
+        setNotice(msg);
+        publishNotice(msg);
       } else {
         setNotice(report.blockReason || `No se escribió (${report.glyph}).`);
       }
@@ -594,12 +608,14 @@ export default function ChatPanel({
     } catch (error) {
       setNotice(reasonOf(error));
     }
-  }, [onConfirm, review]);
+  }, [onConfirm, publishNotice, review]);
 
   const rejectReview = useCallback(() => {
     setReview(null);
-    setNotice("Diff rechazado: no se escribió nada.");
-  }, []);
+    const msg = "Diff rechazado: no se escribió nada.";
+    setNotice(msg);
+    publishNotice(msg);
+  }, [publishNotice]);
 
   const undoLast = useCallback(async () => {
     if (!lastBackup) {
@@ -608,7 +624,9 @@ export default function ChatPanel({
     try {
       const report = await onUndo(lastBackup.path, lastBackup.backupPath);
       if (report.applied) {
-        setNotice(`Deshacer: restaurado ${report.path} desde ${lastBackup.backupPath}.`);
+        const msg = `Deshacer: restaurado ${report.path} desde ${lastBackup.backupPath}.`;
+        setNotice(msg);
+        publishNotice(msg);
       } else {
         setNotice(report.blockReason || "No se pudo deshacer.");
       }
@@ -616,12 +634,34 @@ export default function ChatPanel({
     } catch (error) {
       setNotice(reasonOf(error));
     }
-  }, [lastBackup, onUndo]);
+  }, [lastBackup, onUndo, publishNotice]);
 
+  // Banner de App + barra sticky: misma lógica de acciones.
+  useEffect(() => {
+    if (!onReviewChrome) {
+      return;
+    }
+    const base = buildReviewChrome(review, lastBackup);
+    if (!base) {
+      onReviewChrome(null);
+      return;
+    }
+    onReviewChrome({
+      ...base,
+      accept: () => {
+        void acceptReview();
+      },
+      reject: rejectReview,
+      undo: () => {
+        void undoLast();
+      },
+    });
+  }, [acceptReview, lastBackup, onReviewChrome, rejectReview, review, undoLast]);
 
   /** Cancela el turno en curso (el proveedor corta en cuanto se interrumpe). */
   const stop = useCallback(() => {
     abortRef.current?.abort();
+    setNotice("Consulta cancelada.");
   }, []);
 
   /** Traduce un texto a Shoresh con el léxico del propio kernel (IPC). */
@@ -879,8 +919,59 @@ export default function ChatPanel({
                 }}
               />
             ))}
-            {pending ? <p className="muted">consultando al modelo…</p> : null}
+            {pending ? (
+              <div className="ai-pending-bar" role="status">
+                <span className="muted">consultando al modelo…</span>
+                <button type="button" className="ai-cancel" onClick={stop}>
+                  Cancelar
+                </button>
+              </div>
+            ) : null}
           </div>
+
+          {/* Barra sticky: acciones SIEMPRE visibles; el diff scrollea aparte. */}
+          {review || lastBackup ? (
+            <div className="ai-review-dock" role="region" aria-label="Revisión del parche">
+              <div className="row ai-review-actions">
+                {review ? (
+                  <>
+                    <button type="button" onClick={() => void acceptReview()}>
+                      Aceptar
+                    </button>
+                    <button type="button" onClick={rejectReview}>
+                      Rechazar
+                    </button>
+                  </>
+                ) : null}
+                {lastBackup ? (
+                  <button type="button" title={lastBackup.backupPath} onClick={() => void undoLast()}>
+                    Deshacer
+                  </button>
+                ) : null}
+              </div>
+              {review ? (
+                <div className="ai-review">
+                  {!review.report.verified || !review.report.canApply ? (
+                    <p className="ai-warn-banner" role="status">
+                      {review.report.blockReason ||
+                        review.report.unverifiedReason ||
+                        "propuesta no verificada"}
+                      {" — "}
+                      Auto-Apply bloqueado; Aceptar/Rechazar siguen disponibles.
+                    </p>
+                  ) : null}
+                  <p className="muted">
+                    Diff propuesto ({review.report.glyph}
+                    {review.report.verified ? " · verificado" : " · no verificado"}). Aceptar
+                    escribe con respaldo; rechazar no toca el disco.
+                  </p>
+                  <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
+                </div>
+              ) : lastBackup ? (
+                <p className="muted ai-backup-hint">{lastBackup.backupPath}</p>
+              ) : null}
+            </div>
+          ) : null}
 
           <form
             className="ai-composer"
@@ -939,14 +1030,15 @@ export default function ChatPanel({
             />
 
             <div className="row">
-              <button type="submit" disabled={sendGate !== null} title={sendGate ?? "Enviar"}>
-                Enviar
-              </button>
               {pending ? (
-                <button type="button" onClick={stop}>
-                  Detener
+                <button type="button" className="ai-cancel" onClick={stop} title="Cancelar consulta">
+                  Cancelar
                 </button>
-              ) : null}
+              ) : (
+                <button type="submit" disabled={sendGate !== null} title={sendGate ?? "Enviar"}>
+                  Enviar
+                </button>
+              )}
               <label className="ai-attach">
                 imagen
                 <input
@@ -970,55 +1062,20 @@ export default function ChatPanel({
             <div className="row">
               <button
                 type="button"
-                disabled={draft.trim().length === 0}
+                disabled={draft.trim().length === 0 || pending}
                 onClick={() => {
                   void translate("borrador", draft);
                 }}
               >
                 Traducir a Shoresh
               </button>
-              <button type="button" onClick={selfCheck}>
+              <button type="button" onClick={selfCheck} disabled={pending}>
                 Autodiagnóstico
               </button>
             </div>
 
             {translations.borrador ? (
               <TranslationBox result={translations.borrador} onUseCode={useInEditor} />
-            ) : null}
-            {review ? (
-              <div className="ai-review" role="region" aria-label="Vista previa del parche">
-                {!review.report.verified || !review.report.canApply ? (
-                  <p className="ai-warn-banner" role="status">
-                    {review.report.blockReason ||
-                      review.report.unverifiedReason ||
-                      "propuesta no verificada"}
-                    {" — "}
-                    Auto-Apply bloqueado; Aceptar/Rechazar siguen disponibles.
-                  </p>
-                ) : null}
-                <p className="muted">
-                  Diff propuesto ({review.report.glyph}
-                  {review.report.verified ? " · verificado" : " · no verificado"}). Aceptar escribe
-                  con respaldo; rechazar no toca el disco.
-                </p>
-                <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
-                <div className="row ai-review-actions">
-                  <button type="button" onClick={() => void acceptReview()}>
-                    Aceptar
-                  </button>
-                  <button type="button" onClick={rejectReview}>
-                    Rechazar
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {lastBackup ? (
-              <div className="row">
-                <button type="button" onClick={() => void undoLast()}>
-                  Deshacer
-                </button>
-                <span className="muted">{lastBackup.backupPath}</span>
-              </div>
             ) : null}
             {notice ? <p className="muted">{notice}</p> : null}
             {report ? (

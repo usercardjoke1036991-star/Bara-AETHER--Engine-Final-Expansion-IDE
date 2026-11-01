@@ -1185,6 +1185,8 @@ td {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .ai-head h2 {
@@ -1369,6 +1371,44 @@ td {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+.ai-pending-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  flex-shrink: 0;
+}
+
+.ai-cancel {
+  min-height: 2.25rem;
+  min-width: 5.5rem;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.ai-review-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  min-height: 0;
+  max-height: 42%;
+  padding: 0.35rem 0 0.15rem;
+  border-top: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.ai-backup-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-input {
@@ -2178,6 +2218,7 @@ tr.vb-selected td {
 
 .patch-banner {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 8px 12px;
@@ -2185,21 +2226,44 @@ tr.vb-selected td {
   color: #e8f0f6;
   border-bottom: 1px solid #c9a227;
   font-size: 13px;
+  flex-shrink: 0;
+  z-index: 40;
+}
+
+.patch-banner-review {
+  border-bottom-color: #e07a5f;
+  background: #1c242c;
 }
 
 .patch-banner span {
-  flex: 1;
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.patch-banner button {
+  flex-shrink: 0;
+  min-height: 2.1rem;
+  min-width: 5rem;
+}
+
+.patch-banner-accept {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .ai-review {
-  margin: 0.5rem 0;
-  padding: 0.5rem 0;
-  border-top: 1px solid #2a3540;
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
 }
 
 .ai-warn-banner {
-  margin: 0 0 0.5rem;
+  margin: 0;
   padding: 0.45rem 0.65rem;
   background: #2a1c14;
   color: #f0c9a0;
@@ -2207,12 +2271,20 @@ tr.vb-selected td {
   border-radius: 4px;
   font-size: 0.85rem;
   line-height: 1.35;
+  flex-shrink: 0;
 }
 
 .ai-review-actions {
+  display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-top: 0.5rem;
+  margin: 0;
+  padding: 0.15rem 0;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--pane);
 }
 
 .ai-review-actions button {
@@ -2221,7 +2293,10 @@ tr.vb-selected td {
 }
 
 .ai-diff {
-  max-height: min(12rem, 28vh);
+  flex: 1 1 auto;
+  max-height: min(10rem, 22vh);
+  min-height: 3rem;
+  margin: 0;
   overflow: auto;
   font-size: 0.8rem;
 }
