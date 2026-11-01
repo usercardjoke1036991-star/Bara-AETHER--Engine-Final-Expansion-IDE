@@ -5,9 +5,10 @@
 //!
 //! Reglas duras:
 //! * `judge` **nunca** escribe: sólo devuelve juicio, verificación y diff.
-//! * `∅` (Neither) jamás se aplica — ni en automático ni tras aceptar.
-//! * `confirm` escribe sólo con `⊤`, léxico verificado y aceptación explícita;
-//!   antes crea una copia en `.bara-backup/<fecha>/`.
+//! * `can_apply` (Auto-Apply) exige `⊤` **verificado**; `∅` / no verificado
+//!   nunca escriben solos.
+//! * `confirm` (Aceptar a mano) escribe con `⊤` o `∅` (también no verificados);
+//!   veto `⊤∧⊥` y `⊥` vacío no escriben. Antes crea `.bara-backup/<fecha>/`.
 //! * `undo` restaura **siempre** desde el respaldo bajo `.bara-backup/` (no hay
 //!   deshacer sin ruta de copia).
 
@@ -254,18 +255,20 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
     let (verified, unverified_reason) = patch_verified(path, patch);
     let value = syntax::judge_patch(language_of_path(path), host, patch);
     let (next, at, _inserted) = splice(host, patch, line);
-    let preview_diff = if value == BelnapValue::True && verified {
-        unified_diff(path, host, &next)
-    } else {
+    // Diff manual siempre que haya texto que empalmar (también ∅ / no verificado).
+    // `can_apply` queda sólo para Auto-Apply (⊤ verificado).
+    let preview_diff = if patch.trim().is_empty() || value == BelnapValue::False {
         String::new()
+    } else {
+        unified_diff(path, host, &next)
     };
     let (can_apply, block_reason) = match value {
         BelnapValue::Neither => (
             false,
             if unverified_reason.is_empty() {
-                "∅ falta información: no se escribe".to_string()
+                "∅: Auto-Apply bloqueado; puedes Aceptar a mano".to_string()
             } else {
-                format!("∅ {unverified_reason}")
+                format!("∅ {unverified_reason} (Auto-Apply bloqueado; puedes Aceptar a mano)")
             },
         ),
         BelnapValue::Both => (
@@ -279,9 +282,9 @@ fn evaluate(path: &str, line: u32, host: &str, patch: &str) -> Result<Verdict, S
         BelnapValue::True if !verified => (
             false,
             if unverified_reason.is_empty() {
-                "propuesta no verificada: auto-aplicado bloqueado".to_string()
+                "propuesta no verificada: Auto-Apply bloqueado; puedes Aceptar a mano".to_string()
             } else {
-                unverified_reason.clone()
+                format!("{unverified_reason} (Auto-Apply bloqueado; puedes Aceptar a mano)")
             },
         ),
         BelnapValue::True => (true, String::new()),
@@ -337,15 +340,14 @@ pub fn judge(
     patch: &str,
 ) -> Result<AutoApplyReport, String> {
     let mut verdict = evaluate(path, line, host, patch)?;
-    // Coherencia con disco: si el host no coincide, no hay candidato aplicable.
+    // Coherencia con disco: bloquea Auto-Apply pero conserva previewDiff para
+    // que el flujo manual (Aceptar/Rechazar) siga visible.
     if verdict.can_apply {
         let on_disk = workspace::read_text(root, path)?;
         if on_disk.source != host {
             verdict.can_apply = false;
-            verdict.preview_diff.clear();
             verdict.block_reason =
-                "el archivo en disco no coincide con el editor; no se escribe".to_string();
-            return Ok(empty_report(path, line, host, patch, verdict));
+                "el archivo en disco no coincide con el editor; Auto-Apply bloqueado".to_string();
         }
     }
     let at = verdict.at;
@@ -368,16 +370,12 @@ pub fn confirm(
         return Err("el token de juicio no coincide con la línea, el host o el parche".to_string());
     }
     let mut verdict = evaluate(path, line, host, patch)?;
-    if !verdict.can_apply {
+    // Confirmación manual: escribe con ⊤ o ∅ (también no verificados).
+    // Veto ⊤∧⊥ y ⊥ vacío no escriben. `can_apply` sólo gobierna el Auto-Apply.
+    if matches!(verdict.value, BelnapValue::Both | BelnapValue::False) || patch.trim().is_empty() {
         if verdict.block_reason.is_empty() {
             verdict.block_reason = "el parche no se puede aplicar".to_string();
         }
-        return Ok(empty_report(path, line, host, patch, verdict));
-    }
-    if verdict.value == BelnapValue::Neither {
-        verdict.can_apply = false;
-        verdict.preview_diff.clear();
-        verdict.block_reason = "∅ falta información: no se escribe".to_string();
         return Ok(empty_report(path, line, host, patch, verdict));
     }
     let on_disk = workspace::read_text(root, path)?;
@@ -504,17 +502,21 @@ mod tests {
     }
 
     #[test]
-    fn el_vacio_nunca_escribe() {
+    fn el_vacio_bloquea_auto_pero_confirm_manual_escribe() {
         let root = scratch();
         fs::write(root.join("src").join("lib.rs"), "fn alpha() {}\n").expect("semilla");
         let root_text = root.display().to_string();
-        // Raíz hebrea desconocida → ∅ / no verificada.
+        // Raíz hebrea desconocida → ∅ / no verificada: hay diff, sin Auto-Apply.
         let report = judge(&root_text, "src/lib.rs", 1, "fn alpha() {}\n", "זזז\n").expect("∅");
         assert!(!report.applied);
         assert!(!report.can_apply);
         assert_eq!(report.glyph, "∅");
         assert!(!report.verified);
-        let denied = confirm(
+        assert!(
+            !report.preview_diff.is_empty(),
+            "el flujo manual exige previewDiff"
+        );
+        let written = confirm(
             &root_text,
             "src/lib.rs",
             1,
@@ -522,13 +524,41 @@ mod tests {
             "זזז\n",
             &report.judgment_id,
         )
-        .expect("∅");
-        assert!(!denied.applied);
-        assert!(!denied.can_apply);
-        assert_eq!(
-            fs::read_to_string(root.join("src").join("lib.rs")).expect("disco"),
-            "fn alpha() {}\n"
+        .expect("confirm manual");
+        assert!(written.applied);
+        assert!(written.backup_path.starts_with(".bara-backup/"));
+        assert!(
+            fs::read_to_string(root.join("src").join("lib.rs"))
+                .expect("disco")
+                .contains("זזז"),
+            "Aceptar a mano debe escribir aunque sea ∅"
         );
+    }
+
+    #[test]
+    fn no_verificado_bara_tiene_diff_y_confirm_manual() {
+        let root = scratch();
+        fs::write(root.join("doc.bara"), "ברא\n").expect("semilla");
+        let root_text = root.display().to_string();
+        let report =
+            judge(&root_text, "doc.bara", 2, "ברא\n", "vy:+1 * dirección:0\n").expect("juicio");
+        assert!(!report.verified);
+        assert!(!report.can_apply);
+        assert!(
+            !report.preview_diff.is_empty(),
+            "sin diff el UI no puede mostrar Aceptar/Rechazar"
+        );
+        let written = confirm(
+            &root_text,
+            "doc.bara",
+            2,
+            "ברא\n",
+            "vy:+1 * dirección:0\n",
+            &report.judgment_id,
+        )
+        .expect("confirm");
+        assert!(written.applied);
+        assert!(written.backup_path.starts_with(".bara-backup/"));
     }
 
     #[test]

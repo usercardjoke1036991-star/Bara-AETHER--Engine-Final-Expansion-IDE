@@ -36,20 +36,20 @@ describe("emptyReport / contrato de no escritura en ∅", () => {
     expect(report.previewDiff).toBe("");
   });
 
-  it("un informe ∅ tipado bloquea canApply (diff obligatorio antes de escribir)", () => {
+  it("∅ bloquea canApply (Auto-Apply) pero con previewDiff permite Aceptar a mano", () => {
     const neither = {
       ...emptyReport(1),
       glyph: "∅",
       status: "neither",
-      blockReason: "∅ falta información: no se escribe",
+      blockReason: "∅: Auto-Apply bloqueado; puedes Aceptar a mano",
       canApply: false,
       verified: false,
+      previewDiff: "--- a\n+++ b\n+זזז\n",
     };
     expect(neither.status).toBe("neither");
     expect(neither.canApply).toBe(false);
     expect(neither.applied).toBe(false);
-    // Sin previewDiff no hay aceptar/rechazar útil.
-    expect(neither.previewDiff).toBe("");
+    expect(neither.previewDiff.length).toBeGreaterThan(0);
   });
 
   it("un candidato ⊤ exige diff antes de confirmar", () => {

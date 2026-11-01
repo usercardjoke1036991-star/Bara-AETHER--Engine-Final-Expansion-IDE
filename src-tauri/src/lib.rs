@@ -46,10 +46,10 @@
 //!   proceso y los argumentos son literales; no hay shell. `typecheck`
 //!   (npm) se corta a los 60 s; `check` y `test` (cargo), a los 120 s.
 //! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque
-//!   **sin escribir**. `∅` nunca se aplica; hace falta `confirm_auto_patch`
-//!   tras aceptar el diff (con respaldo en `.bara-backup/`).
+//!   **sin escribir**. `can_apply` (Auto-Apply) exige `⊤` verificado; `∅` /
+//!   no verificado aún muestran diff para `confirm_auto_patch` a mano.
 //! * `confirm_auto_patch` / `undo_auto_patch` — escriben o restauran tras
-//!   aceptación explícita del usuario.
+//!   aceptación explícita del usuario (respaldo en `.bara-backup/`).
 //! * `load_local_weights()` — diálogo del sistema para un `.gguf`. No recibe ruta.
 //! * `local_complete(prompt)` — responde con el núcleo y los pesos ya cargados.
 //! * `transmute_global(path, from, to)` — propaga un identificador por la red.

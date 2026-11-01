@@ -273,6 +273,32 @@ export default function ChatPanel({
         if (resolved.outcome.kind === "review") {
           setReview({ patch: resolved.outcome.patch, report: resolved.outcome.report });
           publishNotice(resolved.notice);
+          // Auto-Apply: sólo escribe solo si el juicio es ⊤ verificado.
+          if (
+            autoApply &&
+            resolved.outcome.report.verified &&
+            resolved.outcome.report.canApply
+          ) {
+            try {
+              const applied = await onConfirm(
+                resolved.outcome.patch,
+                resolved.outcome.report.judgmentId,
+              );
+              if (applied.applied) {
+                setLastBackup(
+                  applied.backupPath
+                    ? { path: applied.path, backupPath: applied.backupPath }
+                    : null,
+                );
+                setReview(null);
+                publishNotice(
+                  `Auto-Apply ${applied.glyph}: ${applied.path}:${applied.line}. Respaldo ${applied.backupPath || "(sin ruta)"}.`,
+                );
+              }
+            } catch (error) {
+              publishNotice(reasonOf(error));
+            }
+          }
           return;
         }
         setReview(null);
@@ -290,7 +316,7 @@ export default function ChatPanel({
         publishNotice(message);
       }
     },
-    [documentName, onEnsureOpen, onJudge, publishNotice],
+    [autoApply, documentName, onConfirm, onEnsureOpen, onJudge, publishNotice],
   );
 
   /**
@@ -961,13 +987,22 @@ export default function ChatPanel({
             ) : null}
             {review ? (
               <div className="ai-review" role="region" aria-label="Vista previa del parche">
+                {!review.report.verified || !review.report.canApply ? (
+                  <p className="ai-warn-banner" role="status">
+                    {review.report.blockReason ||
+                      review.report.unverifiedReason ||
+                      "propuesta no verificada"}
+                    {" — "}
+                    Auto-Apply bloqueado; Aceptar/Rechazar siguen disponibles.
+                  </p>
+                ) : null}
                 <p className="muted">
                   Diff propuesto ({review.report.glyph}
                   {review.report.verified ? " · verificado" : " · no verificado"}). Aceptar escribe
                   con respaldo; rechazar no toca el disco.
                 </p>
                 <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
-                <div className="row">
+                <div className="row ai-review-actions">
                   <button type="button" onClick={() => void acceptReview()}>
                     Aceptar
                   </button>
@@ -1114,8 +1149,16 @@ function TranslationBox({
           {result.program ? (verified ? " · verificado" : " · no verificado") : ""}
         </span>
         <span className="grow" />
-        {result.program && verified ? (
-          <button type="button" onClick={() => onUseCode(result.program)}>
+        {result.program ? (
+          <button
+            type="button"
+            title={
+              verified
+                ? "Abrir diff en el editor"
+                : "Abrir diff (no verificado: podrás Aceptar a mano)"
+            }
+            onClick={() => onUseCode(result.program)}
+          >
             usar en el editor
           </button>
         ) : null}

@@ -49,7 +49,7 @@ describe("resolvePatchAttempt (flujo e2e lógico)", () => {
     expect(notice.length).toBeGreaterThan(0);
   });
 
-  it("Rechazar conceptual: blocked no abre review", () => {
+  it("sin previewDiff → blocked (no hay nada que aceptar)", () => {
     const blocked = {
       ...readyReport(),
       status: "neither",
@@ -61,6 +61,27 @@ describe("resolvePatchAttempt (flujo e2e lógico)", () => {
     };
     const { outcome } = resolvePatchAttempt("x", "hello.bara", blocked);
     expect(outcome.kind).toBe("blocked");
+  });
+
+  it("∅ / no verificado CON previewDiff → review (Aceptar/Rechazar)", () => {
+    const unverified = {
+      ...readyReport(),
+      status: "neither",
+      glyph: "∅",
+      canApply: false,
+      verified: false,
+      unverifiedReason: "propuesta no verificada: identificador ASCII/Latin libre",
+      previewDiff: "--- a\n+++ b\n+vy:+1\n",
+      blockReason: "∅: Auto-Apply bloqueado; puedes Aceptar a mano",
+    };
+    const { outcome, notice, log } = resolvePatchAttempt("vy:+1", "hELLO.bara", unverified);
+    expect(outcome.kind).toBe("review");
+    expect(log.phase).toBe("review");
+    expect(notice).toMatch(/Aceptar|rechaza|diff/i);
+    if (outcome.kind === "review") {
+      expect(outcome.report.canApply).toBe(false);
+      expect(outcome.report.previewDiff).toContain("vy:+1");
+    }
   });
 });
 

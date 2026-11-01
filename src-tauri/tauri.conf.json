@@ -18,8 +18,8 @@
         "title": "Bara IDE — AETHER-Ω",
         "width": 1280,
         "height": 720,
-        "minWidth": 1024,
-        "minHeight": 600,
+        "minWidth": 800,
+        "minHeight": 500,
         "resizable": true,
         "maximizable": true,
         "center": true

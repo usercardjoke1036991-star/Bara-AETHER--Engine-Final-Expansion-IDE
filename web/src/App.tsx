@@ -1559,55 +1559,60 @@ export default function App() {
             </section>
 
             {aiOpen ? (
-              <>
-                <div
-                  className="ide-split"
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label="Redimensionar chat"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    const startX = event.clientX;
-                    const start = chatFrac;
-                    const onMove = (ev: MouseEvent) => {
-                      const delta = (startX - ev.clientX) / window.innerWidth;
-                      setChatFrac(Math.min(0.42, Math.max(0.22, start + delta)));
-                    };
-                    const onUp = () => {
-                      window.removeEventListener("mousemove", onMove);
-                      window.removeEventListener("mouseup", onUp);
-                    };
-                    window.addEventListener("mousemove", onMove);
-                    window.addEventListener("mouseup", onUp);
-                  }}
-                />
-                <aside className="ide-chat" aria-label="Asistente">
-                  <ChatPanel
-                    open={aiOpen}
-                    onClose={() => setAiOpen(false)}
-                    documentName={origin}
-                    documentSource={source}
-                    analysis={analysis}
-                    catalogue={catalogue}
-                    sample={sample}
-                    treeOutline={treeOutline}
-                    onUseCode={applyCode}
-                    onJudge={judgeSuggestion}
-                    onConfirm={confirmSuggestion}
-                    onUndo={undoSuggestion}
-                    acceptRemotePatches
-                    workspaceEpoch={workspaceEpoch}
-                    onEnsureOpen={() => setAiOpen(true)}
-                    onPatchNotice={(message) => {
-                      setPatchBanner(message);
-                      if (/abre un archivo \.bara/i.test(message)) {
-                        setSuggestOpen(firstBaraPath(workspace?.entries));
-                      }
-                    }}
-                  />
-                </aside>
-              </>
+              <div
+                className="ide-split"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Redimensionar chat"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  const startX = event.clientX;
+                  const start = chatFrac;
+                  const onMove = (ev: MouseEvent) => {
+                    const delta = (startX - ev.clientX) / window.innerWidth;
+                    setChatFrac(Math.min(0.42, Math.max(0.18, start + delta)));
+                  };
+                  const onUp = () => {
+                    window.removeEventListener("mousemove", onMove);
+                    window.removeEventListener("mouseup", onUp);
+                  };
+                  window.addEventListener("mousemove", onMove);
+                  window.addEventListener("mouseup", onUp);
+                }}
+              />
             ) : null}
+            {/* Siempre montado: el listener de assistant-propose-patch vive aquí
+                aunque el chat esté cerrado («usar en el editor» / Asistencia). */}
+            <aside
+              className={`ide-chat${aiOpen ? "" : " is-closed"}`}
+              aria-label="Asistente"
+              aria-hidden={!aiOpen}
+              hidden={!aiOpen}
+            >
+              <ChatPanel
+                open={aiOpen}
+                onClose={() => setAiOpen(false)}
+                documentName={origin}
+                documentSource={source}
+                analysis={analysis}
+                catalogue={catalogue}
+                sample={sample}
+                treeOutline={treeOutline}
+                onUseCode={applyCode}
+                onJudge={judgeSuggestion}
+                onConfirm={confirmSuggestion}
+                onUndo={undoSuggestion}
+                acceptRemotePatches
+                workspaceEpoch={workspaceEpoch}
+                onEnsureOpen={() => setAiOpen(true)}
+                onPatchNotice={(message) => {
+                  setPatchBanner(message);
+                  if (/abre un archivo \.bara/i.test(message)) {
+                    setSuggestOpen(firstBaraPath(workspace?.entries));
+                  }
+                }}
+              />
+            </aside>
           </div>
 
           <section

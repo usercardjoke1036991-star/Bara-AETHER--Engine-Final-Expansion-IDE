@@ -179,8 +179,16 @@ function CodeBlock({ block, onUseCode }: { block: Block; onUseCode?: (code: stri
         ) : null}
         <span className="grow" />
         <CopyButton className="ai-copy-code" label="Copiar" text={block.content} />
-        {onUseCode && status === "verified" ? (
-          <button type="button" onClick={() => onUseCode(block.content)}>
+        {onUseCode && isBara && status !== "pending" ? (
+          <button
+            type="button"
+            title={
+              status === "verified"
+                ? "Abrir diff en el editor"
+                : "Abrir diff (no verificado: podrás Aceptar a mano)"
+            }
+            onClick={() => onUseCode(block.content)}
+          >
             usar en el editor
           </button>
         ) : null}

@@ -21,37 +21,44 @@ export type ProposeOutcome =
   | { kind: "review"; patch: string; report: AutoApplyReport };
 
 /**
- * Interpreta el informe del juez sin escribir. La UI muestra Accept/Reject.
+ * Interpreta el informe del juez sin escribir.
+ * «No verificado» / ∅ bloquean Auto-Apply (`canApply`), no el panel Aceptar/Rechazar.
  */
 export function proposeFromJudge(patch: string, report: AutoApplyReport, hasFile: boolean): ProposeOutcome {
   if (!hasFile) {
     return { kind: "need_file", notice: NEED_BARA_FILE };
   }
-  if (report.status === "neither" || report.glyph === "∅") {
-    return {
-      kind: "blocked",
-      notice:
-        report.blockReason ||
-        `∅ falta información: no se escribe (${report.unverifiedReason || "sin detalle"}).`,
-      report,
-    };
-  }
-  if (report.status === "both") {
+  // Veto duro sin diff usable: no hay revisión.
+  if (report.status === "both" && !report.previewDiff) {
     return {
       kind: "blocked",
       notice: `Veto ${report.glyph}: el bloque contradice el archivo. Hace falta intervención manual.`,
       report,
     };
   }
-  if (!report.verified || !report.canApply || !report.previewDiff) {
+  if (!report.previewDiff.trim()) {
     return {
       kind: "blocked",
       notice:
         report.blockReason ||
         report.unverifiedReason ||
-        `${report.glyph}: propuesta no verificada o sin diff; no se escribe.`,
+        `${report.glyph}: sin diff que revisar; no se escribe.`,
       report,
     };
   }
+  // Con previewDiff siempre abrimos revisión manual (también ∅ / no verificado).
   return { kind: "review", patch, report };
+}
+
+/** Aviso visible encima del diff (no sustituye Aceptar/Rechazar). */
+export function reviewNotice(report: AutoApplyReport): string {
+  const base = `${report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`;
+  if (report.verified && report.canApply) {
+    return base;
+  }
+  const detail =
+    report.blockReason ||
+    report.unverifiedReason ||
+    "propuesta no verificada: Auto-Apply bloqueado; puedes Aceptar a mano";
+  return `${base} Aviso: ${detail}`;
 }

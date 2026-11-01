@@ -1,6 +1,12 @@
 // Orquestación de «usar en el editor» (testeable sin Tauri).
 
-import { NEED_BARA_FILE, isActiveBaraPath, proposeFromJudge, type ProposeOutcome } from "./proposePatch";
+import {
+  NEED_BARA_FILE,
+  isActiveBaraPath,
+  proposeFromJudge,
+  reviewNotice,
+  type ProposeOutcome,
+} from "./proposePatch";
 import type { AutoApplyReport } from "./autoApply";
 
 /** Fases de depuración (nunca incluyen secretos). */
@@ -85,11 +91,11 @@ export function resolvePatchAttempt(
   if (outcome.kind === "review") {
     return {
       outcome,
-      notice: `${outcome.report.glyph}: revisa el diff y acepta o rechaza. Nada se ha escrito todavía.`,
+      notice: reviewNotice(outcome.report),
       log: {
         phase: "review",
         document: documentName ?? "",
-        detail: `diff=${outcome.report.previewDiff.length}c`,
+        detail: `diff=${outcome.report.previewDiff.length}c verified=${outcome.report.verified} canApply=${outcome.report.canApply}`,
       },
     };
   }
