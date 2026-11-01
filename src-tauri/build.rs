@@ -159,6 +159,7 @@ const APP_COMMANDS: &[&str] = &[
     "workspace_roots",
     "workspace_activate",
     "workspace_close_root",
+    "workspace_reopen",
     "open_desk_window",
     "propose_editor_patch",
     "propose_ai_desk_attachment",

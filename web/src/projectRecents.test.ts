@@ -18,6 +18,17 @@ describe("shortPath", () => {
   });
 });
 
+describe("projectKey", () => {
+  it("normaliza \\?\\ de Windows al mismo id", () => {
+    expect(projectKey(String.raw`\\?\C:\Users\Vexor\Downloads\BAR`)).toBe(
+      "c:/users/vexor/downloads/bar",
+    );
+    expect(projectKey("C:/Users/Vexor/Downloads/BAR")).toBe(
+      "c:/users/vexor/downloads/bar",
+    );
+  });
+});
+
 describe("projectRecents", () => {
   beforeEach(() => {
     localStorage.clear();

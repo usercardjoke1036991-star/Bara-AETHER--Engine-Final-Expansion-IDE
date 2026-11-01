@@ -18,7 +18,8 @@ interface Store {
 
 /** Path corto para la lista (cola legible). */
 export function shortPath(path: string, max = 42): string {
-  const normalized = path.replace(/\\/g, "/").trim();
+  let normalized = path.replace(/\\/g, "/").trim();
+  normalized = normalized.replace(/^\/\/\?\//, "").replace(/^\/\?\//, "");
   if (normalized.length <= max) {
     return normalized;
   }
