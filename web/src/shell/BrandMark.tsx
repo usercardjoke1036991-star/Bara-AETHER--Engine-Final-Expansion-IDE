@@ -1,4 +1,4 @@
-/** Marca AETHER-Ω: logo real (Ω+ב) para chrome y avatar del asistente. */
+/** Marca AETHER-Ω: mismo JPG del mockup (Ω+ב) para chrome y avatar. */
 
 const LOGO_SRC = "/brand/aether-omega.jpg";
 
@@ -11,10 +11,10 @@ export default function BrandMark({
   size?: number;
   className?: string;
   title?: string;
-  /** `mark` = emblem; `avatar` = círculo para mensajes del asistente. */
+  /** `mark` chrome; `avatar` círculo en chat; `rail` Activity. */
   variant?: "mark" | "avatar" | "rail";
 }) {
-  const rounded = variant === "avatar" || variant === "rail";
+  const radius = variant === "avatar" ? "50%" : variant === "rail" ? 8 : 8;
   return (
     <img
       className={`brand-mark brand-mark-${variant} ${className}`.trim()}
@@ -24,17 +24,12 @@ export default function BrandMark({
       alt={title}
       title={title}
       draggable={false}
-      style={
-        rounded
-          ? {
-              width: size,
-              height: size,
-              objectFit: "cover",
-              borderRadius: variant === "avatar" ? "50%" : 8,
-              flexShrink: 0,
-            }
-          : { width: size, height: size, objectFit: "contain", flexShrink: 0 }
-      }
+      style={{
+        width: size,
+        height: size,
+        flexShrink: 0,
+        borderRadius: radius,
+      }}
     />
   );
 }

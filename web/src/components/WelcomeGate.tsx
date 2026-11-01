@@ -42,7 +42,7 @@ export default function WelcomeGate({
   return (
     <section className="welcome" role="dialog" aria-modal="false" aria-label="Abrir un workspace">
       <div className="welcome-brand">
-        <BrandMark size={96} variant="mark" title="AETHER-Ω" />
+        <BrandMark size={72} variant="avatar" title="AETHER-Ω" className="welcome-avatar" />
         <p className="welcome-kicker">בָּרָא · Bara · AETHER-Ω</p>
       </div>
       <h2>Empieza por una carpeta</h2>

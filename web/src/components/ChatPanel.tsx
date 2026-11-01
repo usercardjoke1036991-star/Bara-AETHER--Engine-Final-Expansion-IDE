@@ -817,7 +817,7 @@ export default function ChatPanel({
       }}
     >
       <header className="ai-head">
-        <BrandMark size={22} variant="avatar" title="AETHER-Ω" />
+        <BrandMark size={24} variant="avatar" title="AETHER-Ω" className="ai-avatar" />
         <h2 className="ai-head-title">ASISTENTE</h2>
         <button
           type="button"
