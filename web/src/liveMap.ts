@@ -77,8 +77,25 @@ export function liveMapGate(path: string, source: string): Promise<ChangeGate> {
   return invoke<ChangeGate>("live_map_gate", { path, source });
 }
 
+/**
+ * Lote atómico multiarchivo (§9.4 / §9.4b).
+ * IPC + rollback listos; el chat hoy aplica un solo archivo vía confirm_auto_patch.
+ * Cuando la UI de revisión emita un lote (>1 archivo), cablear aquí.
+ */
 export function liveMapApplyBatch(changes: BatchChange[]): Promise<BatchReport> {
   return invoke<BatchReport>("live_map_apply_batch", { changes });
+}
+
+/** Specifier npm/scoped o bare → externo (no broken de proyecto). */
+export function isExternalJsSpecifier(spec: string): boolean {
+  const t = spec.trim();
+  if (!t) {
+    return true;
+  }
+  if (t.startsWith("@")) {
+    return true;
+  }
+  return !(t.startsWith(".") || t.startsWith("/") || t.startsWith("#"));
 }
 
 export function liveMapContext(focus: string[], maxLines = 48): Promise<MapContext> {

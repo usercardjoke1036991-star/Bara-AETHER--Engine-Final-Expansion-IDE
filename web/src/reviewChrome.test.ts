@@ -51,4 +51,13 @@ describe("buildReviewChrome", () => {
   it("sin review ni backup → null", () => {
     expect(buildReviewChrome(null, null)).toBeNull();
   });
+
+  it("mapBlock oculta Aceptar", () => {
+    const chrome = buildReviewChrome(
+      { report: report({}), mapBlock: "import roto" },
+      null,
+    );
+    expect(chrome?.showAccept).toBe(false);
+    expect(chrome?.showReject).toBe(true);
+  });
 });

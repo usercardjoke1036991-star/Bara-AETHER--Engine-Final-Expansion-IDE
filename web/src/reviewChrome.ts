@@ -22,7 +22,7 @@ export type ReviewChromeLive = ReviewChromeState & {
  * Acciones visibles sin depender del scroll del diff.
  */
 export function buildReviewChrome(
-  review: { report: AutoApplyReport } | null,
+  review: { report: AutoApplyReport; mapBlock?: string } | null,
   lastBackup: { backupPath: string } | null,
 ): ReviewChromeState | null {
   if (!review && !lastBackup) {
@@ -31,7 +31,8 @@ export function buildReviewChrome(
   if (review) {
     return {
       notice: reviewNotice(review.report),
-      showAccept: true,
+      // §9.4b: mapBlock deshabilita Aceptar (banner + sticky).
+      showAccept: !review.mapBlock,
       showReject: true,
       showUndo: Boolean(lastBackup),
       undoLabel: lastBackup?.backupPath ?? "",

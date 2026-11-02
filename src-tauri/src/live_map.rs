@@ -1,5 +1,5 @@
-//! Mapa vivo del workspace (§9.4): dependencias archivo→archivo, impacto
-//! pre-apply, lote atómico con rollback y avisos de desincronía.
+//! Mapa vivo del workspace (§9.4 / §9.4b): dependencias archivo→archivo,
+//! impacto pre-apply, lote atómico con rollback y avisos de desincronía.
 //!
 //! Se apoya en [`crate::graph`] y en la jaula de [`crate::workspace`]. No abre
 //! red ni acepta una raíz elegida por el WebView.
@@ -108,6 +108,20 @@ pub struct MapContext {
     pub deps: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ImportKind {
+    /// `mod foo;` / `pub mod foo;` → archivo.
+    FileMod,
+    /// `use` / `import` / `from` / `require`.
+    PathRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RawImport {
+    target: String,
+    kind: ImportKind,
+}
+
 /// Construye el mapa vivo de la carpeta activa.
 pub fn snapshot(root: &str) -> Result<LiveMapSnapshot, String> {
     let topology = graph::build(root)?;
@@ -122,8 +136,8 @@ pub fn snapshot(root: &str) -> Result<LiveMapSnapshot, String> {
     let mut import_deps = Vec::new();
     for path in &file_list {
         if let Ok(doc) = workspace::read_text(root, path) {
-            for target in extract_imports(path, &doc.source) {
-                if let Some(resolved) = resolve_import_target(&files, &target) {
+            for raw in extract_imports(path, &doc.source) {
+                if let Some(resolved) = resolve_import_target(&files, &raw.target) {
                     import_deps.push(FileDep {
                         from: path.clone(),
                         to: resolved,
@@ -182,6 +196,8 @@ pub fn impact(root: &str, focus: &[String]) -> Result<ImpactReport, String> {
 }
 
 /// Evalúa un cambio propuesto **antes** de escribir.
+///
+/// Solo peina imports **nuevos o cambiados** respecto al host en disco.
 pub fn gate_change(root: &str, path: &str, next_source: &str) -> Result<ChangeGate, String> {
     let path = path.replace('\\', "/");
     let impact = impact(root, std::slice::from_ref(&path))?;
@@ -189,43 +205,41 @@ pub fn gate_change(root: &str, path: &str, next_source: &str) -> Result<ChangeGa
     let files: BTreeSet<String> = map.files.iter().cloned().collect();
     let mut broken = Vec::new();
 
-    // Imports del propio archivo hacia destinos inexistentes.
-    for target in extract_imports(&path, next_source) {
-        if resolve_import_target(&files, &target).is_none() && looks_like_project_import(&target) {
+    let host = workspace::read_text(root, &path)
+        .map(|doc| doc.source)
+        .unwrap_or_default();
+    let host_imports: BTreeSet<RawImport> = extract_imports(&path, &host).into_iter().collect();
+    let next_imports = extract_imports(&path, next_source);
+
+    for raw in next_imports {
+        if host_imports.contains(&raw) {
+            continue;
+        }
+        if !should_gate_as_project(&path, &raw) {
+            continue;
+        }
+        if resolve_import_target(&files, &raw.target).is_none() {
             broken.push(BrokenImport {
                 path: path.clone(),
-                target: target.clone(),
-                detail: format!("import «{target}» no resuelve a un archivo del mapa"),
+                target: raw.target.clone(),
+                detail: format!("import «{}» no resuelve a un archivo del mapa", raw.target),
             });
         }
     }
 
-    // Si el archivo nuevo deja de exportar símbolos que otros importan por nombre de módulo.
-    let stem = file_stem(&path);
-    if !stem.is_empty() {
-        for dep in map
-            .deps
-            .iter()
-            .filter(|d| d.to == path || d.to.ends_with(&path))
-        {
-            if dep.kind == "import" && dep.from != path {
-                // Dependiente sigue apuntando aquí: OK mientras el archivo exista.
-            }
-        }
-        // Detectar `use crate::stem` / from './stem' rotos si removemos el archivo del lote:
-        // aquí sólo simulamos contenido; rotura fuerte si next vacío y alguien importa.
-        if next_source.trim().is_empty() {
-            for dep in &map.deps {
-                if dep.to == path || dep.to.ends_with(&format!("/{stem}")) {
-                    broken.push(BrokenImport {
-                        path: dep.from.clone(),
-                        target: path.clone(),
-                        detail: format!(
-                            "«{}» depende de «{path}» y el cambio dejaría el archivo vacío",
-                            dep.from
-                        ),
-                    });
-                }
+    // Archivo vacío con dependientes → rotura (ruta con extensión incluida).
+    if next_source.trim().is_empty() {
+        let stem = file_stem(&path);
+        for dep in &map.deps {
+            if dep_targets_path(dep, &path, &stem) {
+                broken.push(BrokenImport {
+                    path: dep.from.clone(),
+                    target: path.clone(),
+                    detail: format!(
+                        "«{}» depende de «{path}» y el cambio dejaría el archivo vacío",
+                        dep.from
+                    ),
+                });
             }
         }
     }
@@ -248,6 +262,9 @@ pub fn gate_change(root: &str, path: &str, next_source: &str) -> Result<ChangeGa
 }
 
 /// Aplica varios archivos: todo o nada, con backup + rollback.
+///
+/// §9.4b: si un archivo no existía antes, el rollback lo borra (papelera jaula).
+/// `rolled_back` sólo es true si restore/borrado tuvo éxito.
 pub fn apply_batch(root: &str, changes: &[BatchChange]) -> Result<BatchReport, String> {
     if changes.is_empty() {
         return Ok(BatchReport {
@@ -261,7 +278,6 @@ pub fn apply_batch(root: &str, changes: &[BatchChange]) -> Result<BatchReport, S
     if changes.len() > MAX_BATCH {
         return Err(format!("el lote supera {MAX_BATCH} archivos"));
     }
-    // Pre-gate de cada cambio.
     for change in changes {
         let gate = gate_change(root, &change.path, &change.source)?;
         if !gate.ok {
@@ -276,13 +292,16 @@ pub fn apply_batch(root: &str, changes: &[BatchChange]) -> Result<BatchReport, S
     }
 
     let mut backups = Vec::new();
-    let mut previous: Vec<(String, String)> = Vec::new();
+    // (path, prior_source_if_existed)
+    let mut previous: Vec<(String, Option<String>)> = Vec::new();
     for change in changes {
         let path = change.path.replace('\\', "/");
-        let prior = workspace::read_text(root, &path)
-            .map(|doc| doc.source)
-            .unwrap_or_default();
-        let backup = auto_apply::write_backup(root, &path, &prior)?;
+        let prior = match workspace::read_text(root, &path) {
+            Ok(doc) => Some(doc.source),
+            Err(_) => None,
+        };
+        let backup_body = prior.clone().unwrap_or_default();
+        let backup = auto_apply::write_backup(root, &path, &backup_body)?;
         backups.push(backup);
         previous.push((path, prior));
     }
@@ -293,20 +312,23 @@ pub fn apply_batch(root: &str, changes: &[BatchChange]) -> Result<BatchReport, S
         let expected = change.expected_hash.clone().or_else(|| {
             previous
                 .get(index)
-                .map(|(_, src)| workspace::content_hash(src))
+                .and_then(|(_, src)| src.as_ref().map(|s| workspace::content_hash(s)))
         });
-        if let Err(err) =
-            workspace::write_source_checked(root, &path, &change.source, expected.as_deref())
+        // Archivo nuevo: expected None (no hay huella previa).
+        let expected_ref = if previous.get(index).and_then(|(_, p)| p.as_ref()).is_none() {
+            None
+        } else {
+            expected.as_deref()
+        };
+        if let Err(err) = workspace::write_source_checked(root, &path, &change.source, expected_ref)
         {
-            for (prev_path, prev_src) in previous.iter().rev() {
-                let _ = workspace::write_source(root, prev_path, prev_src);
-            }
+            let (rolled_back, rb_detail) = rollback_written(root, &previous, written);
             return Ok(BatchReport {
                 applied: false,
                 paths: changes.iter().map(|c| c.path.replace('\\', "/")).collect(),
                 backups,
-                rolled_back: true,
-                detail: format!("falló «{path}»: {err}; rollback completo"),
+                rolled_back,
+                detail: format!("falló «{path}»: {err}; {rb_detail}"),
             });
         }
         written += 1;
@@ -319,6 +341,33 @@ pub fn apply_batch(root: &str, changes: &[BatchChange]) -> Result<BatchReport, S
         rolled_back: false,
         detail: format!("aplicados {written} archivo(s)"),
     })
+}
+
+fn rollback_written(
+    root: &str,
+    previous: &[(String, Option<String>)],
+    written: usize,
+) -> (bool, String) {
+    let mut errors = Vec::new();
+    for (prev_path, prior) in previous.iter().take(written).rev() {
+        match prior {
+            Some(src) => {
+                if let Err(err) = workspace::write_source(root, prev_path, src) {
+                    errors.push(format!("restore «{prev_path}»: {err}"));
+                }
+            }
+            None => {
+                if let Err(err) = workspace::delete_entry(root, prev_path) {
+                    errors.push(format!("borrar nuevo «{prev_path}»: {err}"));
+                }
+            }
+        }
+    }
+    if errors.is_empty() {
+        (true, "rollback completo".to_string())
+    } else {
+        (false, format!("rollback incompleto: {}", errors.join("; ")))
+    }
 }
 
 /// Submapa relevante a `focus` para el prompt (acotado).
@@ -372,7 +421,6 @@ fn file_deps_from_topology(topology: &WorkspaceTopology) -> Vec<FileDep> {
         if from == to {
             continue;
         }
-        // Colapsar a archivo→archivo.
         let from_file = topology
             .nodes
             .iter()
@@ -422,20 +470,19 @@ fn desync_warnings(
             });
         }
         if let Ok(doc) = workspace::read_text(root, path) {
-            for target in extract_imports(path, &doc.source) {
-                if looks_like_project_import(&target)
-                    && resolve_import_target(&file_set, &target).is_none()
+            for raw in extract_imports(path, &doc.source) {
+                if should_gate_as_project(path, &raw)
+                    && resolve_import_target(&file_set, &raw.target).is_none()
                 {
                     warnings.push(DesyncWarning {
                         kind: "broken_import".to_string(),
                         path: path.clone(),
-                        detail: format!("import «{target}» sin destino en el workspace"),
+                        detail: format!("import «{}» sin destino en el workspace", raw.target),
                     });
                 }
             }
         }
     }
-    // Código muerto aproximado: función sin aristas entrantes en el topology.
     let mut called: BTreeSet<&str> = BTreeSet::new();
     for edge in &topology.edges {
         called.insert(edge.target.as_str());
@@ -459,154 +506,315 @@ fn desync_warnings(
     warnings
 }
 
-fn extract_imports(path: &str, source: &str) -> Vec<String> {
+fn extract_imports(path: &str, source: &str) -> Vec<RawImport> {
     let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let mut out = Vec::new();
     match ext.as_str() {
-        "rs" => {
-            for cap in regex_captures(source, r"(?m)^\s*use\s+([a-zA-Z0-9_:>]+)") {
-                out.push(cap);
-            }
-            for cap in regex_captures(source, r"(?m)^\s*mod\s+([a-zA-Z0-9_]+)") {
-                out.push(cap);
-            }
-        }
-        "ts" | "tsx" | "js" | "jsx" => {
-            for cap in regex_captures(source, r#"from\s+['"]([^'"]+)['"]"#) {
-                out.push(cap);
-            }
-            for cap in regex_captures(source, r#"require\(\s*['"]([^'"]+)['"]\s*\)"#) {
-                out.push(cap);
-            }
-        }
-        "py" => {
-            for cap in regex_captures(source, r"(?m)^\s*from\s+([.\w]+)\s+import") {
-                out.push(cap);
-            }
-            for cap in regex_captures(source, r"(?m)^\s*import\s+([.\w]+)") {
-                out.push(cap);
-            }
-        }
+        "rs" => extract_rust_imports(source, &mut out),
+        "ts" | "tsx" | "js" | "jsx" => extract_js_imports(source, &mut out),
+        "py" => extract_py_imports(source, &mut out),
         _ => {}
     }
     out.truncate(MAX_IMPORTS_PER_FILE);
     out
 }
 
-/// Mini extractor sin crate regex: escanea con patrones simples.
-fn regex_captures(source: &str, pattern_hint: &str) -> Vec<String> {
-    // Implementación ad-hoc por familia (pattern_hint solo discrimina).
-    let mut found = Vec::new();
-    if pattern_hint.contains("from\\s+") && pattern_hint.contains("['\"]") {
-        for line in source.lines() {
-            if let Some(rest) = line.split("from").nth(1) {
-                if let Some(q) = rest.find(['\'', '"']) {
-                    let quote = rest.as_bytes()[q] as char;
-                    let after = &rest[q + 1..];
-                    if let Some(end) = after.find(quote) {
-                        found.push(after[..end].to_string());
-                    }
-                }
+fn extract_rust_imports(source: &str, out: &mut Vec<RawImport>) {
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let (rest, kind) = if let Some(r) = strip_vis_prefix(trimmed, "use ") {
+            (r, ImportKind::PathRef)
+        } else if let Some(r) = strip_vis_prefix(trimmed, "mod ") {
+            (r, ImportKind::FileMod)
+        } else {
+            continue;
+        };
+        if kind == ImportKind::FileMod {
+            // Solo `mod nombre;` / `pub mod nombre;` (archivo). Inline `mod nombre {` se ignora.
+            let name_end = rest
+                .find(|c: char| c == ';' || c == '{' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            let name = rest[..name_end].trim();
+            let after = rest[name_end..].trim_start();
+            if name.is_empty() || !after.starts_with(';') {
+                continue;
             }
-        }
-        return found;
-    }
-    if pattern_hint.contains("require") {
-        for (idx, _) in source.match_indices("require(") {
-            let after = &source[idx + "require(".len()..];
-            let after = after.trim_start();
-            if let Some(q) = after.chars().next().filter(|c| *c == '\'' || *c == '"') {
-                let body = &after[1..];
-                if let Some(end) = body.find(q) {
-                    found.push(body[..end].to_string());
-                }
+            if is_ignored_rust_glob(name) {
+                continue;
             }
+            out.push(RawImport {
+                target: name.to_string(),
+                kind,
+            });
+            continue;
         }
-        return found;
-    }
-    if pattern_hint.contains("use\\s+") {
-        for line in source.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("use ") {
-                let token = rest
-                    .split(|c: char| c == ';' || c == '{' || c.is_whitespace())
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .trim_end_matches("::");
-                if !token.is_empty() {
-                    found.push(token.to_string());
-                }
-            }
+        // use / pub use
+        let token = rest
+            .split(|c: char| c == ';' || c == '{' || c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches("::");
+        if token.is_empty() || is_ignored_rust_glob(token) {
+            continue;
         }
-        return found;
-    }
-    if pattern_hint.contains("mod\\s+") {
-        for line in source.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("mod ") {
-                let token = rest
-                    .split(|c: char| c == ';' || c.is_whitespace())
-                    .next()
-                    .unwrap_or("")
-                    .trim();
-                if !token.is_empty() {
-                    found.push(token.to_string());
-                }
-            }
+        // `use crate::foo::*` → glob: no gatear como archivo.
+        let full_to_semi = rest.split(';').next().unwrap_or(rest);
+        if full_to_semi.contains("::*") || token.ends_with('*') {
+            continue;
         }
-        return found;
+        out.push(RawImport {
+            target: token.to_string(),
+            kind,
+        });
     }
-    if pattern_hint.contains("from\\s+") && pattern_hint.contains("import") {
-        for line in source.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("from ") {
-                let token = rest.split_whitespace().next().unwrap_or("").trim();
-                if !token.is_empty() {
-                    found.push(token.to_string());
-                }
-            }
-        }
-        return found;
-    }
-    if pattern_hint.contains("import\\s+") {
-        for line in source.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("import ") {
-                let token = rest
-                    .split(|c: char| c == ',' || c.is_whitespace())
-                    .next()
-                    .unwrap_or("")
-                    .trim();
-                if !token.is_empty() {
-                    found.push(token.to_string());
-                }
-            }
-        }
-    }
-    found
 }
 
-fn looks_like_project_import(target: &str) -> bool {
-    if target.starts_with("std::") || target.starts_with("core::") || target.starts_with("alloc::")
-    {
+fn strip_vis_prefix<'a>(trimmed: &'a str, kw: &str) -> Option<&'a str> {
+    let body = trimmed
+        .strip_prefix("pub(crate) ")
+        .or_else(|| trimmed.strip_prefix("pub(super) "))
+        .or_else(|| trimmed.strip_prefix("pub "))
+        .unwrap_or(trimmed);
+    body.strip_prefix(kw)
+}
+
+fn is_ignored_rust_glob(token: &str) -> bool {
+    matches!(token, "super::*" | "self::*" | "*")
+        || token == "super"
+        || token == "self"
+        || token.ends_with("::*")
+}
+
+fn extract_js_imports(source: &str, out: &mut Vec<RawImport>) {
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        // import … from '…'  |  export … from '…'
+        let is_import_export = trimmed.starts_with("import ")
+            || trimmed.starts_with("export ")
+            || trimmed.starts_with("export{")
+            || trimmed.starts_with("export {");
+        if is_import_export {
+            if let Some(idx) = find_from_keyword(trimmed) {
+                let after_from = trimmed[idx + 4..].trim_start();
+                if let Some(spec) = quoted_string(after_from) {
+                    out.push(RawImport {
+                        target: spec,
+                        kind: ImportKind::PathRef,
+                    });
+                }
+            }
+        }
+        // require('…')
+        if let Some(idx) = trimmed.find("require(") {
+            let after = trimmed[idx + "require(".len()..].trim_start();
+            if let Some(spec) = quoted_string(after) {
+                out.push(RawImport {
+                    target: spec,
+                    kind: ImportKind::PathRef,
+                });
+            }
+        }
+    }
+}
+
+/// Localiza ` from ` como palabra clave (no `Array.from`).
+fn find_from_keyword(line: &str) -> Option<usize> {
+    let lower = line.to_ascii_lowercase();
+    let mut search = lower.as_str();
+    let mut base = 0usize;
+    while let Some(rel) = search.find("from") {
+        let abs = base + rel;
+        let before_ok = abs == 0
+            || line
+                .as_bytes()
+                .get(abs - 1)
+                .is_some_and(|b| b.is_ascii_whitespace() || *b == b'}');
+        let after = abs + 4;
+        let after_ok = line
+            .as_bytes()
+            .get(after)
+            .is_some_and(|b| b.is_ascii_whitespace() || *b == b'\'' || *b == b'"');
+        if before_ok && after_ok {
+            return Some(abs);
+        }
+        base = abs + 4;
+        search = &lower[base..];
+    }
+    None
+}
+
+fn quoted_string(s: &str) -> Option<String> {
+    let s = s.trim_start();
+    let q = s.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let body = &s[1..];
+    let end = body.find(q)?;
+    Some(body[..end].to_string())
+}
+
+fn extract_py_imports(source: &str, out: &mut Vec<RawImport>) {
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("from ") {
+            let token = rest.split_whitespace().next().unwrap_or("").trim();
+            if !token.is_empty() {
+                out.push(RawImport {
+                    target: token.to_string(),
+                    kind: ImportKind::PathRef,
+                });
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("import ") {
+            let token = rest
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !token.is_empty() {
+                out.push(RawImport {
+                    target: token.to_string(),
+                    kind: ImportKind::PathRef,
+                });
+            }
+        }
+    }
+}
+
+/// ¿Debe el gate/avisos exigir resolución a archivo del mapa?
+fn should_gate_as_project(path: &str, raw: &RawImport) -> bool {
+    let t = raw.target.as_str();
+    if t.is_empty() || is_ignored_rust_glob(t) {
         return false;
     }
-    target.starts_with('.')
-        || target.starts_with("crate::")
-        || target.starts_with("super::")
-        || target.starts_with("self::")
-        || target.starts_with('/')
-        || (!target.contains(':') && target.contains('/'))
-        // `mod foo` / identificador simple de módulo local.
-        || (target
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && !target.is_empty()
-            && !matches!(
-                target,
-                "std" | "core" | "alloc" | "serde" | "tokio" | "react"
-            ))
+    // Scoped npm / Tauri.
+    if t.starts_with('@') {
+        return false;
+    }
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "rs" => match raw.kind {
+            ImportKind::FileMod => true,
+            ImportKind::PathRef => {
+                if t.starts_with("std::") || t.starts_with("core::") || t.starts_with("alloc::") {
+                    return false;
+                }
+                // Relativos / crate:: / super:: / self:: (no glob ya filtrado).
+                t.starts_with("crate::")
+                    || t.starts_with("super::")
+                    || t.starts_with("self::")
+                    || t.starts_with('/')
+                    || t.contains('/')
+                // Identificador simple (`anyhow`, `serde`) → externo.
+            }
+        },
+        "ts" | "tsx" | "js" | "jsx" => !is_external_js_specifier(t),
+        "py" => {
+            if is_python_stdlib(t) {
+                return false;
+            }
+            t.starts_with('.') || t.contains('/')
+        }
+        _ => t.starts_with('.') || t.starts_with('/') || t.starts_with("crate::"),
+    }
+}
+
+fn is_python_stdlib(name: &str) -> bool {
+    let top = name.split('.').next().unwrap_or(name);
+    matches!(
+        top,
+        "os" | "sys"
+            | "json"
+            | "re"
+            | "math"
+            | "pathlib"
+            | "typing"
+            | "collections"
+            | "itertools"
+            | "functools"
+            | "datetime"
+            | "time"
+            | "subprocess"
+            | "threading"
+            | "asyncio"
+            | "http"
+            | "urllib"
+            | "io"
+            | "abc"
+            | "enum"
+            | "dataclasses"
+            | "logging"
+            | "unittest"
+            | "pytest"
+            | "sqlite3"
+            | "hashlib"
+            | "base64"
+            | "copy"
+            | "struct"
+            | "tempfile"
+            | "shutil"
+            | "glob"
+            | "argparse"
+            | "traceback"
+            | "contextlib"
+            | "importlib"
+            | "builtins"
+            | "string"
+            | "textwrap"
+            | "pprint"
+            | "csv"
+            | "configparser"
+            | "xml"
+            | "html"
+            | "email"
+            | "socket"
+            | "ssl"
+            | "multiprocessing"
+            | "concurrent"
+            | "queue"
+            | "weakref"
+            | "types"
+            | "operator"
+            | "random"
+            | "statistics"
+            | "decimal"
+            | "fractions"
+            | "numbers"
+            | "uuid"
+            | "platform"
+            | "signal"
+            | "errno"
+            | "ctypes"
+            | "mmap"
+            | "select"
+            | "selectors"
+            | "zlib"
+            | "gzip"
+            | "bz2"
+            | "lzma"
+            | "zipfile"
+            | "tarfile"
+            | "pickle"
+            | "shelve"
+            | "dbm"
+            | "zoneinfo"
+            | "calendar"
+            | "locale"
+            | "gettext"
+            | "codecs"
+            | "unicodedata"
+            | "difflib"
+            | "shlex"
+            | "tkinter"
+            | "pdb"
+            | "gc"
+            | "inspect"
+            | "warnings"
+            | "contextvars"
+            | "graphlib"
+            | "tomllib"
+            | "ipaddress"
+            | "secrets"
+            | "hmac"
+    )
 }
 
 fn resolve_import_target(files: &BTreeSet<String>, target: &str) -> Option<String> {
@@ -644,7 +852,6 @@ fn resolve_import_target(files: &BTreeSet<String>, target: &str) -> Option<Strin
             return Some(hit.clone());
         }
     }
-    // crate::foo::bar → foo.rs
     if let Some(rest) = cleaned.strip_prefix("crate::") {
         let first = rest.split("::").next().unwrap_or("");
         if !first.is_empty() {
@@ -659,6 +866,23 @@ fn resolve_import_target(files: &BTreeSet<String>, target: &str) -> Option<Strin
         }
     }
     None
+}
+
+fn dep_targets_path(dep: &FileDep, path: &str, stem: &str) -> bool {
+    if dep.to == path {
+        return true;
+    }
+    if stem.is_empty() {
+        return false;
+    }
+    let to = dep.to.as_str();
+    to.ends_with(&format!("/{stem}"))
+        || to.ends_with(&format!("/{stem}.rs"))
+        || to.ends_with(&format!("/{stem}.ts"))
+        || to.ends_with(&format!("/{stem}.tsx"))
+        || to.ends_with(&format!("/{stem}.js"))
+        || to.ends_with(&format!("/{stem}/mod.rs"))
+        || to.ends_with(&format!("/{stem}/index.ts"))
 }
 
 fn is_test_path(path: &str) -> bool {
@@ -682,6 +906,18 @@ fn file_stem(path: &str) -> String {
 fn dedupe_deps(deps: &mut Vec<FileDep>) {
     let mut seen = BTreeSet::new();
     deps.retain(|d| seen.insert((d.from.clone(), d.to.clone(), d.kind.clone())));
+}
+
+/// Helper puro (§9.4b / Vitest): ¿un specifier JS/TS se trata como externo?
+pub fn is_external_js_specifier(spec: &str) -> bool {
+    let t = spec.trim();
+    if t.is_empty() {
+        return true;
+    }
+    if t.starts_with('@') {
+        return true;
+    }
+    !(t.starts_with('.') || t.starts_with('/') || t.starts_with('#'))
 }
 
 #[cfg(test)]
@@ -731,7 +967,7 @@ mod tests {
     #[test]
     fn impacto_y_rotura_de_import_antes_de_escribir() {
         let root = scratch("gate");
-        fs::write(root.join("src/a.rs"), "mod missing;\n").expect("a");
+        fs::write(root.join("src/a.rs"), "fn a() {}\n").expect("a");
         let root_s = root.to_str().expect("utf8");
         let gate = gate_change(root_s, "src/a.rs", "mod totally_missing;\n").expect("gate");
         assert!(!gate.ok, "debe marcar import roto antes de aplicar");
@@ -739,6 +975,58 @@ mod tests {
         let impact = impact(root_s, &["src/a.rs".into()]).expect("impact");
         assert!(impact.files_affected >= 1);
         assert!(impact.summary.contains("archivo"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn falsos_positivos_no_marcan_broken() {
+        let root = scratch("fp");
+        let host = r#"
+use super::*;
+use self::*;
+use anyhow;
+pub use crate::util::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
+}
+"#;
+        fs::write(root.join("src/lib.rs"), host).expect("lib");
+        fs::write(root.join("src/util.rs"), "pub fn x() {}\n").expect("util");
+        let root_s = root.to_str().expect("utf8");
+        // Mismo host → sin imports nuevos.
+        let gate = gate_change(root_s, "src/lib.rs", host).expect("gate");
+        assert!(gate.ok, "broken={:?}", gate.broken);
+        // pub mod hacia archivo existente.
+        let with_mod = format!("{host}\npub mod util;\n");
+        let gate2 = gate_change(root_s, "src/lib.rs", &with_mod).expect("gate2");
+        assert!(
+            gate2.ok || gate2.broken.iter().all(|b| b.target != "util"),
+            "pub mod util existente no debe romper: {:?}",
+            gate2.broken
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gate_solo_peina_imports_nuevos() {
+        let root = scratch("diff");
+        let host = "use super::*;\nmod tests {\n    fn t() {}\n}\nfn a() {}\n";
+        fs::write(root.join("src/lib.rs"), host).expect("lib");
+        let root_s = root.to_str().expect("utf8");
+        // Conserva super::* e inline mod; solo añade fn.
+        let next = "use super::*;\nmod tests {\n    fn t() {}\n}\nfn a() { /* ok */ }\n";
+        let gate = gate_change(root_s, "src/lib.rs", next).expect("gate");
+        assert!(
+            gate.ok,
+            "no debe bloquear por super::* / mod tests {{}}: {:?}",
+            gate.broken
+        );
+        // Nuevo mod de archivo inexistente.
+        let bad = format!("{next}mod ghost_module;\n");
+        let gate_bad = gate_change(root_s, "src/lib.rs", &bad).expect("bad");
+        assert!(!gate_bad.ok);
+        assert!(gate_bad.broken.iter().any(|b| b.target == "ghost_module"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -757,7 +1045,7 @@ mod tests {
                     expected_hash: None,
                 },
                 BatchChange {
-                    path: "src/nope.env".into(), // sensible / no editable → falla
+                    path: "src/nope.env".into(),
                     source: "X=1\n".into(),
                     expected_hash: None,
                 },
@@ -765,9 +1053,81 @@ mod tests {
         )
         .expect("batch");
         assert!(!report.applied);
-        assert!(report.rolled_back || !report.detail.is_empty());
+        assert!(report.rolled_back, "detail={}", report.detail);
+        assert!(!report.backups.is_empty(), "debe haber backup");
+        assert!(
+            report.backups.iter().any(|b| b.contains(".bara-backup/")),
+            "backups={:?}",
+            report.backups
+        );
         let ok = fs::read_to_string(root.join("src/ok.rs")).expect("read");
         assert_eq!(ok, "fn a() {}\n", "no debe quedar a medias");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lote_rollback_borra_archivo_nuevo() {
+        let root = scratch("newfile");
+        fs::write(root.join("src/ok.rs"), "fn a() {}\n").expect("ok");
+        let root_s = root.to_str().expect("utf8");
+        let new_path = root.join("src/brand_new.rs");
+        assert!(!new_path.exists());
+        let report = apply_batch(
+            root_s,
+            &[
+                BatchChange {
+                    path: "src/brand_new.rs".into(),
+                    source: "fn fresh() {}\n".into(),
+                    expected_hash: None,
+                },
+                BatchChange {
+                    path: "src/nope.env".into(),
+                    source: "X=1\n".into(),
+                    expected_hash: None,
+                },
+            ],
+        )
+        .expect("batch");
+        assert!(!report.applied);
+        assert!(report.rolled_back, "detail={}", report.detail);
+        assert!(
+            !new_path.exists(),
+            "el archivo nuevo debe borrarse en rollback"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn js_scoped_y_array_from_no_son_imports_proyecto() {
+        assert!(is_external_js_specifier("@tauri-apps/api/core"));
+        assert!(is_external_js_specifier("react"));
+        assert!(!is_external_js_specifier("./local"));
+        let src = "const x = Array.from([1]);\nimport { invoke } from '@tauri-apps/api/core';\n";
+        let imports = extract_imports("web/x.ts", src);
+        assert!(
+            imports
+                .iter()
+                .all(|i| i.target.starts_with('@') || i.target.starts_with('.')),
+            "imports={:?}",
+            imports
+        );
+        assert!(imports.iter().any(|i| i.target == "@tauri-apps/api/core"));
+        assert!(!imports.iter().any(|i| i.target.contains("Array")));
+    }
+
+    #[test]
+    fn archivo_vacio_con_dependiente_rompe_con_extension() {
+        let root = scratch("empty");
+        fs::write(root.join("src/lib.rs"), "mod util;\n").expect("lib");
+        fs::write(root.join("src/util.rs"), "pub fn x() {}\n").expect("util");
+        let root_s = root.to_str().expect("utf8");
+        let _ = snapshot(root_s).expect("map");
+        let gate = gate_change(root_s, "src/util.rs", "").expect("gate");
+        assert!(
+            !gate.ok,
+            "vaciar util con dependientes debe romper: {:?}",
+            gate.broken
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

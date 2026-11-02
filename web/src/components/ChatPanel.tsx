@@ -232,7 +232,10 @@ export default function ChatPanel({
     patch: string;
     report: AutoApplyReport;
     impactSummary?: string;
+    /** Bloqueo duro del mapa (import roto) → sin Aceptar. */
     mapBlock?: string;
+    /** Aviso si el IPC del mapa falló; Aceptar manual sigue con banner. */
+    mapWarn?: string;
     nextSource?: string;
   } | null>(null);
   const [liveMapText, setLiveMapText] = useState("");
@@ -375,24 +378,28 @@ export default function ChatPanel({
           const nextSource = spliceHost(documentSource, resolved.outcome.patch, line);
           let impactSummary = "";
           let mapBlock = "";
+          let mapWarn = "";
+          let mapIpcOk = false;
           try {
             const impact = await liveMapImpact([documentName]);
             impactSummary = impact.summary;
             const gate = await liveMapGate(documentName, nextSource);
+            mapIpcOk = true;
             if (!gate.ok) {
               mapBlock = gate.blockReason || "el cambio rompería imports";
               impactSummary = `${impactSummary} · ${mapBlock}`;
-            } else if (impactSummary) {
-              // ok
             }
           } catch {
-            // El mapa es aditivo: si falla el IPC, el flujo Aceptar/diff sigue.
+            // §9.4b: Auto-Apply fail-closed; Aceptar manual con aviso visible.
+            mapWarn = "mapa no respondió; Auto-Apply bloqueado — Aceptar manual con aviso";
+            impactSummary = impactSummary || mapWarn;
           }
           setReview({
             patch: resolved.outcome.patch,
             report: resolved.outcome.report,
             impactSummary,
             mapBlock,
+            mapWarn,
             nextSource,
           });
           publishNotice(
@@ -400,9 +407,10 @@ export default function ChatPanel({
               ? `${resolved.notice} · ${impactSummary}`
               : resolved.notice,
           );
-          // Auto-Apply: sólo escribe si ⊤ verificado y el mapa no bloquea.
+          // Auto-Apply: ⊤ verificado, mapa OK y sin bloqueo.
           if (
             autoApply &&
+            mapIpcOk &&
             !mapBlock &&
             resolved.outcome.report.verified &&
             resolved.outcome.report.canApply
@@ -743,8 +751,12 @@ export default function ChatPanel({
     if (!review) {
       return;
     }
+    if (review.mapBlock) {
+      publishNotice(review.mapBlock);
+      return;
+    }
     try {
-      // §9.4 — revalidar puerta del mapa antes de escribir.
+      // §9.4b — revalidar puerta del mapa antes de escribir.
       if (review.nextSource && documentName) {
         try {
           const gate = await liveMapGate(documentName, review.nextSource);
@@ -760,7 +772,10 @@ export default function ChatPanel({
             return;
           }
         } catch {
-          // Si el mapa no responde, no bloqueamos el Aceptar manual ya juzgado.
+          const warn = "mapa no respondió al revalidar; se escribe con aviso";
+          setNotice(warn);
+          publishNotice(warn);
+          setReview((prev) => (prev ? { ...prev, mapWarn: warn } : prev));
         }
       }
       const report = await onConfirm(review.patch, review.report.judgmentId);
@@ -1127,7 +1142,12 @@ export default function ChatPanel({
               <div className="row ai-review-actions">
                 {review ? (
                   <>
-                    <button type="button" onClick={() => void acceptReview()}>
+                    <button
+                      type="button"
+                      disabled={Boolean(review.mapBlock)}
+                      title={review.mapBlock || undefined}
+                      onClick={() => void acceptReview()}
+                    >
                       Aceptar
                     </button>
                     <button type="button" onClick={rejectReview}>
@@ -1171,6 +1191,11 @@ export default function ChatPanel({
                   {review.mapBlock ? (
                     <p className="ai-warn-banner" role="alert">
                       {review.mapBlock} — no se aplicará hasta corregir el import.
+                    </p>
+                  ) : null}
+                  {review.mapWarn && !review.mapBlock ? (
+                    <p className="ai-warn-banner" role="status">
+                      {review.mapWarn}
                     </p>
                   ) : null}
                   <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
