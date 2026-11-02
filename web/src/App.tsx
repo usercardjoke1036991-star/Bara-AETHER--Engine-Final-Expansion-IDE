@@ -56,6 +56,8 @@ import {
 } from "./editorDrafts";
 import { editorBadge, isEditorPath } from "./editorFiles";
 import { confirmDeletePath } from "./fileOps";
+import { diskCleanSafe, diskFreeCheck } from "./diskGuard";
+import { problemsFromAnalysis, type EditorProblem } from "./problems";
 import {
   contentHashOf,
   githubClone,
@@ -70,6 +72,8 @@ import {
   type WorkspaceEntry,
   type WorkspaceTree,
 } from "./workspace";
+import GitPanel from "./components/GitPanel";
+import ProblemsPanel from "./components/ProblemsPanel";
 import {
   workspaceTrustGrant,
   workspaceTrustIsTrusted,
@@ -229,6 +233,9 @@ export default function App() {
   const expertBtnRef = useRef<HTMLButtonElement | null>(null);
   const editorFocusRef = useRef<HTMLDivElement | null>(null);
   const [idle, setIdle] = useState<IdleNotice | null>(null);
+  /** A9 — aviso si C: < 8 GB. */
+  const [diskWarn, setDiskWarn] = useState<string | null>(null);
+  const [diskBusy, setDiskBusy] = useState(false);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
   const [lastTurn, setLastTurn] = useState<TurnView | null>(null);
@@ -518,6 +525,40 @@ export default function App() {
   useEffect(() => {
     void refreshWorkspace();
   }, [refreshWorkspace]);
+
+  // A9 — aviso in-app si C: baja de 8 GB (misma regla que disk-guard / predist).
+  useEffect(() => {
+    if (vista !== "main") {
+      return;
+    }
+    let alive = true;
+    const tick = () => {
+      void diskFreeCheck(8)
+        .then((report) => {
+          if (!alive) {
+            return;
+          }
+          if (report.belowMin) {
+            setDiskWarn(
+              `C: tiene ${report.freeGb.toFixed(2)} GB libres (< ${report.minGb} GB). Puedes liberar target\\debug y caches seguras.`,
+            );
+          } else {
+            setDiskWarn(null);
+          }
+        })
+        .catch(() => {
+          if (alive) {
+            setDiskWarn(null);
+          }
+        });
+    };
+    tick();
+    const timer = window.setInterval(tick, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [vista]);
 
   // Otra ventana (Asistencia) cambió la carpeta: reiniciar editor y diff.
   useEffect(() => {
@@ -1301,6 +1342,20 @@ export default function App() {
     }
   }, [refreshTrustedRoots, sideMode]);
 
+  const editorProblems = useMemo(
+    () => problemsFromAnalysis(analysis, activePath ?? "", source),
+    [analysis, activePath, source],
+  );
+
+  const openProblem = useCallback(
+    (problem: EditorProblem) => {
+      void openFromGraph(problem.path, problem.line).catch((reason: unknown) => {
+        setError(describeError(reason));
+      });
+    },
+    [openFromGraph],
+  );
+
   if (vista === null) {
     return <p className="muted">Abriendo ventana…</p>;
   }
@@ -1403,6 +1458,8 @@ export default function App() {
   const bottomTabs: Array<[BottomTab, string]> = [
     ["resumen", "Resumen"],
     ["tokens", "Tokens"],
+    ["problemas", `Problemas${editorProblems.length ? ` (${editorProblems.length})` : ""}`],
+    ["git", "Git"],
     ["oraculo", "Oráculo"],
     ["catalogo", "Catálogo"],
     ["bilattice", "Bilattice"],
@@ -1489,6 +1546,28 @@ export default function App() {
       ) : null}
 
       {error ? <div className="error">{error}</div> : null}
+      {diskWarn ? (
+        <div className="disk-warn" role="status">
+          <span>{diskWarn}</span>
+          <button
+            type="button"
+            disabled={diskBusy || !workspaceRoot}
+            onClick={() => {
+              setDiskBusy(true);
+              void diskCleanSafe(8)
+                .then((report) => {
+                  setDiskWarn(
+                    `Limpieza: ${report.freeGbBefore.toFixed(2)} → ${report.freeGbAfter.toFixed(2)} GB libres (≈${report.freedGb.toFixed(2)} GB). ${report.detail}`,
+                  );
+                })
+                .catch((reason: unknown) => setError(describeError(reason)))
+                .finally(() => setDiskBusy(false));
+            }}
+          >
+            {diskBusy ? "Limpiando…" : "Liberar espacio seguro"}
+          </button>
+        </div>
+      ) : null}
       {patchBanner || reviewChrome ? (
         <div
           className={`patch-banner${reviewChrome ? " patch-banner-review" : ""}`}
@@ -2084,6 +2163,16 @@ export default function App() {
                     </table>
                   </div>
                 ) : null}
+                {bottomTab === "problemas" ? (
+                  <div className="zone-scroll problems-panel">
+                    <ProblemsPanel problems={editorProblems} onOpen={openProblem} />
+                  </div>
+                ) : null}
+                {bottomTab === "git" ? (
+                  <div className="zone-scroll">
+                    <GitPanel workspaceRoot={workspaceRoot} />
+                  </div>
+                ) : null}
                 {bottomTab === "oraculo" ? (
                   <div className="kernel-oraculo zone-scroll">
                     <div className="row">
@@ -2227,12 +2316,14 @@ export default function App() {
         badgeLabel={activeTab ? badge : "sin análisis"}
         badgeTone={activeTab ? badgeTone : "neutral"}
         tokenCount={analysis ? analysis.summary.total : null}
+        problemCount={editorProblems.length}
         onFile={() => {
           editorFocusRef.current?.focus();
         }}
         onKernel={() => openBottomTab("resumen")}
         onVerified={() => openBottomTab("resumen")}
         onTokens={() => openBottomTab("tokens")}
+        onProblems={() => openBottomTab("problemas")}
       />
 
       <CommandPalette

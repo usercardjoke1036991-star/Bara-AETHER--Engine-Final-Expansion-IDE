@@ -42,6 +42,8 @@ export function buildCommands(h: CommandHandlers): CommandAction[] {
     { id: "focus-editor", label: "Enfocar el editor", keywords: "centro", run: h.focusEditor },
     { id: "tab-resumen", label: "Panel: Resumen del análisis", keywords: "kernel", run: () => h.openBottomTab("resumen") },
     { id: "tab-tokens", label: "Panel: Tokens", keywords: "léxico", run: () => h.openBottomTab("tokens") },
+    { id: "tab-problemas", label: "Panel: Problemas", keywords: "lint avisos", run: () => h.openBottomTab("problemas") },
+    { id: "tab-git", label: "Panel: Git", keywords: "commit diff rama", run: () => h.openBottomTab("git") },
     { id: "tab-oraculo", label: "Panel: Oráculo", keywords: "consulta", run: () => h.openBottomTab("oraculo") },
     { id: "tab-catalogo", label: "Panel: Catálogo de raíces", keywords: "shoresh", run: () => h.openBottomTab("catalogo") },
     { id: "tab-bilattice", label: "Panel: Bilattice (verdad/falsedad)", keywords: "belnap", run: () => h.openBottomTab("bilattice") },

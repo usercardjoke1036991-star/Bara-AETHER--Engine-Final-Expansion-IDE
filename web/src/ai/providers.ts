@@ -20,6 +20,7 @@ import {
 } from "./config";
 import { exchange } from "./keyring";
 import {
+  MAX_READS_PER_TURN,
   MAX_TOOL_ROUNDS,
   anthropicTools,
   openAiTools,
@@ -663,6 +664,7 @@ export async function sendChat(
   system: string,
   signal?: AbortSignal,
   executeTool?: ToolExecutor,
+  onDelta?: (partial: string) => void,
 ): Promise<ChatResult> {
   const linked = linkAbort(signal, CHAT_TIMEOUT_MS);
   try {
@@ -676,6 +678,7 @@ export async function sendChat(
     let usageAcc: ChatUsage | null = null;
     let lastModel = "";
     const toolsUsed: string[] = [];
+    let readsThisTurn = 0;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       const result = await exchangeChatRound(
@@ -701,6 +704,12 @@ export async function sendChat(
 
       if (toolCalls.length === 0) {
         const text = sanitizeAssistantText(result.text);
+        if (onDelta && text) {
+          const { streamTextToUi } = await import("./streamText");
+          await streamTextToUi(text, onDelta, linked.signal);
+        } else if (onDelta) {
+          onDelta(text);
+        }
         const renamed =
           acceptedModel ??
           (catalogModelId(model) === model.trim() ? undefined : catalogModelId(model));
@@ -714,8 +723,10 @@ export async function sendChat(
       }
 
       if (!executeTool) {
+        const text = sanitizeAssistantText(result.text);
+        onDelta?.(text);
         return {
-          text: sanitizeAssistantText(result.text),
+          text,
           model: lastModel,
           usage: usageAcc,
           acceptedModel,
@@ -733,8 +744,20 @@ export async function sendChat(
           throw linked.signal.reason ?? new DOMException("abortado", "AbortError");
         }
         const path = pathFromToolArgs(call.arguments);
-        if (path && !toolsUsed.includes(path)) {
-          toolsUsed.push(path);
+        if (path) {
+          readsThisTurn += 1;
+          if (readsThisTurn > MAX_READS_PER_TURN) {
+            thread.push({
+              role: "tool",
+              toolCallId: call.id,
+              name: call.name,
+              content: `tope de lecturas (${MAX_READS_PER_TURN}) alcanzado en este turno; no se leyó «${path}».`,
+            });
+            continue;
+          }
+          if (!toolsUsed.includes(path)) {
+            toolsUsed.push(path);
+          }
         }
         const content = await runToolCall(call, executeTool);
         thread.push({

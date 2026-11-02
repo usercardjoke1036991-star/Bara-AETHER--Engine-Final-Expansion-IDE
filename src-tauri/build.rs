@@ -222,8 +222,17 @@ const APP_COMMANDS: &[&str] = &[
     "ai_key_exists",
     "ai_key_delete",
     "ai_exchange",
+    "ai_cancel_in_flight",
     "ai_probe_connection",
     "kernel_host_status",
+    "kernel_interrupt",
+    "git_status",
+    "git_diff",
+    "git_branches",
+    "git_commit",
+    "git_checkout",
+    "disk_free_check",
+    "disk_clean_safe",
 ];
 
 fn app_attributes() -> tauri_build::Attributes {

@@ -7,10 +7,12 @@ interface StatusBarProps {
   badgeLabel: string;
   badgeTone: "ok" | "warn" | "neutral";
   tokenCount: number | null;
+  problemCount: number;
   onFile: () => void;
   onKernel: () => void;
   onVerified: () => void;
   onTokens: () => void;
+  onProblems: () => void;
 }
 
 export default function StatusBar({
@@ -19,10 +21,12 @@ export default function StatusBar({
   badgeLabel,
   badgeTone,
   tokenCount,
+  problemCount,
   onFile,
   onKernel,
   onVerified,
   onTokens,
+  onProblems,
 }: StatusBarProps) {
   return (
     <footer className="status-bar" role="contentinfo">
@@ -39,6 +43,14 @@ export default function StatusBar({
         onClick={onVerified}
       >
         {badgeLabel}
+      </button>
+      <button
+        type="button"
+        className={`status-item${problemCount > 0 ? " warn" : ""}`}
+        title="Problemas del documento"
+        onClick={onProblems}
+      >
+        {problemCount === 0 ? "0 problemas" : `${problemCount} problemas`}
       </button>
       <button type="button" className="status-item" title="Tokens del análisis" onClick={onTokens}>
         {tokenCount === null ? "tokens —" : `${tokenCount} tokens`}

@@ -150,6 +150,12 @@ mod window_guard;
 // Saneado de fugas DSML / tool_call en texto del asistente.
 mod tool_leak;
 
+// A6 — status/diff/commit/ramas sobre la jaula (sin push).
+mod git_workspace;
+
+// A9 — espacio libre C: y limpieza segura de target\debug.
+mod disk_guard;
+
 /// Pide una operación al proceso del kernel y devuelve el JSON ya firmado.
 fn kernel_call(kernel: &KernelHost, op: &str, args: Value) -> Result<Value, String> {
     kernel.call(op, args)
@@ -1289,6 +1295,66 @@ fn ai_cancel_in_flight(flight: tauri::State<'_, ai_flight::AiFlight>) {
     flight.request_cancel();
 }
 
+/// A6 — estado porcelain del repo en la raíz activa.
+#[tauri::command]
+fn git_status(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitStatusReport, String> {
+    git_workspace::status(&state.get()?)
+}
+
+#[tauri::command]
+fn git_diff(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitDiffReport, String> {
+    git_workspace::diff(&state.get()?)
+}
+
+#[tauri::command]
+fn git_branches(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitBranchReport, String> {
+    git_workspace::branches(&state.get()?)
+}
+
+#[tauri::command]
+fn git_commit(
+    window: tauri::WebviewWindow,
+    message: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitCommitReport, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    git_workspace::commit(&state.get()?, &message)
+}
+
+#[tauri::command]
+fn git_checkout(
+    window: tauri::WebviewWindow,
+    name: String,
+    create: bool,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitBranchReport, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    git_workspace::checkout(&state.get()?, &name, create)
+}
+
+/// A9 — GB libres en C: (o proxy en CI).
+#[tauri::command]
+fn disk_free_check(min_gb: Option<f64>) -> Result<disk_guard::DiskFreeReport, String> {
+    disk_guard::free_check(min_gb.unwrap_or(8.0))
+}
+
+/// A9 — limpia target\debug (+ vite cache) del workspace activo.
+#[tauri::command]
+fn disk_clean_safe(
+    window: tauri::WebviewWindow,
+    min_gb: Option<f64>,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<disk_guard::DiskCleanReport, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    disk_guard::clean_safe(&state.get()?, min_gb.unwrap_or(8.0))
+}
+
 /// B8 — Detener: mata el sidecar del kernel (p. ej. `local_complete` en vuelo).
 #[tauri::command]
 fn kernel_interrupt(kernel: tauri::State<'_, KernelHost>) {
@@ -1447,7 +1513,14 @@ pub fn run() {
             ai_cancel_in_flight,
             ai_probe_connection,
             kernel_host_status,
-            kernel_interrupt
+            kernel_interrupt,
+            git_status,
+            git_diff,
+            git_branches,
+            git_commit,
+            git_checkout,
+            disk_free_check,
+            disk_clean_safe,
         ])
         .run(tauri::generate_context!())
     {

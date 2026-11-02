@@ -31,7 +31,7 @@ import { writeClipboard } from "../clipboard";
 import { baraSystemPrompt, promptBudgetParts, summarizeBudget } from "../ai/prompt";
 import { deleteKey, inDesktop, keyExists, probeConnection, saveKey } from "../ai/keyring";
 import { listModels, sendChat } from "../ai/providers";
-import { READ_FILE_TOOL } from "../ai/tools";
+import { MAX_READS_PER_TURN, READ_FILE_TOOL, wrapFileDataPayload } from "../ai/tools";
 import { formatReport, runSelfCheck, summarize } from "../ai/selfcheck";
 import type { AiConfig, ChatMessage, ChatUsage, ImageAttachment, ModelInfo } from "../ai/types";
 import {
@@ -541,6 +541,20 @@ export default function ChatPanel({
           budget.byName,
         );
       }
+      const streamId = newId();
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: streamId,
+          role: "assistant",
+          text: "",
+          images: [],
+          model: config.model,
+          createdAt: Date.now(),
+          error: null,
+        },
+      ]);
+      let readCount = 0;
       const result = await sendChat(
         await commitKey(config, setConfig, () => {
           keyEpochRef.current += 1;
@@ -562,6 +576,12 @@ export default function ChatPanel({
           if (!path) {
             return "falta el parámetro path";
           }
+          readCount += 1;
+          if (readCount > MAX_READS_PER_TURN) {
+            setNotice(`Tope de ${MAX_READS_PER_TURN} lecturas por turno; omitida «${path}».`);
+            return `tope de lecturas (${MAX_READS_PER_TURN}) alcanzado; no se leyó «${path}».`;
+          }
+          setNotice(`📄 leyendo «${path}» (${readCount}/${MAX_READS_PER_TURN})`);
           const doc = await readProjectFile(path);
           const body = doc.source ?? "";
           const cap = 24_000;
@@ -569,7 +589,14 @@ export default function ChatPanel({
             [...body].length > cap
               ? `${[...body].slice(0, cap).join("")}\n# … recortado`
               : body;
-          return `archivo: ${doc.path || path}\n\n${clipped}`;
+          return wrapFileDataPayload(doc.path || path, clipped);
+        },
+        (partial) => {
+          setMessages((previous) =>
+            previous.map((message) =>
+              message.id === streamId ? { ...message, text: partial, error: null } : message,
+            ),
+          );
         },
       );
       if (result.acceptedModel && result.acceptedModel !== config.model) {
@@ -580,22 +607,22 @@ export default function ChatPanel({
           `El proveedor no admite «${config.model}». A partir de ahora se usa ${result.acceptedModel}.`,
         );
       }
-      const id = newId();
+      const id = streamId;
       const usage = result.usage;
       const toolsUsed = result.toolsUsed;
-      setMessages((previous) => [
-        ...previous,
-        {
-          id,
-          role: "assistant",
-          text: result.text,
-          images: [],
-          model: result.model,
-          createdAt: Date.now(),
-          error: null,
-          toolsUsed,
-        },
-      ]);
+      setMessages((previous) =>
+        previous.map((message) =>
+          message.id === id
+            ? {
+                ...message,
+                text: result.text,
+                model: result.model,
+                error: null,
+                toolsUsed,
+              }
+            : message,
+        ),
+      );
       if (usage) {
         setUsages((previous) => ({ ...previous, [id]: usage }));
       }

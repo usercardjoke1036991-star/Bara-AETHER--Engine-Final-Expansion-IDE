@@ -827,6 +827,65 @@ body,
   border-bottom: 1px solid var(--line);
 }
 
+.disk-warn {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.45rem 0.75rem;
+  background: color-mix(in srgb, var(--warn, #b45309) 18%, transparent);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.problems-panel,
+.problems-list,
+.git-panel {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.problems-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+}
+
+.problem-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  gap: 0.15rem;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.problem-row:hover {
+  background: color-mix(in srgb, var(--fg, #111) 6%, transparent);
+}
+
+.problem-loc {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.git-diff {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.git-entries,
+.git-branches {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
 .shelf {
   list-style: none;
   margin: 0;

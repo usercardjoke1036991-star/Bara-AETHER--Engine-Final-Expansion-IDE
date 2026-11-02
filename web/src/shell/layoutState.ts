@@ -7,6 +7,8 @@ export type SideMode = "files" | "search" | "settings" | null;
 export type BottomTab =
   | "resumen"
   | "tokens"
+  | "problemas"
+  | "git"
   | "oraculo"
   | "catalogo"
   | "bilattice"

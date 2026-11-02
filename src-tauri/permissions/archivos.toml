@@ -25,4 +25,11 @@ permissions = [
   "allow-idle-proposal",
   "allow-idle-apply",
   "allow-idle-dismiss",
+  "allow-git-status",
+  "allow-git-diff",
+  "allow-git-branches",
+  "allow-git-commit",
+  "allow-git-checkout",
+  "allow-disk-free-check",
+  "allow-disk-clean-safe",
 ]
