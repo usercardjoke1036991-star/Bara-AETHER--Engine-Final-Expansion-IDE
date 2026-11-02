@@ -1,6 +1,7 @@
 /**
  * Conexión CDP acotada a localhost:9229.
- * Valida el `webSocketDebuggerUrl` antes de abrir el socket (mitiga SSRF).
+ * Reconstruye el WebSocket desde literales tras validar host/puerto/ruta
+ * (rompe el taint de SSRF: no se reutiliza la URL cruda del JSON).
  */
 
 import WebSocket from "ws";
@@ -9,7 +10,10 @@ export const CDP_HTTP = "http://127.0.0.1:9229";
 const ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const ALLOWED_PORT = "9229";
 
-/** Rechaza cualquier WS que no sea el depurador local del WebView. */
+/**
+ * Valida el depurador local y devuelve un `ws://127.0.0.1:9229/…` nuevo.
+ * @param {unknown} url
+ */
 export function assertLocalCdpWs(url) {
   let parsed;
   try {
@@ -27,7 +31,12 @@ export function assertLocalCdpWs(url) {
   if (port !== ALLOWED_PORT) {
     throw new Error(`CDP: puerto no permitido (${port})`);
   }
-  return parsed.toString();
+  const path = `${parsed.pathname}${parsed.search}`;
+  if (!path.startsWith("/devtools/")) {
+    throw new Error("CDP: ruta de depurador no permitida");
+  }
+  // URL limpia: host/puerto literales + path ya acotado.
+  return `ws://127.0.0.1:9229${path}`;
 }
 
 /** Página DevTools del IDE (título AETHER/tauri) o la primera listada. */
@@ -37,10 +46,10 @@ export async function pickCdpPage() {
     throw new Error("CDP: no hay páginas en 127.0.0.1:9229");
   }
   const page =
-    pages.find((p) => /AETHER|tauri|localhost:1420/i.test(`${p.title ?? ""}${p.url ?? ""}`)) ||
-    pages[0];
-  const wsUrl = assertLocalCdpWs(page.webSocketDebuggerUrl);
-  return { page, wsUrl };
+    pages.find((p) =>
+      /AETHER|tauri|localhost:1420/i.test(`${p.title ?? ""}${p.url ?? ""}`),
+    ) || pages[0];
+  return { page, wsUrl: assertLocalCdpWs(page.webSocketDebuggerUrl) };
 }
 
 /** Abre el WebSocket CDP ya validado. */
