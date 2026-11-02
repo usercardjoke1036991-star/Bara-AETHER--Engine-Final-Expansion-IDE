@@ -14,6 +14,8 @@ export const PROVIDER_ENDPOINTS: Record<ProviderId, string> = {
   anthropic: "https://api.anthropic.com/v1",
   openai: "https://api.openai.com/v1",
   deepseek: "https://api.deepseek.com",
+  /** Ollama / OpenAI-compatible en esta máquina (§9.5.12). */
+  local: "http://127.0.0.1:11434",
 };
 
 /** Nombre visible de cada proveedor. */
@@ -21,6 +23,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   anthropic: "Anthropic · Claude (Messages API)",
   openai: "OpenAI (Chat Completions · visión)",
   deepseek: "DeepSeek (OpenAI-compatible)",
+  local: "Local (Ollama/HTTP)",
 };
 
 /**
@@ -31,7 +34,17 @@ export const PROVIDER_MODEL_PRESETS: Record<ProviderId, string[]> = {
   anthropic: ["claude-sonnet-4-5", "claude-haiku-4-5"],
   openai: ["gpt-4o", "gpt-4o-mini"],
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  // Presets editables; no implica que estén instalados en Ollama.
+  local: ["llama3.2", "qwen2.5-coder"],
 };
+
+/** Flag «acepté tráfico HTTP local» (sin secretos). */
+export const LOCAL_ACCEPTED_KEY = "bara-ide.ai.localAccepted.v1";
+
+/** Texto de confirmación la primera vez que se activa `local`. */
+export const LOCAL_CONFIRM_MESSAGE =
+  "El proveedor Local envía el chat por HTTP a esta máquina (p. ej. Ollama en 127.0.0.1). " +
+  "No usa clave de API. En un portátil con ~8 GB de RAM el modelo será pequeño o lento. ¿Continuar?";
 
 /** Raíz oficial DeepSeek (también acepta `/v1`). */
 export const DEEPSEEK_ROOTS: readonly string[] = [
@@ -61,12 +74,17 @@ export const DEFAULT_CONFIG: AiConfig = {
 /** Rango de tokens que el panel acepta. */
 export const TOKEN_RANGE = { min: 256, max: 8192 };
 
-/** Anthropic admite 0–1. OpenAI / DeepSeek compatibles, 0–2. */
+/** Anthropic admite 0–1. OpenAI / DeepSeek / local compatibles, 0–2. */
 export function temperatureRange(provider: ProviderId): { min: number; max: number } {
-  if (provider === "openai" || provider === "deepseek") {
+  if (provider === "openai" || provider === "deepseek" || provider === "local") {
     return { min: 0, max: 2 };
   }
   return { min: 0, max: 1 };
+}
+
+/** ¿Este proveedor exige clave de API? */
+export function providerNeedsKey(provider: ProviderId): boolean {
+  return provider !== "local";
 }
 
 /** Almacén mínimo compatible con `localStorage` (inyectable para probarlo). */
@@ -88,6 +106,31 @@ export function defaultStore(): KeyValueStore | null {
   }
 }
 
+/** ¿El usuario ya aceptó el aviso de HTTP local? */
+export function hasAcceptedLocal(store: KeyValueStore | null = defaultStore()): boolean {
+  if (!store) {
+    return false;
+  }
+  try {
+    return store.getItem(LOCAL_ACCEPTED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Persiste la aceptación del riesgo local (sin secretos). */
+export function acceptLocalRisk(store: KeyValueStore | null = defaultStore()): boolean {
+  if (!store) {
+    return false;
+  }
+  try {
+    store.setItem(LOCAL_ACCEPTED_KEY, "1");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Convierte cualquier JSON leído del almacén en una configuración válida. */
 export function sanitizeConfig(raw: unknown): Partial<AiConfig> | null {
   if (typeof raw !== "object" || raw === null) {
@@ -98,7 +141,8 @@ export function sanitizeConfig(raw: unknown): Partial<AiConfig> | null {
   if (
     source.provider === "anthropic" ||
     source.provider === "openai" ||
-    source.provider === "deepseek"
+    source.provider === "deepseek" ||
+    source.provider === "local"
   ) {
     out.provider = source.provider;
   }
@@ -172,7 +216,9 @@ export function peekStoredSecret(
       ? "openai"
       : stored?.provider === "deepseek"
         ? "deepseek"
-        : "anthropic";
+        : stored?.provider === "local"
+          ? "local"
+          : "anthropic";
   return { provider, secret };
 }
 
@@ -229,6 +275,7 @@ export function withProvider(config: AiConfig, provider: ProviderId): AiConfig {
     model: "",
     baseUrl: PROVIDER_ENDPOINTS[provider],
     useMaxCompletionTokens: provider === "openai",
+    rememberKey: provider === "local" ? false : config.rememberKey,
   };
 }
 
@@ -275,6 +322,9 @@ export function isLocalApiRoot(value: string): boolean {
 /** En la nube la raíz tiene que coincidir con allowlist (oficiales + DeepSeek + local). */
 export function allowedApiRoot(provider: ProviderId, baseUrl: string): boolean {
   const trimmed = stripTrailingSlashes(baseUrl.trim());
+  if (provider === "local") {
+    return isLocalApiRoot(trimmed);
+  }
   if (isLocalApiRoot(trimmed)) {
     return true;
   }
@@ -355,18 +405,29 @@ export function configProblems(config: AiConfig, liveModels: string[] = []): str
     problems.push(
       `El modelo «${model}» no está en la lista viva. Elige uno de «listar modelos» o Probar conexión.`,
     );
-  } else if (liveModels.length === 0 && !presets.includes(model)) {
+  } else if (
+    liveModels.length === 0 &&
+    !presets.includes(model) &&
+    config.provider !== "local"
+  ) {
     problems.push(
       "Modelo no reconocido: pulsa «listar modelos» (o elige un preset oficial) antes de enviar.",
     );
   }
-  if (!config.hasKey && !config.apiKey.trim()) {
+  if (providerNeedsKey(config.provider) && !config.hasKey && !config.apiKey.trim()) {
     problems.push("Falta la clave de API del proveedor activo.");
   }
-  if (!isApiRoot(config.baseUrl, config.provider)) {
+  if (config.provider === "local" && !isLocalApiRoot(config.baseUrl)) {
+    problems.push(
+      "Local sólo admite http://localhost o http://127.0.0.1 (p. ej. Ollama en :11434).",
+    );
+  } else if (!isApiRoot(config.baseUrl, config.provider)) {
     problems.push(
       "La raíz de la API tiene que ser la oficial del proveedor, DeepSeek o http en localhost.",
     );
+  }
+  if (config.provider === "local" && !hasAcceptedLocal()) {
+    problems.push("Confirma el aviso de HTTP local en Ajustes antes de enviar.");
   }
   const { min, max } = TOKEN_RANGE;
   if (!Number.isFinite(config.maxTokens) || config.maxTokens < min || config.maxTokens > max) {
@@ -384,11 +445,14 @@ export function configProblems(config: AiConfig, liveModels: string[] = []): str
 
 /** Línea de estado. No incluye el secreto. */
 export function describeConfig(config: AiConfig): string {
+  const model = config.model.trim() || "(sin modelo)";
+  if (config.provider === "local") {
+    return `${PROVIDER_LABELS.local} · ${model} · sin clave (HTTP local; distinto del GGUF hermético)`;
+  }
   const where = config.hasKey || config.apiKey.trim()
     ? config.rememberKey
       ? "en llavero"
       : "sólo en esta sesión"
     : "sin clave";
-  const model = config.model.trim() || "(sin modelo)";
   return `${PROVIDER_LABELS[config.provider]} · ${model} · clave ${where}`;
 }

@@ -83,19 +83,26 @@ fn redactar(text: &str, secret: &str) -> String {
 }
 
 /// Cabeceras de autorización. El valor no se devuelve al WebView.
+///
+/// §9.5.12 `local` (Ollama/HTTP): sin Authorization ni x-api-key.
 fn cabeceras(provider: &str, secret: &str) -> Result<Vec<(&'static str, String)>, String> {
-    let secret = secret.trim();
-    if secret.is_empty() {
-        return Err("no hay clave para este proveedor".to_string());
-    }
     match provider.trim() {
-        "anthropic" => Ok(vec![
-            ("x-api-key", secret.to_string()),
-            ("anthropic-version", ANTHROPIC_VERSION.to_string()),
-        ]),
-        // OpenAI, DeepSeek y compatibles locales usan Bearer.
-        "openai" | "deepseek" => Ok(vec![("authorization", format!("Bearer {secret}"))]),
-        _ => Err("el proveedor no tiene transporte".to_string()),
+        "local" => Ok(Vec::new()),
+        other => {
+            let secret = secret.trim();
+            if secret.is_empty() {
+                return Err("no hay clave para este proveedor".to_string());
+            }
+            match other {
+                "anthropic" => Ok(vec![
+                    ("x-api-key", secret.to_string()),
+                    ("anthropic-version", ANTHROPIC_VERSION.to_string()),
+                ]),
+                // OpenAI y DeepSeek usan Bearer.
+                "openai" | "deepseek" => Ok(vec![("authorization", format!("Bearer {secret}"))]),
+                _ => Err("el proveedor no tiene transporte".to_string()),
+            }
+        }
     }
 }
 
@@ -163,7 +170,7 @@ fn error_de_transporte(error: &ureq::Error) -> String {
         return "sin red: no se pudo resolver el host del proveedor (DNS)".to_string();
     }
     if lower.contains("connection refused") || lower.contains("actively refused") {
-        return "sin red: conexión rechazada por el proveedor".to_string();
+        return "no hay servidor en localhost (¿Ollama u otro HTTP local en marcha?)".to_string();
     }
     if lower.contains("connection reset") || lower.contains("broken pipe") {
         return "sin red: el proveedor cortó la conexión".to_string();
@@ -280,6 +287,28 @@ fn host_de_url(url: &str) -> Option<String> {
     }
 }
 
+fn es_http_local(url: &str) -> bool {
+    url.starts_with("http://localhost") || url.starts_with("http://127.0.0.1")
+}
+
+fn puerto_de_url(url: &str, default_https: u16, default_http: u16) -> u16 {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or("");
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if let Some((_, port)) = authority.rsplit_once(':') {
+        if let Ok(n) = port.parse::<u16>() {
+            return n;
+        }
+    }
+    if url.starts_with("http://") {
+        default_http
+    } else {
+        default_https
+    }
+}
+
 fn models_url(base: &str) -> String {
     let trimmed = base.trim().trim_end_matches('/');
     if trimmed.ends_with("/models") {
@@ -343,11 +372,23 @@ fn handshake_tls(host: &str, addr: SocketAddr) -> Result<String, String> {
     ))
 }
 
-/// Sonda DNS → TCP → TLS → HTTP GET /models (con clave).
+/// Sonda DNS → TCP → (TLS si https) → HTTP GET /models.
+/// §9.5.12: HTTP local omite TLS y no exige clave.
 pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeReport {
     let mut steps = Vec::new();
     let mut models = Vec::new();
-    let url = models_url(base_url);
+    // Ollama OpenAI-compatible: raíz sin /v1 → …/v1/models.
+    let probe_base = if es_http_local(base_url) {
+        let trimmed = base_url.trim().trim_end_matches('/');
+        if trimmed.ends_with("/v1") || trimmed.contains("/v1/") {
+            trimmed.to_string()
+        } else {
+            format!("{trimmed}/v1")
+        }
+    } else {
+        base_url.trim().to_string()
+    };
+    let url = models_url(&probe_base);
     if !destino_permitido(&url) {
         steps.push(ProbeStep {
             name: "ACL".to_string(),
@@ -373,7 +414,9 @@ pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeRe
         };
     };
 
-    let addr = match primer_addr(&host, 443) {
+    let local_http = es_http_local(&url);
+    let port = puerto_de_url(&url, 443, 80);
+    let addr = match primer_addr(&host, port) {
         Ok(addr) => {
             steps.push(ProbeStep {
                 name: "DNS".to_string(),
@@ -406,10 +449,15 @@ pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeRe
             });
         }
         Err(error) => {
+            let detail = if local_http {
+                format!("no hay servidor en {host}:{port} (¿Ollama u otro HTTP local?): {error}")
+            } else {
+                format!("rechazado o inalcanzable: {error}")
+            };
             steps.push(ProbeStep {
                 name: "TCP".to_string(),
                 ok: false,
-                detail: format!("rechazado o inalcanzable: {error}"),
+                detail,
             });
             return ProbeReport {
                 ok: false,
@@ -419,27 +467,35 @@ pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeRe
         }
     }
 
-    match handshake_tls(&host, addr) {
-        Ok(detail) => steps.push(ProbeStep {
+    if !local_http {
+        match handshake_tls(&host, addr) {
+            Ok(detail) => steps.push(ProbeStep {
+                name: "TLS".to_string(),
+                ok: true,
+                detail,
+            }),
+            Err(detail) => {
+                steps.push(ProbeStep {
+                    name: "TLS".to_string(),
+                    ok: false,
+                    detail: format!(
+                        "{detail} · si hay VPN/antivirus, importa su CA al almacén de Windows \
+(no hace falta apagar la VPN)"
+                    ),
+                });
+                return ProbeReport {
+                    ok: false,
+                    steps,
+                    models,
+                };
+            }
+        }
+    } else {
+        steps.push(ProbeStep {
             name: "TLS".to_string(),
             ok: true,
-            detail,
-        }),
-        Err(detail) => {
-            steps.push(ProbeStep {
-                name: "TLS".to_string(),
-                ok: false,
-                detail: format!(
-                    "{detail} · si hay VPN/antivirus, importa su CA al almacén de Windows \
-(no hace falta apagar la VPN)"
-                ),
-            });
-            return ProbeReport {
-                ok: false,
-                steps,
-                models,
-            };
-        }
+            detail: "omitido (HTTP local)".to_string(),
+        });
     }
 
     match exchange(provider, &url, "GET", "", secret) {
@@ -558,10 +614,65 @@ mod tests {
             "invalid ••••"
         );
         assert!(cabeceras("otro", "x").is_err());
+        let local_headers = cabeceras("local", "").expect("local sin clave");
+        assert!(local_headers.is_empty(), "local no envía Authorization");
+        assert!(cabeceras("local", "ignorada").expect("local").is_empty());
         let blocked = exchange("anthropic", "https://api.example/v1", "POST", "{}", "x");
         assert!(blocked
             .expect_err("host ajeno")
             .contains("host no permitido"));
+    }
+
+    #[test]
+    fn el_mock_local_sin_auth_no_lleva_bearer() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<String>();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                match stream.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        raw.extend_from_slice(&buf[..n]);
+                        if raw.windows(4).any(|w| w == b"\r\n\r\n") || raw.len() > 8192 {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let request = String::from_utf8_lossy(&raw).to_string();
+            let _ = ready_tx.send(request);
+            let body = r#"{"object":"list","data":[{"id":"llama3.2"}]}"#;
+            let response = format!(
+                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            let _ = stream.shutdown(Shutdown::Write);
+        });
+        let url = format!("http://127.0.0.1:{port}/v1/models");
+        let result = exchange("local", &url, "GET", "", "").expect("exchange local");
+        assert_eq!(result.status, 200);
+        let seen = ready_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("headers");
+        assert!(
+            !seen.to_ascii_lowercase().contains("authorization"),
+            "no debe viajar Bearer: {seen}"
+        );
+        assert!(
+            !seen.to_ascii_lowercase().contains("x-api-key"),
+            "no debe viajar x-api-key: {seen}"
+        );
+        assert!(result.body.contains("llama3.2"));
     }
 
     #[test]

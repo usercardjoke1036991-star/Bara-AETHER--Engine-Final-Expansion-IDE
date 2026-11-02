@@ -339,6 +339,14 @@ export function openAiCompatibleRoot(baseUrl: string): string {
     if (url.hostname === "api.openai.com" && (url.pathname === "" || url.pathname === "/")) {
       return PROVIDER_ENDPOINTS.openai;
     }
+    // Ollama: `http://127.0.0.1:11434` → …/v1 para chat/completions OpenAI-compatible.
+    if (
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+      (url.pathname === "" || url.pathname === "/")
+    ) {
+      url.pathname = "/v1";
+      return stripTrailingSlashes(url.toString());
+    }
   } catch {
     return root;
   }
@@ -359,7 +367,10 @@ export function openAiBody(
   };
   // Los modelos de razonamiento de OpenAI exigen `max_completion_tokens`.
   // DeepSeek rechaza ese campo y sólo acepta `max_tokens`.
-  const deepseek = config.provider === "deepseek" || isDeepSeekRoot(config.baseUrl);
+  const deepseek =
+    config.provider === "deepseek" ||
+    config.provider === "local" ||
+    isDeepSeekRoot(config.baseUrl);
   if (config.useMaxCompletionTokens && !deepseek) {
     body.max_completion_tokens = config.maxTokens;
   } else {
@@ -456,7 +467,9 @@ export function extractApiError(status: number, payload: unknown, provider: Prov
       ? "Anthropic"
       : provider === "deepseek"
         ? "DeepSeek"
-        : "OpenAI/compatible";
+        : provider === "local"
+          ? "Local (Ollama/HTTP)"
+          : "OpenAI/compatible";
   const shape = payload as
     | { error?: { message?: unknown; code?: unknown; type?: unknown } | string; message?: unknown }
     | null;
@@ -847,7 +860,9 @@ async function exchangeChatRound(
 /** Lista real de modelos de la cuenta (`GET {base}/models`). La clave la pone el proceso. */
 export async function listModels(config: AiConfig, signal?: AbortSignal): Promise<ModelInfo[]> {
   const base =
-    config.provider === "openai" || config.provider === "deepseek"
+    config.provider === "openai" ||
+    config.provider === "deepseek" ||
+    config.provider === "local"
       ? openAiCompatibleRoot(config.baseUrl)
       : normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS[config.provider]);
   const response = await exchange(config.provider, `${base}/models`, "GET", undefined, signal);

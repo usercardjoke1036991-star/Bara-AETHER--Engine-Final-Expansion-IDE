@@ -1350,7 +1350,10 @@ async fn ai_exchange(
     body: Option<String>,
 ) -> Result<ai_http::Exchange, String> {
     window_guard::require(&window, window_guard::CHAT)?;
-    let secret = {
+    // §9.5.12: `local` no usa llavero ni Authorization.
+    let secret = if provider.trim() == "local" {
+        String::new()
+    } else {
         let session = state
             .lock()
             .map_err(|_| "el llavero está ocupado".to_string())?;
@@ -1456,7 +1459,9 @@ async fn ai_probe_connection(
     base_url: String,
 ) -> Result<ai_http::ProbeReport, String> {
     window_guard::require(&window, window_guard::CHAT)?;
-    let secret = {
+    let secret = if provider.trim() == "local" {
+        String::new()
+    } else {
         let session = state
             .lock()
             .map_err(|_| "el llavero está ocupado".to_string())?;

@@ -6,19 +6,23 @@
 import {
   DEFAULT_CONFIG,
   DEEPSEEK_ROOTS,
+  LOCAL_CONFIRM_MESSAGE,
   PROVIDER_ENDPOINTS,
   PROVIDER_LABELS,
   PROVIDER_MODEL_PRESETS,
   TOKEN_RANGE,
+  acceptLocalRisk,
   configProblems,
   temperatureRange,
   describeConfig,
+  hasAcceptedLocal,
+  providerNeedsKey,
   withProvider,
 } from "../ai/config";
 import type { AiConfig, ModelInfo, ProviderId } from "../ai/types";
 
 /** Orden estable de los proveedores en el selector. */
-const PROVIDERS: ProviderId[] = ["deepseek", "openai", "anthropic"];
+const PROVIDERS: ProviderId[] = ["deepseek", "openai", "anthropic", "local"];
 
 /** Ajusta un número a un rango, ignorando valores no finitos. */
 function clamp(value: number, min: number, max: number): number {
@@ -26,6 +30,20 @@ function clamp(value: number, min: number, max: number): number {
     return min;
   }
   return Math.min(max, Math.max(min, value));
+}
+
+function selectProvider(config: AiConfig, next: ProviderId): AiConfig | null {
+  if (next === "local" && !hasAcceptedLocal()) {
+    const ok =
+      typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm(LOCAL_CONFIRM_MESSAGE)
+        : false;
+    if (!ok) {
+      return null;
+    }
+    acceptLocalRisk();
+  }
+  return withProvider(config, next);
 }
 
 export default function AiSettings({
@@ -57,6 +75,7 @@ export default function AiSettings({
   const problems = configProblems(config, liveIds);
   const presets = PROVIDER_MODEL_PRESETS[config.provider];
   const heat = temperatureRange(config.provider);
+  const needsKey = providerNeedsKey(config.provider);
 
   return (
     <div className="ai-settings">
@@ -64,7 +83,12 @@ export default function AiSettings({
         <span>Proveedor</span>
         <select
           value={config.provider}
-          onChange={(event) => onChange(withProvider(config, event.target.value as ProviderId))}
+          onChange={(event) => {
+            const next = selectProvider(config, event.target.value as ProviderId);
+            if (next) {
+              onChange(next);
+            }
+          }}
         >
           {PROVIDERS.map((id) => (
             <option key={id} value={id}>
@@ -74,13 +98,24 @@ export default function AiSettings({
         </select>
       </label>
 
+      {config.provider === "local" ? (
+        <p className="muted">
+          Local (Ollama/HTTP) habla con un servidor en esta máquina. Es distinto del camino GGUF
+          hermético del panel (pesos locales sin HTTP).
+        </p>
+      ) : null}
+
       <label className="ai-field">
         <span>Modelo</span>
         <input
           list="ai-model-presets"
           spellCheck={false}
           value={config.model}
-          placeholder="listar modelos o preset oficial"
+          placeholder={
+            config.provider === "local"
+              ? "llama3.2, qwen2.5-coder u otro instalado"
+              : "listar modelos o preset oficial"
+          }
           onChange={(event) => onChange({ ...config, model: event.target.value })}
         />
         <datalist id="ai-model-presets">
@@ -93,17 +128,21 @@ export default function AiSettings({
         </datalist>
       </label>
 
-      <label className="ai-field">
-        <span>Clave de API</span>
-        <input
-          type="password"
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="sk-…"
-          value={config.apiKey}
-          onChange={(event) => onChange({ ...config, apiKey: event.target.value })}
-        />
-      </label>
+      {needsKey ? (
+        <label className="ai-field">
+          <span>Clave de API</span>
+          <input
+            type="password"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="sk-…"
+            value={config.apiKey}
+            onChange={(event) => onChange({ ...config, apiKey: event.target.value })}
+          />
+        </label>
+      ) : (
+        <p className="muted">Local no usa clave de API (sin Authorization / x-api-key).</p>
+      )}
 
       <div className="row">
         <button type="button" disabled={busy} onClick={onLoadModels}>
@@ -114,11 +153,13 @@ export default function AiSettings({
         </button>
         <span className="grow" />
         <span className="muted">
-          {config.hasKey
-            ? config.rememberKey
-              ? "clave en llavero"
-              : "clave en esta sesión"
-            : "sin clave"}
+          {needsKey
+            ? config.hasKey
+              ? config.rememberKey
+                ? "clave en llavero"
+                : "clave en esta sesión"
+              : "sin clave"
+            : "sin clave (local)"}
         </span>
       </div>
 
@@ -132,8 +173,9 @@ export default function AiSettings({
           onChange={(event) => onChange({ ...config, baseUrl: event.target.value })}
         />
         <span className="muted">
-          Editable; se valida contra la allowlist (oficiales, DeepSeek, localhost). DeepSeek admite
-          con o sin <code className="inline-code">/v1</code>.
+          {config.provider === "local"
+            ? "Sólo http://localhost o http://127.0.0.1 (p. ej. Ollama :11434)."
+            : "Editable; allowlist oficiales, DeepSeek o http en localhost."}
         </span>
       </label>
       <div className="row">
@@ -159,9 +201,14 @@ export default function AiSettings({
         </button>
         <button
           type="button"
-          onClick={() => onChange({ ...config, baseUrl: "http://127.0.0.1:11434/v1" })}
+          onClick={() => {
+            const next = selectProvider(config, "local");
+            if (next) {
+              onChange({ ...next, baseUrl: PROVIDER_ENDPOINTS.local });
+            }
+          }}
         >
-          servidor local
+          local
         </button>
       </div>
 
@@ -202,19 +249,21 @@ export default function AiSettings({
         </label>
       </div>
 
-      <label className="ai-check">
-        <input
-          type="checkbox"
-          checked={config.rememberKey}
-          onChange={(event) => onChange({ ...config, rememberKey: event.target.checked })}
-        />
-        <span>
-          recordar la clave en el llavero de este equipo{" "}
-          <span className="muted">
-            (sin marcar, la clave vive sólo en esta sesión del proceso)
+      {needsKey ? (
+        <label className="ai-check">
+          <input
+            type="checkbox"
+            checked={config.rememberKey}
+            onChange={(event) => onChange({ ...config, rememberKey: event.target.checked })}
+          />
+          <span>
+            recordar la clave en el llavero de este equipo{" "}
+            <span className="muted">
+              (sin marcar, la clave vive sólo en esta sesión del proceso)
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      ) : null}
 
       {config.provider === "openai" ? (
         <label className="ai-check">

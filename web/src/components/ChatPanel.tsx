@@ -15,6 +15,7 @@ import {
   forgetConfig,
   loadConfig,
   peekStoredSecret,
+  providerNeedsKey,
   saveConfig,
   stripStoredSecret,
 } from "../ai/config";
@@ -84,6 +85,13 @@ async function commitKey(
   setConfig: (config: AiConfig) => void,
   bumpEpoch?: () => void,
 ): Promise<AiConfig> {
+  // §9.5.12: local no usa llavero ni clave.
+  if (!providerNeedsKey(config.provider)) {
+    const next = { ...config, apiKey: "", hasKey: false, rememberKey: false };
+    saveConfig(next);
+    setConfig(next);
+    return next;
+  }
   const draft = config.apiKey.trim();
   if (!draft) {
     // Sin borrador: confirma si el proceso ya tiene clave (llavero o sesión).
