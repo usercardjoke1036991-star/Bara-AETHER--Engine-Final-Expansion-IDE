@@ -1624,12 +1624,13 @@ td {
   min-height: 0;
 }
 
+/* Chat del medio: scrollbar del historial; composer queda fuera (hermano). */
 .ai-log {
   display: flex;
-  flex: 1 1 auto;
+  /* basis 0%: el flex puede encoger y overflow-y:auto muestra la barra. */
+  flex: 1 1 0%;
   flex-direction: column;
   gap: 0.6rem;
-  /* Flex: sin esto el historial no encoge y no aparece scrollbar. */
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
