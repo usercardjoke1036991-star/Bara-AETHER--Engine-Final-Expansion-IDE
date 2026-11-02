@@ -729,6 +729,9 @@ export async function sendChat(
         toolCalls,
       });
       for (const call of toolCalls) {
+        if (linked.signal.aborted) {
+          throw linked.signal.reason ?? new DOMException("abortado", "AbortError");
+        }
         const path = pathFromToolArgs(call.arguments);
         if (path && !toolsUsed.includes(path)) {
           toolsUsed.push(path);

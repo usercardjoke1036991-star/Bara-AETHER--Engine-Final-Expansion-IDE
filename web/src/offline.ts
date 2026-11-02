@@ -37,8 +37,36 @@ export function loadLocalWeights(): Promise<WeightView> {
   return invoke<WeightView>("load_local_weights");
 }
 
-export function localComplete(prompt: string): Promise<LocalReply> {
-  return invoke<LocalReply>("local_complete", { prompt });
+/**
+ * Inferencia local vía IPC. `signal` (B8) corta la espera de la interfaz;
+ * `interruptKernel` en Detener corta el proceso hijo.
+ */
+export async function localComplete(
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<LocalReply> {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("abortado", "AbortError");
+  }
+  const pending = invoke<LocalReply>("local_complete", { prompt });
+  if (!signal) {
+    return pending;
+  }
+  return new Promise((resolve, reject) => {
+    const fail = () => reject(signal.reason ?? new DOMException("abortado", "AbortError"));
+    const onAbort = () => fail();
+    signal.addEventListener("abort", onAbort);
+    pending.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function transmuteGlobal(path: string, from: string, to: string): Promise<GlobalReport> {

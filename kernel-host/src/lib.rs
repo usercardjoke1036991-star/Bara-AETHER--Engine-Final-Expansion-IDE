@@ -35,4 +35,4 @@ pub(crate) mod idle_worker;
 pub mod dispatch;
 pub mod supervisor;
 
-pub use supervisor::{new_group, terminate_tree, KernelHost, KernelStatus};
+pub use supervisor::{new_group, terminate_pid, terminate_tree, KernelHost, KernelStatus};

@@ -291,3 +291,13 @@ export function belnapEvaluate(
 export function kernelHostStatus(): Promise<string> {
   return invoke<string>("kernel_host_status");
 }
+
+/** B8 — Detener: mata el sidecar del kernel (corta `local_complete` en vuelo). */
+export function interruptKernel(): Promise<void> {
+  return invoke<void>("kernel_interrupt");
+}
+
+/** B8 — Detener: cancela la espera de `ai_exchange` en el proceso Rust. */
+export function cancelAiInFlight(): Promise<void> {
+  return invoke<void>("ai_cancel_in_flight");
+}

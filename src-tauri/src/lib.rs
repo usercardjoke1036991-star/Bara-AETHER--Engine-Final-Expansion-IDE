@@ -137,6 +137,9 @@ mod secrets;
 // Transporte de los proveedores. El destino es una lista cerrada.
 mod ai_http;
 
+// Cancelación cooperativa de `ai_exchange` (B8: Detener).
+mod ai_flight;
+
 // Segunda capa de permisos: etiqueta de la ventana frente a lista fija.
 mod window_guard;
 
@@ -1145,10 +1148,13 @@ fn ai_key_delete(
 }
 
 /// Llama al proveedor. La clave la pone este proceso; la respuesta ya viene limpia.
+/// B8: `ai_cancel_in_flight` hace que este comando responda `cancelado` sin
+/// seguir bloqueando el IPC (el hilo ureq puede drenar el socket en segundo plano).
 #[tauri::command]
 async fn ai_exchange(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, Mutex<secrets::Session>>,
+    flight: tauri::State<'_, ai_flight::AiFlight>,
     provider: String,
     url: String,
     method: String,
@@ -1162,11 +1168,34 @@ async fn ai_exchange(
         secrets::lookup(&session, &secrets::System, &provider)?
     };
     let payload = body.unwrap_or_default();
-    tauri::async_runtime::spawn_blocking(move || {
+    flight.begin();
+    let mut work = tauri::async_runtime::spawn_blocking(move || {
         ai_http::exchange(&provider, &url, &method, &payload, &secret)
-    })
-    .await
-    .map_err(|_| "la llamada al proveedor se interrumpió".to_string())?
+    });
+    loop {
+        tokio::select! {
+            result = &mut work => {
+                return result.map_err(|_| "la llamada al proveedor se interrumpió".to_string())?;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(40)) => {
+                if flight.is_cancelled() {
+                    return Err("cancelado".to_string());
+                }
+            }
+        }
+    }
+}
+
+/// B8 — Detener: cancela la espera de `ai_exchange` en el proceso Rust.
+#[tauri::command]
+fn ai_cancel_in_flight(flight: tauri::State<'_, ai_flight::AiFlight>) {
+    flight.request_cancel();
+}
+
+/// B8 — Detener: mata el sidecar del kernel (p. ej. `local_complete` en vuelo).
+#[tauri::command]
+fn kernel_interrupt(kernel: tauri::State<'_, KernelHost>) {
+    kernel.interrupt();
 }
 
 /// Sonda DNS→TCP→TLS→HTTP→modelos. La clave no vuelve al WebView.
@@ -1225,6 +1254,7 @@ pub fn run() {
         .manage(workspace::ActiveWorkspace::bootstrap())
         .manage(Mutex::new(idle_loop::IdleBridge::new()))
         .manage(Mutex::new(secrets::Session::default()))
+        .manage(ai_flight::AiFlight::new())
         .manage(editor_bridge::EditorBridge::new())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -1309,8 +1339,10 @@ pub fn run() {
             ai_key_exists,
             ai_key_delete,
             ai_exchange,
+            ai_cancel_in_flight,
             ai_probe_connection,
-            kernel_host_status
+            kernel_host_status,
+            kernel_interrupt
         ])
         .run(tauri::generate_context!())
     {
@@ -1359,8 +1391,10 @@ mod ipc_boundary {
         assert!(handler.contains("ai_key_exists"));
         assert!(handler.contains("ai_key_delete"));
         assert!(handler.contains("ai_exchange"));
+        assert!(handler.contains("ai_cancel_in_flight"));
         assert!(handler.contains("ai_probe_connection"));
         assert!(handler.contains("kernel_host_status"));
+        assert!(handler.contains("kernel_interrupt"));
         assert!(!handler.contains("read_source"));
         assert!(super::desk_spec("topology").is_some());
         assert!(super::desk_spec("ai-workspace").is_some());

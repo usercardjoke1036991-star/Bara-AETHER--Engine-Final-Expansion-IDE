@@ -50,10 +50,17 @@ import {
   resolvePatchAttempt,
   shouldListenForPropose,
 } from "../patchFlow";
-import { shoreshTranslate, type Analysis, type RootEntry, type Translation } from "../engine";
+import {
+  cancelAiInFlight,
+  interruptKernel,
+  shoreshTranslate,
+  type Analysis,
+  type RootEntry,
+  type Translation,
+} from "../engine";
 import { currentVista, openDeskWindow } from "../windows";
 import AiSettings from "./AiSettings";
-import AssistantText, { codeBlocks } from "./AssistantText";
+import AssistantText, { codeBlocks, firstBaraCodeBlock } from "./AssistantText";
 
 /** Identificador local de un mensaje (clave de React y de las traducciones). */
 function newId(): string {
@@ -508,7 +515,10 @@ export default function ChatPanel({
     abortRef.current = controller;
     try {
       if (offline) {
-        const local = await localComplete(text);
+        const local = await localComplete(text, controller.signal);
+        if (controller.signal.aborted) {
+          throw new DOMException("abortado", "AbortError");
+        }
         setMessages((previous) => [
           ...previous,
           {
@@ -592,8 +602,9 @@ export default function ChatPanel({
       if (toolsUsed && toolsUsed.length > 0) {
         setNotice(`📄 leyó ${toolsUsed.join(", ")}`);
       }
+      // B7: sólo el primer fence ```bara (no el primer fence de cualquier lenguaje).
       if (autoApply) {
-        const block = codeBlocks(result.text)[0];
+        const block = firstBaraCodeBlock(result.text);
         if (block) {
           await beginReview(block);
         }
@@ -706,9 +717,11 @@ export default function ChatPanel({
     });
   }, [acceptReview, lastBackup, onReviewChrome, rejectReview, review, undoLast]);
 
-  /** Cancela el turno en curso (el proveedor corta en cuanto se interrumpe). */
+  /** B8 — Detener: aborta el turno JS y cancela el lado Rust (HTTP + kernel). */
   const stop = useCallback(() => {
     abortRef.current?.abort();
+    void cancelAiInFlight().catch(() => undefined);
+    void interruptKernel().catch(() => undefined);
     setNotice("Consulta cancelada.");
   }, []);
 

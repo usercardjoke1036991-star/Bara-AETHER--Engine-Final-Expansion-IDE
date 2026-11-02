@@ -67,6 +67,20 @@ export function codeBlocks(markdown: string): string[] {
     .filter((code) => code.length > 0);
 }
 
+/**
+ * B7 — primer fence etiquetado `bara` (no el primer fence de cualquier lenguaje).
+ * Sin etiqueta `bara` ⇒ null (Auto-Apply no inventa parches desde ```ts/```json).
+ */
+export function firstBaraCodeBlock(markdown: string): string | null {
+  const block = splitBlocks(markdown).find(
+    (item) =>
+      item.kind === "code" &&
+      item.language.toLowerCase() === "bara" &&
+      item.content.trim().length > 0,
+  );
+  return block ? block.content.trim() : null;
+}
+
 /** Convierte `código en línea` en elementos, sin interpretar nada más. */
 function renderInline(text: string): ReactNode[] {
   return text.split(/(`[^`]*`)/g).map((part, index) => {

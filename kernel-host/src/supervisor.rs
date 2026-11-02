@@ -6,6 +6,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -68,6 +69,8 @@ type StatusListener = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct KernelHost {
     slot: Arc<Mutex<Slot>>,
     listener: Arc<Mutex<Option<StatusListener>>>,
+    /// PID vivo sin tomar el candado largo de `call` (B8: Detener).
+    live_pid: Arc<AtomicU32>,
 }
 
 impl KernelHost {
@@ -117,7 +120,28 @@ impl KernelHost {
                 status: KernelStatus::Reiniciando,
             })),
             listener: Arc::new(Mutex::new(None)),
+            live_pid: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    /// B8 — corta el hijo en vuelo (p. ej. `local_complete`) sin esperar el
+    /// candado de `call`. Mata por PID y, si puede, relanza.
+    pub fn interrupt(&self) {
+        let pid = self.live_pid.swap(0, Ordering::SeqCst);
+        if pid != 0 {
+            terminate_pid(pid);
+        }
+        let Ok(mut guard) = self.slot.try_lock() else {
+            return;
+        };
+        if let Some(child) = guard.child.as_mut() {
+            terminate_tree(child);
+        }
+        guard.child = None;
+        guard.stdin = None;
+        guard.stdout = None;
+        self.publish(&mut guard, KernelStatus::Reiniciando);
+        let _ = self.relaunch(&mut guard);
     }
 
     pub fn listen(&self, listener: impl Fn(&str) + Send + Sync + 'static) {
@@ -167,6 +191,7 @@ impl KernelHost {
             }
             Err(TripError::Dead(error)) => {
                 guard.streak = guard.streak.saturating_add(1);
+                self.live_pid.store(0, Ordering::SeqCst);
                 if let Some(child) = guard.child.as_mut() {
                     terminate_tree(child);
                 }
@@ -188,6 +213,7 @@ impl KernelHost {
         }
         match spawn_child(&guard.exe) {
             Ok((child, stdin, stdout)) => {
+                self.live_pid.store(child.id(), Ordering::SeqCst);
                 guard.child = Some(child);
                 guard.stdin = Some(stdin);
                 guard.stdout = Some(stdout);
@@ -195,6 +221,7 @@ impl KernelHost {
                 Ok(())
             }
             Err(error) => {
+                self.live_pid.store(0, Ordering::SeqCst);
                 self.publish(guard, KernelStatus::Caido);
                 Err(error)
             }
@@ -408,7 +435,16 @@ fn spawn_child(
 /// Windows: `taskkill /F /T /PID`. Unix: el hijo es líder de grupo y
 /// `kill -KILL` apunta a ese grupo.
 pub fn terminate_tree(child: &mut Child) {
-    let pid = child.id();
+    terminate_pid(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Igual que `terminate_tree`, pero sólo con el PID (B8: interrupt sin candado).
+pub fn terminate_pid(pid: u32) {
+    if pid == 0 {
+        return;
+    }
     if cfg!(windows) {
         let mut kill = Command::new("taskkill");
         hide_console(&mut kill);
@@ -424,8 +460,6 @@ pub fn terminate_tree(child: &mut Child) {
             .stderr(Stdio::null())
             .status();
     }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 /// En Unix el hijo abre su propio grupo para poder matar a sus hijos con él.
