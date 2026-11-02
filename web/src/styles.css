@@ -30,6 +30,95 @@
   box-sizing: border-box;
 }
 
+/* Scrollbars discretas (ámbar/neutro oscuro) — paneles con overflow propio. */
+.activity-bar,
+.ws-projects,
+.workspace-tree,
+.side-search,
+.side-settings,
+.ai-log,
+.ai-diff,
+.ai-code-body,
+.ai-body:has(> .ai-settings),
+.zone-scroll,
+.welcome,
+.console-log,
+.kernel-console,
+.bara-editor .cm-scroller {
+  scrollbar-width: thin;
+  scrollbar-color: #3d4f63 #0b0f14;
+}
+
+.activity-bar::-webkit-scrollbar,
+.ws-projects::-webkit-scrollbar,
+.workspace-tree::-webkit-scrollbar,
+.side-search::-webkit-scrollbar,
+.side-settings::-webkit-scrollbar,
+.ai-log::-webkit-scrollbar,
+.ai-diff::-webkit-scrollbar,
+.ai-code-body::-webkit-scrollbar,
+.ai-body:has(> .ai-settings)::-webkit-scrollbar,
+.zone-scroll::-webkit-scrollbar,
+.welcome::-webkit-scrollbar,
+.console-log::-webkit-scrollbar,
+.kernel-console::-webkit-scrollbar,
+.bara-editor .cm-scroller::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.activity-bar::-webkit-scrollbar-thumb,
+.ws-projects::-webkit-scrollbar-thumb,
+.workspace-tree::-webkit-scrollbar-thumb,
+.side-search::-webkit-scrollbar-thumb,
+.side-settings::-webkit-scrollbar-thumb,
+.ai-log::-webkit-scrollbar-thumb,
+.ai-diff::-webkit-scrollbar-thumb,
+.ai-code-body::-webkit-scrollbar-thumb,
+.ai-body:has(> .ai-settings)::-webkit-scrollbar-thumb,
+.zone-scroll::-webkit-scrollbar-thumb,
+.welcome::-webkit-scrollbar-thumb,
+.console-log::-webkit-scrollbar-thumb,
+.kernel-console::-webkit-scrollbar-thumb,
+.bara-editor .cm-scroller::-webkit-scrollbar-thumb {
+  background: #3d4f63;
+  border-radius: 4px;
+}
+
+.activity-bar::-webkit-scrollbar-thumb:hover,
+.ws-projects::-webkit-scrollbar-thumb:hover,
+.workspace-tree::-webkit-scrollbar-thumb:hover,
+.side-search::-webkit-scrollbar-thumb:hover,
+.side-settings::-webkit-scrollbar-thumb:hover,
+.ai-log::-webkit-scrollbar-thumb:hover,
+.ai-diff::-webkit-scrollbar-thumb:hover,
+.ai-code-body::-webkit-scrollbar-thumb:hover,
+.ai-body:has(> .ai-settings)::-webkit-scrollbar-thumb:hover,
+.zone-scroll::-webkit-scrollbar-thumb:hover,
+.welcome::-webkit-scrollbar-thumb:hover,
+.console-log::-webkit-scrollbar-thumb:hover,
+.kernel-console::-webkit-scrollbar-thumb:hover,
+.bara-editor .cm-scroller::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 70%, #3d4f63);
+}
+
+.activity-bar::-webkit-scrollbar-track,
+.ws-projects::-webkit-scrollbar-track,
+.workspace-tree::-webkit-scrollbar-track,
+.side-search::-webkit-scrollbar-track,
+.side-settings::-webkit-scrollbar-track,
+.ai-log::-webkit-scrollbar-track,
+.ai-diff::-webkit-scrollbar-track,
+.ai-code-body::-webkit-scrollbar-track,
+.ai-body:has(> .ai-settings)::-webkit-scrollbar-track,
+.zone-scroll::-webkit-scrollbar-track,
+.welcome::-webkit-scrollbar-track,
+.console-log::-webkit-scrollbar-track,
+.kernel-console::-webkit-scrollbar-track,
+.bara-editor .cm-scroller::-webkit-scrollbar-track {
+  background: #0b0f14;
+}
+
 html {
   height: 100%;
   width: 100%;
@@ -228,12 +317,18 @@ body,
   background: var(--bg);
 }
 
-.ide-side .workspace,
+.ide-side .workspace {
+  flex: 1;
+  min-height: 0;
+  /* El scroll vive en PROYECTOS / ARCHIVOS, no en el shell del workspace. */
+  overflow: hidden;
+}
+
 .ide-side .side-search,
 .ide-side .side-settings {
   flex: 1;
   min-height: 0;
-  overflow: auto; /* único scroll de la zona lateral */
+  overflow: auto;
 }
 
 .side-head {
@@ -367,6 +462,7 @@ body,
 
 .bottom-panel.open {
   height: var(--bottom-h, 35%);
+  min-height: 0;
 }
 
 .bottom-panel.open.maximized {
@@ -419,7 +515,9 @@ body,
 .zone-scroll {
   flex: 1;
   min-height: 0;
-  overflow: auto; /* único scroll de la zona del panel inferior */
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
 .expert-embed h3 {
@@ -748,9 +846,11 @@ body,
 }
 
 .ws-projects {
-  flex: 0 0 auto;
-  max-height: 42%;
-  overflow: auto;
+  flex: 0 1 auto;
+  max-height: 40%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--line);
 }
@@ -834,8 +934,12 @@ body,
 }
 
 .ws-files {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.35rem;
   min-height: 0;
+  overflow: hidden;
 }
 
 .ws-section-head {
@@ -860,10 +964,8 @@ body,
   font-size: 0.75rem;
 }
 
-.workspace-tree {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
+.workspace-note {
+  flex-shrink: 0;
 }
 
 .workspace-head {
@@ -1048,9 +1150,10 @@ body,
 }
 
 .workspace-tree {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   padding-top: 0.35rem;
   border-top: 1px solid var(--line);
 }
@@ -1245,6 +1348,7 @@ body,
 .bara-editor {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   border: none;
   border-radius: 0;
@@ -1253,6 +1357,11 @@ body,
 
 .bara-editor .cm-editor {
   height: 100%;
+  max-height: 100%;
+}
+
+.bara-editor .cm-scroller {
+  overflow: auto !important;
 }
 
 .cm-ghost {
@@ -1533,15 +1642,26 @@ td {
   flex-direction: column;
   gap: 0.5rem;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Modo ajustes: el cuerpo del diálogo scrollea; el chrome del chat no. */
+.ai-body:has(> .ai-settings) {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .ai-log {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.6rem;
-  min-height: 0;
-  overflow: auto;
+  /* Evita que el dock de review o el composer aplasten el log a 0px. */
+  min-height: 4.5rem;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .ai-welcome p {
@@ -1701,8 +1821,9 @@ td {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  flex-shrink: 0;
-  min-height: 0;
+  flex: 0 0 auto;
+  min-height: auto;
+  min-width: 0;
 }
 
 .ai-pending-bar {
@@ -1725,9 +1846,12 @@ td {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  flex-shrink: 0;
+  flex: 0 1 auto;
   min-height: 0;
-  max-height: 42%;
+  min-width: 0;
+  /* Cap para no robar el alto del log + composer en ventanas ~500px. */
+  max-height: min(42%, 12rem);
+  overflow: hidden;
   padding: 0.35rem 0 0.15rem;
   border-top: 1px solid var(--line);
   background: var(--pane);
@@ -1777,8 +1901,10 @@ td {
 
 .ai-settings {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .ai-field {
@@ -2560,9 +2686,11 @@ tr.vb-selected td {
 
 .ai-review {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.35rem;
   min-height: 0;
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: none;
@@ -2599,12 +2727,19 @@ tr.vb-selected td {
   min-width: 5.5rem;
 }
 
+.ai-review > .muted {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 0.72rem;
+}
+
 .ai-diff {
   flex: 1 1 auto;
-  max-height: min(10rem, 22vh);
-  min-height: 3rem;
+  max-height: none;
+  min-height: 3.5rem;
   margin: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   font-size: 0.8rem;
 }
 
@@ -2679,6 +2814,14 @@ tr.vb-selected td {
 
   .bottom-panel {
     max-height: 45%;
+  }
+
+  .ai-review-dock {
+    max-height: 40%;
+  }
+
+  .ai-input {
+    min-height: 2.6rem;
   }
 }
 
