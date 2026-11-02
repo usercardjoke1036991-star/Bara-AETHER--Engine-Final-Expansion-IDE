@@ -14,7 +14,7 @@ export default function BrandMark({
   /** `mark` chrome; `avatar` círculo en chat; `rail` Activity. */
   variant?: "mark" | "avatar" | "rail";
 }) {
-  const radius = variant === "avatar" ? "50%" : variant === "rail" ? 8 : 8;
+  const radius = variant === "avatar" ? "50%" : 8;
   return (
     <img
       className={`brand-mark brand-mark-${variant} ${className}`.trim()}

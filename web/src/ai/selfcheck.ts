@@ -153,10 +153,15 @@ const CHECKS: Check[] = [
     run: () => {
       const problems = configProblems(readyConfig());
       expect(problems.length === 0, `la configuración base no es válida: ${problems.join(" ")}`);
-      expect(DEFAULT_CONFIG.provider === "anthropic", "el proveedor inicial debe ser Anthropic");
+      expect(DEFAULT_CONFIG.provider === "deepseek", "el proveedor inicial debe ser DeepSeek");
       expect(
-        configProblems(DEFAULT_CONFIG).length === 1,
-        "sin clave debe haber exactamente un problema (la clave)",
+        DEFAULT_CONFIG.baseUrl === "https://api.deepseek.com",
+        "la raíz de fábrica debe ser https://api.deepseek.com",
+      );
+      expect(DEFAULT_CONFIG.model === "", "el modelo de fábrica debe quedar vacío hasta listar");
+      expect(
+        configProblems(DEFAULT_CONFIG).length >= 2,
+        "sin clave ni modelo debe haber al menos dos problemas",
       );
       const blocked = chatSendGate(
         { ...readyConfig(), apiKey: "", hasKey: false },

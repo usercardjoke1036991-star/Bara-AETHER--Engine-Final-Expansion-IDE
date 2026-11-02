@@ -33,9 +33,18 @@ export function normalizeWorkspacePath(path: string | null | undefined): string 
   return stripVerbatimPrefix(path ?? "");
 }
 
+/** Quita barras finales sin regex cuantificada (evita backtracking). */
+function stripTrailingPathSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 /** Clave de comparación: en Windows, minúsculas ASCII. */
 export function pathKey(path: string | null | undefined): string {
-  const normalized = normalizeWorkspacePath(path).replace(/\/+$/, "");
+  const normalized = stripTrailingPathSlashes(normalizeWorkspacePath(path));
   return isWindowsHost() ? normalized.toLowerCase() : normalized;
 }
 

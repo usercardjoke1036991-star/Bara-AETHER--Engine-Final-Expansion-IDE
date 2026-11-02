@@ -1170,23 +1170,36 @@ mod tests {
         let second = scratch("estante-b");
         fs::write(first.join("a.bara"), "uno").expect("a");
         fs::write(second.join("b.bara"), "dos").expect("b");
-        let first_s = first.to_str().expect("utf-8").to_string();
-        let second_s = second.to_str().expect("utf-8").to_string();
+        // Misma forma canónica que guarda `admit` (sin `\\?\`, barras `/`).
+        let first_s = path_to_api(&first);
+        let second_s = path_to_api(&second);
 
         let active = ActiveWorkspace::bootstrap();
         let _ = active.set(first_s.clone());
         let _ = active.set(second_s.clone());
-        assert_eq!(active.get().expect("activa"), second_s);
+        assert_eq!(
+            normalize_root_key(&active.get().expect("activa")),
+            normalize_root_key(&second_s)
+        );
         assert_eq!(active.read_path("b.bara").expect("b").source, "dos");
         assert!(active.read_path("a.bara").is_err());
 
         let shelf = active.list().expect("estante");
-        assert!(shelf.roots.iter().any(|slot| slot.path == first_s));
-        assert!(shelf.roots.iter().any(|slot| slot.path == second_s));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&first_s)));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&second_s)));
         let first_id = root_id(&first_s);
         assert_ne!(first_id, root_id(&second_s));
         active.activate(&first_id).expect("volver");
-        assert_eq!(active.get().expect("primera"), first_s);
+        assert_eq!(
+            normalize_root_key(&active.get().expect("primera")),
+            normalize_root_key(&first_s)
+        );
         assert_eq!(active.read_path("a.bara").expect("a").source, "uno");
         assert!(active.read_path("b.bara").is_err());
 
@@ -1275,25 +1288,31 @@ mod tests {
         let mut paths = Vec::new();
         for index in 0..ROOT_CAP {
             let dir = scratch(&format!("lru-{index}"));
-            let path = resolve_root(dir.to_str().expect("utf-8"))
-                .expect("canon")
-                .display()
-                .to_string();
+            let path = path_to_api(&resolve_root(dir.to_str().expect("utf-8")).expect("canon"));
             assert!(active.set(path.clone()).is_none());
             paths.push((dir, path));
         }
         assert!(active.set(paths[0].1.clone()).is_none());
         let extra_dir = scratch("lru-extra");
-        let extra = resolve_root(extra_dir.to_str().expect("utf-8"))
-            .expect("canon")
-            .display()
-            .to_string();
+        let extra = path_to_api(&resolve_root(extra_dir.to_str().expect("utf-8")).expect("canon"));
         let evicted = active.set(extra.clone()).expect("la novena expulsa");
-        assert_eq!(evicted, paths[1].1);
+        assert_eq!(
+            normalize_root_key(&evicted),
+            normalize_root_key(&paths[1].1)
+        );
         let shelf = active.list().expect("estante");
-        assert!(shelf.roots.iter().all(|slot| slot.path != paths[1].1));
-        assert!(shelf.roots.iter().any(|slot| slot.path == paths[0].1));
-        assert!(shelf.roots.iter().any(|slot| slot.path == extra));
+        assert!(shelf
+            .roots
+            .iter()
+            .all(|slot| normalize_root_key(&slot.path) != normalize_root_key(&paths[1].1)));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&paths[0].1)));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&extra)));
 
         for (dir, _) in paths {
             fs::remove_dir_all(dir).expect("limpiar");
@@ -1308,7 +1327,10 @@ mod tests {
         let c = normalize_root_key("C:/Users/Vexor/Downloads/BAR");
         assert_eq!(a, b);
         assert_eq!(b, c);
-        assert_eq!(root_id(r"\\?\C:\Users\Vexor\Downloads\BAR"), root_id("C:/Users/Vexor/Downloads/BAR"));
+        assert_eq!(
+            root_id(r"\\?\C:\Users\Vexor\Downloads\BAR"),
+            root_id("C:/Users/Vexor/Downloads/BAR")
+        );
         assert!(!path_to_api(Path::new(r"\\?\C:\foo\bar")).contains(r"\\?\"));
     }
 }
