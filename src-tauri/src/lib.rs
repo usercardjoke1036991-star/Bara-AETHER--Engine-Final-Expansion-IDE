@@ -258,7 +258,11 @@ fn live_map_snapshot(
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
-    kernel_call(&kernel, "live_map_snapshot", json!({ "root": state.get()? }))
+    kernel_call(
+        &kernel,
+        "live_map_snapshot",
+        json!({ "root": state.get()? }),
+    )
 }
 
 /// §9.4 — impacto estimado («afecta a N archivos y M tests»).
