@@ -11,6 +11,7 @@ import {
   shortPath,
   type RecentProject,
 } from "../projectRecents";
+import { ICON_FOLDER, WorkspaceIcon } from "../shell/WorkspaceIcons";
 import FileTree from "./FileTree";
 import {
   workspaceActivate,
@@ -155,7 +156,10 @@ export default function WorkspaceSidebar({
                     title={slot.path}
                     onClick={() => activate(slot)}
                   >
-                    <span className="shelf-name">{slot.name}</span>
+                    <span className="shelf-main">
+                      <WorkspaceIcon src={ICON_FOLDER} label="Proyecto" />
+                      <span className="shelf-name">{slot.name}</span>
+                    </span>
                     <span className="shelf-path muted">{shortPath(slot.path)}</span>
                   </button>
                   <button
@@ -195,14 +199,9 @@ export default function WorkspaceSidebar({
           {root ? shortPath(root, 52) : "Sin carpeta activa"}
         </p>
 
-        {tree ? (
-          <p className="workspace-meta" title={tree.root}>
-            {tree.name} · {tree.files} .bara
-            {tree.truncated ? " · vista recortada" : ""}
-          </p>
-        ) : (
-          <p className="workspace-meta">Sin explorador cargado.</p>
-        )}
+        {tree?.truncated ? (
+          <p className="workspace-meta">Vista recortada</p>
+        ) : null}
 
         <div className="workspace-tree">
           {loading ? (

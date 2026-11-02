@@ -7,6 +7,13 @@
 import { useState } from "react";
 
 import { pathKey, pathsEqual } from "../paths";
+import {
+  ICON_FILE,
+  ICON_FILE_BARA,
+  ICON_FOLDER,
+  ICON_FOLDER_OPEN,
+  WorkspaceIcon,
+} from "../shell/WorkspaceIcons";
 import type { WorkspaceEntry } from "../workspace";
 
 interface FileTreeProps {
@@ -67,11 +74,11 @@ function FileTreeNode({ entry, activePath, onOpen, depth }: FileTreeNodeProps) {
           onClick={() => setOpen((current) => !current)}
           title={entry.path}
         >
-          <span className="tree-glyph" aria-hidden="true">
-            {open ? "▾" : "▸"}
-          </span>
+          <WorkspaceIcon
+            src={open ? ICON_FOLDER_OPEN : ICON_FOLDER}
+            label={open ? "Carpeta abierta" : "Carpeta"}
+          />
           <span className="tree-name">{entry.name}</span>
-          <span className="tree-count">{entry.children.length}</span>
         </button>
         {open ? (
           <FileTree
@@ -99,9 +106,10 @@ function FileTreeNode({ entry, activePath, onOpen, depth }: FileTreeNodeProps) {
             : `${entry.path} (sólo los documentos .bara se editan)`
         }
       >
-        <span className="tree-glyph" aria-hidden="true">
-          {entry.bara ? "◈" : "·"}
-        </span>
+        <WorkspaceIcon
+          src={entry.bara ? ICON_FILE_BARA : ICON_FILE}
+          label={entry.bara ? "Documento .bara" : "Archivo"}
+        />
         <span className="tree-name">{entry.name}</span>
       </button>
     </li>

@@ -777,17 +777,37 @@ body,
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
+  gap: 2px;
   text-align: left;
-  padding: 0.35rem 0.45rem;
+  padding: 0.4rem 0.5rem;
   border: 1px solid transparent;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
-  font-size: 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.shelf-main {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.ws-icon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  display: block;
+  object-fit: contain;
 }
 
 .shelf-name {
   font-weight: 600;
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -795,11 +815,15 @@ body,
 }
 
 .shelf-path {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  padding-left: calc(14px + 0.4rem);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  opacity: 0.72;
+  color: var(--muted);
 }
 
 .shelf-active,
@@ -832,9 +856,9 @@ body,
 .ws-section-head h2 {
   margin: 0;
   flex: 1;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   color: var(--accent);
   text-transform: uppercase;
 }
@@ -987,12 +1011,24 @@ body,
 }
 
 .workspace-root {
-  display: flex;
-  gap: 0.3rem;
+  display: block;
+  margin: 0;
+  padding: 0 0.15rem;
+  font-size: 0.62rem;
+  line-height: 1.3;
+  color: var(--muted);
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-root.path {
+  font-size: 0.62rem;
 }
 
 .workspace-root .path {
-  font-size: 0.72rem;
+  font-size: 0.62rem;
 }
 
 .workspace-root button {
@@ -1034,22 +1070,23 @@ body,
 }
 
 .file-tree .file-tree {
-  margin-left: 0.45rem;
-  padding-left: 0.4rem;
-  border-left: 1px dotted var(--line);
+  margin-left: 0.55rem;
+  padding-left: 0.45rem;
+  border-left: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
 }
 
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.4rem;
   width: 100%;
-  padding: 0.18rem 0.25rem;
+  padding: 0.22rem 0.3rem;
   border: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text);
-  font-size: 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.25;
   text-align: left;
 }
 
@@ -1063,6 +1100,10 @@ body,
   opacity: 0.45;
 }
 
+.tree-row .ws-icon {
+  flex: 0 0 14px;
+}
+
 .tree-glyph {
   flex: 0 0 0.8rem;
   color: var(--muted);
@@ -1074,7 +1115,11 @@ body,
 }
 
 .tree-file.active {
-  background: #1b2a3b;
+  background: color-mix(in srgb, var(--brand-green) 14%, #1b2a3b);
+  color: var(--text);
+}
+
+.tree-file.active .tree-name {
   color: var(--accent);
 }
 
@@ -1082,6 +1127,7 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 .tree-count {
