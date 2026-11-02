@@ -296,9 +296,16 @@ fn patch_verified(path: &str, patch: &str) -> (bool, String) {
             Err(reason) => (false, reason),
         }
     } else {
-        match shoresh_unverified_reason(patch) {
-            None => (true, String::new()),
-            Some(reason) => (false, reason),
+        // A4/M7: en no-.bara el badge es equilibrado/sin choque (Belnap), no «verificado».
+        // `verified=false` evita Auto-Apply ciego; Aceptar manual + backup siguen.
+        let tree = syntax::parse(language_of_path(path), patch);
+        if !tree.balanced {
+            (
+                false,
+                "propuesta desequilibrada (sin choque no aplica; Aceptar a mano disponible si el juicio lo permite)".to_string(),
+            )
+        } else {
+            (false, String::new())
         }
     }
 }
@@ -730,5 +737,36 @@ mod tests {
             kept.len()
         );
         assert!(!kept.is_empty());
+    }
+
+    #[test]
+    fn a4_diff_backup_undo_en_archivo_no_bara() {
+        let root = scratch();
+        fs::create_dir_all(root.join("src")).expect("src");
+        fs::write(root.join("src/lib.rs"), "fn alpha() {}\n").expect("semilla");
+        let root_text = root.display().to_string();
+        let host = "fn alpha() {}\n";
+        let patch = "fn beta() {}\n";
+        let preview = judge(&root_text, "src/lib.rs", 2, host, patch).expect("juicio");
+        assert!(!preview.preview_diff.is_empty(), "debe haber previewDiff");
+        assert!(!preview.verified, "no-.bara no usa badge verificado");
+        assert!(!preview.can_apply, "Auto-Apply ciego bloqueado en no-.bara");
+        let written = confirm(
+            &root_text,
+            "src/lib.rs",
+            2,
+            host,
+            patch,
+            &preview.judgment_id,
+        )
+        .expect("aceptar");
+        assert!(written.applied);
+        assert!(written.backup_path.starts_with(".bara-backup/"));
+        let on_disk = fs::read_to_string(root.join("src/lib.rs")).expect("disco");
+        assert!(on_disk.contains("beta"));
+        let undone = undo(&root_text, "src/lib.rs", &written.backup_path).expect("deshacer");
+        assert!(undone.applied);
+        let restored = fs::read_to_string(root.join("src/lib.rs")).expect("restored");
+        assert_eq!(restored, host);
     }
 }

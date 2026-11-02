@@ -152,10 +152,18 @@ function verifyLabel(status: BaraVerifyStatus): string {
   }
 }
 
-/** Bloque de código con acciones: copiar, insignia y enviar al editor Shoresh. */
+function nonBaraBalanceLabel(code: string): "equilibrado" | "sin choque" {
+  const open = (code.match(/[{[(]/g) ?? []).length;
+  const close = (code.match(/[}\])]/g) ?? []).length;
+  return open === close ? "equilibrado" : "sin choque";
+}
+
+/** Bloque de código con acciones: copiar, insignia y enviar al editor. */
 function CodeBlock({ block, onUseCode }: { block: Block; onUseCode?: (code: string) => void }) {
-  const isBara = block.language.toLowerCase() === "bara";
+  const lang = block.language.toLowerCase();
+  const isBara = lang === "bara";
   const [status, setStatus] = useState<BaraVerifyStatus>(isBara ? "pending" : "unverified");
+  const otherBadge = isBara ? null : nonBaraBalanceLabel(block.content);
 
   useEffect(() => {
     if (!isBara) {
@@ -190,16 +198,27 @@ function CodeBlock({ block, onUseCode }: { block: Block; onUseCode?: (code: stri
           >
             {verifyLabel(status)}
           </span>
+        ) : otherBadge ? (
+          <span
+            className={
+              otherBadge === "equilibrado" ? "ai-badge ai-badge-ok" : "ai-badge ai-badge-warn"
+            }
+            title="A4/M7: en no-.bara el badge es equilibrado/sin choque"
+          >
+            {otherBadge}
+          </span>
         ) : null}
         <span className="grow" />
         <CopyButton className="ai-copy-code" label="Copiar" text={block.content} />
-        {onUseCode && isBara && status !== "pending" ? (
+        {onUseCode && (!isBara || status !== "pending") ? (
           <button
             type="button"
             title={
-              status === "verified"
-                ? "Abrir diff en el editor"
-                : "Abrir diff (no verificado: podrás Aceptar a mano)"
+              isBara
+                ? status === "verified"
+                  ? "Abrir diff en el editor"
+                  : "Abrir diff (no verificado: podrás Aceptar a mano)"
+                : "Abrir diff (equilibrado/sin choque; Aceptar con respaldo)"
             }
             onClick={() => onUseCode(block.content)}
           >

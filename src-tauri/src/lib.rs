@@ -595,10 +595,11 @@ fn workspace_read_document(
     path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    workspace::read(&state.get()?, &path)
+    // A4: cualquier extensión editable del lote (no sólo `.bara`).
+    workspace::read_text(&state.get()?, &path)
 }
 
-/// Guarda un `.bara` relativo a la raíz activa y devuelve el documento persistido.
+/// Guarda un documento editable relativo a la raíz activa (`.bara` u otros del lote).
 #[tauri::command]
 fn workspace_write_document(
     window: tauri::WebviewWindow,
@@ -609,9 +610,54 @@ fn workspace_write_document(
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
     window_guard::require(&window, window_guard::WRITE)?;
-    let document = workspace::write(&state.get()?, &path, &source, expected_hash.as_deref())?;
+    let document =
+        workspace::write_source_checked(&state.get()?, &path, &source, expected_hash.as_deref())?;
     emit_workspace_file_changed(&app, &document.path);
     Ok(document)
+}
+
+/// Crea un archivo o carpeta relativo dentro de la jaula activa.
+#[tauri::command]
+fn workspace_create_entry(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    path: String,
+    kind: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceDocument, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    let document = workspace::create_entry(&state.get()?, &path, &kind)?;
+    emit_workspace_file_changed(&app, &document.path);
+    Ok(document)
+}
+
+/// Renombra o mueve una entrada relativa dentro de la jaula activa.
+#[tauri::command]
+fn workspace_rename_entry(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    from: String,
+    to: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<(), String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    workspace::rename_entry(&state.get()?, &from, &to)?;
+    emit_workspace_file_changed(&app, &to);
+    Ok(())
+}
+
+/// Borra (papelera `.bara-trash/`) tras confirmación en el front.
+#[tauri::command]
+fn workspace_delete_entry(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<String, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    let trash = workspace::delete_entry(&state.get()?, &path)?;
+    emit_workspace_file_changed(&app, &path);
+    Ok(trash)
 }
 
 /// Avisa a todas las ventanas de que un archivo del workspace cambió en disco.
@@ -1331,6 +1377,9 @@ pub fn run() {
             workspace_tree,
             workspace_read_document,
             workspace_write_document,
+            workspace_create_entry,
+            workspace_rename_entry,
+            workspace_delete_entry,
             workspace_open_dialog,
             workspace_roots,
             workspace_activate,
@@ -1424,6 +1473,13 @@ mod ipc_boundary {
         assert!(handler.contains("propose_editor_patch"));
         assert!(handler.contains("open_devtools_window"));
         assert!(handler.contains("workspace_activate"));
+        assert!(handler.contains("workspace_create_entry"));
+        assert!(handler.contains("workspace_rename_entry"));
+        assert!(handler.contains("workspace_delete_entry"));
+        assert!(
+            include_str!("lib.rs").contains("\"workspace-root-changed\""),
+            "activar/reabrir debe emitir workspace-root-changed"
+        );
         assert!(handler.contains("workspace_reopen"));
         assert!(handler.contains("transmute_workspace"));
         assert!(handler.contains("inspect_media_dialog"));
@@ -1472,6 +1528,9 @@ mod ipc_boundary {
             "fn workspace_tree(",
             "fn workspace_read_document(",
             "fn workspace_write_document(",
+            "fn workspace_create_entry(",
+            "fn workspace_rename_entry(",
+            "fn workspace_delete_entry(",
             "fn get_local_completions(",
             "fn get_workspace_topology_graph(",
             "fn workspace_source_text(",

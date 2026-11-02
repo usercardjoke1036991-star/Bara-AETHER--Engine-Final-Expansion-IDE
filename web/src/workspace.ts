@@ -133,7 +133,7 @@ export function workspaceReopen(path: string): Promise<WorkspaceShelf> {
   return invoke<WorkspaceShelf>("workspace_reopen", { path });
 }
 
-/** Guarda un `.bara` relativo a la raíz activa y devuelve lo persistido. */
+/** Guarda un documento editable relativo a la raíz activa y devuelve lo persistido. */
 export function workspaceWriteDocument(
   path: string,
   source: string,
@@ -144,4 +144,24 @@ export function workspaceWriteDocument(
     source,
     expectedHash: expectedHash ?? null,
   });
+}
+
+/** Crea archivo (`file`) o carpeta (`dir`) relativo a la raíz activa. */
+export function workspaceCreateEntry(
+  path: string,
+  kind: "file" | "dir",
+): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_create_entry", { path, kind });
+}
+
+/** Renombra o mueve dentro de la jaula. */
+export function workspaceRenameEntry(from: string, to: string): Promise<void> {
+  return invoke<void>("workspace_rename_entry", { from, to });
+}
+
+/**
+ * Borra tras confirmación del UI. Devuelve ruta en `.bara-trash/` si hubo papelera.
+ */
+export function workspaceDeleteEntry(path: string): Promise<string> {
+  return invoke<string>("workspace_delete_entry", { path });
 }

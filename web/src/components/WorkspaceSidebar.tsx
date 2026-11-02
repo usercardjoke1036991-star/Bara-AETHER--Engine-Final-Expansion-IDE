@@ -31,6 +31,11 @@ interface WorkspaceSidebarProps {
   onClone: () => void;
   onRefresh: () => void;
   onOpenFile: (entry: WorkspaceEntry) => void;
+  /** A5: crear / renombrar / borrar dentro de la jaula. */
+  onCreateFile?: () => void;
+  onCreateDir?: () => void;
+  onRenameActive?: () => void;
+  onDeleteActive?: () => void;
 }
 
 /** Panel lateral: multi-proyecto + árbol del activo. */
@@ -43,6 +48,10 @@ export default function WorkspaceSidebar({
   onClone,
   onRefresh,
   onOpenFile,
+  onCreateFile,
+  onCreateDir,
+  onRenameActive,
+  onDeleteActive,
 }: WorkspaceSidebarProps) {
   const [shelf, setShelf] = useState<WorkspaceShelf | null>(null);
   const [recents, setRecents] = useState<RecentProject[]>(() => loadRecents().roots);
@@ -189,6 +198,41 @@ export default function WorkspaceSidebar({
           <h2 title={root || undefined}>ARCHIVOS</h2>
         </div>
 
+        <div className="workspace-actions ws-file-ops">
+          <button
+            type="button"
+            disabled={loading || root.length === 0 || !onCreateFile}
+            onClick={() => onCreateFile?.()}
+            title="Crear archivo en la jaula"
+          >
+            Nuevo
+          </button>
+          <button
+            type="button"
+            disabled={loading || root.length === 0 || !onCreateDir}
+            onClick={() => onCreateDir?.()}
+            title="Crear carpeta en la jaula"
+          >
+            Carpeta
+          </button>
+          <button
+            type="button"
+            disabled={loading || !activePath || !onRenameActive}
+            onClick={() => onRenameActive?.()}
+            title="Renombrar o mover la entrada activa"
+          >
+            Renombrar
+          </button>
+          <button
+            type="button"
+            disabled={loading || !activePath || !onDeleteActive}
+            onClick={() => onDeleteActive?.()}
+            title="Borrar (pide confirmación; papelera .bara-trash)"
+          >
+            Borrar
+          </button>
+        </div>
+
         {tree?.truncated ? (
           <p className="workspace-meta">Vista recortada</p>
         ) : null}
@@ -204,8 +248,9 @@ export default function WorkspaceSidebar({
         </div>
 
         <p className="workspace-note">
-          Se excluyen <code>target/</code>, <code>node_modules/</code> y{" "}
-          <code>.git/</code>. Sólo se editan documentos <code>.bara</code>.
+          Se excluyen <code>target/</code>, <code>node_modules/</code>,{" "}
+          <code>.git/</code>, <code>.bara-backup/</code> y <code>.bara-trash/</code>.
+          Textos y otros lenguajes del lote se editan con diff y respaldo.
         </p>
       </section>
     </aside>

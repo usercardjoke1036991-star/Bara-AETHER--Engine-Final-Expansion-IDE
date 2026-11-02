@@ -65,7 +65,13 @@ pub fn normalize_root_key(path: &str) -> String {
 }
 
 /// Directorios que nunca se enumeran (artefactos y metadatos del repositorio).
-const EXCLUDED_DIRS: [&str; 4] = ["target", "node_modules", ".git", ".bara-backup"];
+const EXCLUDED_DIRS: [&str; 5] = [
+    "target",
+    "node_modules",
+    ".git",
+    ".bara-backup",
+    ".bara-trash",
+];
 
 /// Cota de profundidad del árbol (evita ciclos patológicos de junctions).
 const MAX_DEPTH: usize = 24;
@@ -545,17 +551,14 @@ pub fn open_document(root: &str, path: &str) -> Result<WorkspaceDocument, String
     }
 }
 
-/// Extensiones que el grafo y el salto al editor pueden leer. La escritura sigue
-/// siendo sólo `.bara`.
-const SOURCE_EXTENSIONS: [&str; 14] = [
-    "bara", "rs", "py", "go", "sol", "c", "h", "cpp", "cc", "hpp", "js", "jsx", "ts", "tsx",
-];
-
-/// Extensiones de texto que el asistente puede leer (solo lectura).
-const ASSISTANT_EXTENSIONS: [&str; 22] = [
+/// Extensiones editables en el IDE (lectura/escritura en jaula + diff/backup).
+const SOURCE_EXTENSIONS: [&str; 22] = [
     "bara", "rs", "py", "go", "sol", "c", "h", "cpp", "cc", "hpp", "js", "jsx", "ts", "tsx", "md",
     "txt", "json", "toml", "yaml", "yml", "css", "html",
 ];
+
+/// Extensiones de texto que el asistente puede leer (solo lectura).
+const ASSISTANT_EXTENSIONS: [&str; 22] = SOURCE_EXTENSIONS;
 
 /// ¿El archivo es una fuente del proyecto, dentro de la jaula de lectura?
 pub(crate) fn is_project_source(path: &Path) -> bool {
@@ -568,11 +571,14 @@ pub(crate) fn is_project_source(path: &Path) -> bool {
         })
 }
 
-/// Lee una fuente del proyecto (`.bara` o un lenguaje del grafo).
+/// Lee una fuente del proyecto (`.bara` o un lenguaje del lote editable).
 ///
 /// Misma jaula que [`read`]: ruta relativa, sin `..`, y la forma canónica tiene
-/// que seguir dentro de la raíz. No escribe.
+/// que seguir dentro de la raíz. No escribe. Bloquea rutas sensibles (M6).
 pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
     let canonical_root = resolve_root(root)?;
     let canonical = resolve_member(&canonical_root, relative)?;
     if !is_project_source(&canonical) {
@@ -722,6 +728,9 @@ pub fn write_source_checked(
     source: &str,
     expected_hash: Option<&str>,
 ) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
     let canonical_root = resolve_root(root)?;
     if !is_project_source(Path::new(relative)) {
         return Err(format!("«{relative}» no es una fuente del proyecto"));
@@ -745,6 +754,122 @@ pub fn write_source_checked(
         file_name(&canonical),
         source.to_string(),
     ))
+}
+
+/// Crea un archivo de texto vacío (o carpeta) dentro de la jaula.
+pub fn create_entry(root: &str, relative: &str, kind: &str) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
+    let canonical_root = resolve_root(root)?;
+    let kind = kind.trim().to_ascii_lowercase();
+    if kind == "dir" || kind == "directory" {
+        let canonical = resolve_for_write(&canonical_root, relative)?;
+        if canonical.exists() {
+            return Err(format!("«{relative}» ya existe"));
+        }
+        fs::create_dir_all(&canonical)
+            .map_err(|err| format!("no se pudo crear la carpeta «{relative}»: {err}"))?;
+        return Ok(document_of(
+            path_to_api(&canonical_root),
+            normalize_relative(relative),
+            file_name(&canonical),
+            String::new(),
+        ));
+    }
+    if kind != "file" {
+        return Err("el tipo debe ser file o dir".to_string());
+    }
+    if !is_project_source(Path::new(relative)) {
+        return Err(format!("«{relative}» no es una extensión editable del proyecto"));
+    }
+    let canonical = resolve_for_write(&canonical_root, relative)?;
+    if canonical.exists() {
+        return Err(format!("«{relative}» ya existe"));
+    }
+    write_atomic(&canonical, "")
+        .map_err(|err| format!("no se pudo crear «{relative}»: {err}"))?;
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(relative),
+        file_name(&canonical),
+        String::new(),
+    ))
+}
+
+/// Renombra o mueve una entrada dentro de la jaula (sin cruzar symlinks).
+pub fn rename_entry(root: &str, from: &str, to: &str) -> Result<(), String> {
+    if assistant_path_denied(from) || assistant_path_denied(to) {
+        return Err("ruta sensible: operación bloqueada".to_string());
+    }
+    let canonical_root = resolve_root(root)?;
+    let source = resolve_member(&canonical_root, from)?;
+    match fs::symlink_metadata(&source) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!("«{from}» es un enlace simbólico; no se renombra"));
+        }
+        Ok(_) => {}
+        Err(err) => return Err(format!("no se pudo inspeccionar «{from}»: {err}")),
+    }
+    let destination = resolve_for_write(&canonical_root, to)?;
+    if destination.exists() {
+        return Err(format!("«{to}» ya existe"));
+    }
+    if let Some(parent) = destination.parent() {
+        if !parent.exists() {
+            return Err(format!("el directorio destino de «{to}» no existe"));
+        }
+    }
+    fs::rename(&source, &destination)
+        .map_err(|err| format!("no se pudo renombrar «{from}» → «{to}»: {err}"))?;
+    Ok(())
+}
+
+/// Mueve a `.bara-trash/` (papelera local) o borra si no se puede mover.
+pub fn delete_entry(root: &str, relative: &str) -> Result<String, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
+    let normalized = normalize_relative(relative);
+    if normalized.is_empty() || normalized == "." {
+        return Err("no se puede borrar la raíz del workspace".to_string());
+    }
+    let canonical_root = resolve_root(root)?;
+    let source = resolve_member(&canonical_root, relative)?;
+    match fs::symlink_metadata(&source) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!("«{relative}» es un enlace simbólico; no se borra"));
+        }
+        Ok(_) => {}
+        Err(err) => return Err(format!("no se pudo inspeccionar «{relative}»: {err}")),
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let safe = normalized.replace('/', "__");
+    let trash_dir = canonical_root.join(".bara-trash");
+    fs::create_dir_all(&trash_dir)
+        .map_err(|err| format!("no se pudo preparar la papelera: {err}"))?;
+    let trash_name = format!("{stamp}_{safe}");
+    let trash_path = trash_dir.join(&trash_name);
+    if !trash_path.starts_with(&canonical_root) {
+        return Err("la papelera quedó fuera de la jaula".to_string());
+    }
+    let trash_rel = format!(".bara-trash/{trash_name}");
+    match fs::rename(&source, &trash_path) {
+        Ok(()) => Ok(normalize_relative(&trash_rel)),
+        Err(_) => {
+            if source.is_dir() {
+                fs::remove_dir_all(&source)
+                    .map_err(|err| format!("no se pudo borrar «{relative}»: {err}"))?;
+            } else {
+                fs::remove_file(&source)
+                    .map_err(|err| format!("no se pudo borrar «{relative}»: {err}"))?;
+            }
+            Ok(String::new())
+        }
+    }
 }
 
 /// Escribe bytes: `create_new` si el archivo no existe; truncado seguro si ya existe.
@@ -1332,5 +1457,40 @@ mod tests {
             root_id("C:/Users/Vexor/Downloads/BAR")
         );
         assert!(!path_to_api(Path::new(r"\\?\C:\foo\bar")).contains(r"\\?\"));
+    }
+
+    #[test]
+    fn a4_lee_y_escribe_rs_en_jaula() {
+        let root = scratch("a4-rs");
+        fs::create_dir_all(root.join("src")).expect("src");
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("semilla");
+        let root_s = root.to_str().expect("utf-8");
+        let doc = read_text(root_s, "src/main.rs").expect("leer rs");
+        assert!(doc.source.contains("fn main"));
+        let saved = write_source_checked(root_s, "src/main.rs", "fn main() { /* ok */ }\n", None)
+            .expect("escribir rs");
+        assert!(saved.source.contains("ok"));
+        assert!(write_source_checked(root_s, ".env", "X=1\n", None).is_err());
+        assert!(read_text(root_s, "secrets.json").is_err());
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
+    fn a5_crear_renombrar_y_papelera() {
+        let root = scratch("a5-ops");
+        fs::create_dir_all(root.join("src")).expect("src");
+        let root_s = root.to_str().expect("utf-8");
+        create_entry(root_s, "src/nota.md", "file").expect("crear");
+        assert!(root.join("src/nota.md").is_file());
+        rename_entry(root_s, "src/nota.md", "src/leeme.md").expect("renombrar");
+        assert!(root.join("src/leeme.md").is_file());
+        let trash = delete_entry(root_s, "src/leeme.md").expect("borrar");
+        assert!(!root.join("src/leeme.md").exists());
+        assert!(
+            trash.starts_with(".bara-trash/") || trash.is_empty(),
+            "papelera o borrado directo: {trash}"
+        );
+        assert!(delete_entry(root_s, ".env").is_err());
+        fs::remove_dir_all(&root).expect("limpiar");
     }
 }

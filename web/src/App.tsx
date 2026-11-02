@@ -1,4 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
+
+import { WORKSPACE_ROOT_CHANGED } from "./workspaceEvents";
 import {
   Component,
   useCallback,
@@ -45,11 +47,24 @@ import {
   type TurnView,
 } from "./engine";
 import {
+  clearDraft,
+  listDraftsForProject,
+  loadAutosaveEnabled,
+  saveAutosaveEnabled,
+  saveDraft,
+  takeDraft,
+} from "./editorDrafts";
+import { editorBadge, isEditorPath } from "./editorFiles";
+import { confirmDeletePath } from "./fileOps";
+import {
   contentHashOf,
   githubClone,
+  workspaceCreateEntry,
+  workspaceDeleteEntry,
   workspaceOpenDialog,
   workspaceReadDocument,
   workspaceReadSource,
+  workspaceRenameEntry,
   workspaceTree,
   workspaceWriteDocument,
   type WorkspaceEntry,
@@ -440,7 +455,7 @@ export default function App() {
     setActivePath(null);
     setAnalysis(null);
     setWorkspaceEpoch((n) => n + 1);
-    setPatchBanner("Carpeta cambiada: abre un archivo .bara para usar el editor.");
+    setPatchBanner("Carpeta cambiada: abre un archivo del proyecto para usar el editor.");
     console.info(
       formatPatchDebug({
         phase: "root_reset",
@@ -514,7 +529,7 @@ export default function App() {
     void (async () => {
       try {
         unlisten = await listen<{ root?: string; reason?: string }>(
-          "workspace-root-changed",
+          WORKSPACE_ROOT_CHANGED,
           (event) => {
             if (cancel) {
               return;
@@ -699,10 +714,10 @@ export default function App() {
     };
   }, [ready, source, activePath, runAnalysis]);
 
-  /** Abre un `.bara` del árbol; si ya está en una pestaña, sólo la activa. */
+  /** Abre un archivo editable del lote; si ya está en una pestaña, sólo la activa. */
   const openWorkspaceFile = useCallback(
     async (entry: WorkspaceEntry) => {
-      if (!entry.bara) {
+      if (!entry.bara && !isEditorPath(entry.path)) {
         return;
       }
       const existing = tabs.find((tab) => pathsEqual(tab.path, entry.path));
@@ -864,6 +879,7 @@ export default function App() {
           tab.path === document.path ? { ...tab, saved: document.source } : tab,
         ),
       );
+      clearDraft(workspaceRoot, document.path);
       setError(null);
     } catch (failure) {
       setError(describeError(failure));
@@ -883,6 +899,78 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [saveActive]);
+
+  // A5: persistir borradores locales; autoguardado opcional a disco.
+  useEffect(() => {
+    if (!activeTab || !workspaceRoot || activeTab.source === activeTab.saved) {
+      return undefined;
+    }
+    saveDraft(
+      workspaceRoot,
+      activeTab.path,
+      activeTab.source,
+      contentHashOf(activeTab.saved),
+    );
+    if (!loadAutosaveEnabled()) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      void saveActive();
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, workspaceRoot, saveActive]);
+
+  // A5: al abrir raíz, ofrecer recuperar borradores no guardados (una vez por raíz).
+  const offeredDraftsRootRef = useRef("");
+  useEffect(() => {
+    if (!workspaceRoot || vista !== "main") {
+      return;
+    }
+    if (offeredDraftsRootRef.current === workspaceRoot) {
+      return;
+    }
+    offeredDraftsRootRef.current = workspaceRoot;
+    const pending = listDraftsForProject(workspaceRoot);
+    if (pending.length === 0) {
+      return;
+    }
+    const first = pending[0];
+    if (
+      !first ||
+      !window.confirm(
+        `Hay ${pending.length} borrador(es) sin guardar (p. ej. «${first.path}»). ¿Recuperar el más reciente?`,
+      )
+    ) {
+      return;
+    }
+    const draft = takeDraft(workspaceRoot, first.path);
+    if (!draft) {
+      return;
+    }
+    // `saved` distinto → queda «sin guardar» hasta que el usuario persista.
+    const diskPlaceholder = draft.source === "" ? " " : "";
+    setTabs((current) => {
+      const hit = current.find((tab) => pathsEqual(tab.path, draft.path));
+      if (hit) {
+        return current.map((tab) =>
+          pathsEqual(tab.path, draft.path)
+            ? { ...tab, source: draft.source, saved: diskPlaceholder }
+            : tab,
+        );
+      }
+      return [
+        ...current,
+        {
+          path: draft.path,
+          name: draft.path.split("/").pop() ?? draft.path,
+          source: draft.source,
+          saved: diskPlaceholder,
+        },
+      ];
+    });
+    setActivePath(draft.path);
+    setPatchBanner(`Borrador recuperado: ${draft.path}`);
+  }, [workspaceRoot, vista]);
 
   // DevTools (F12 / Ctrl+Shift+I): sólo si el binario se compiló con `--features devtools`.
   useEffect(() => {
@@ -1224,6 +1312,16 @@ export default function App() {
   const verifiedStatus = analysis ? statusFromAnalysis(analysis) : null;
   const verifiedBool =
     verifiedStatus === null ? null : verifiedStatus === "verified";
+  const badge = editorBadge(activePath ?? "", {
+    verified: verifiedBool,
+    clash: analysis ? analysis.summary.rootsUnknown > 0 : null,
+  });
+  const badgeTone =
+    badge === "verificado" || badge === "equilibrado"
+      ? "ok"
+      : badge === "sin análisis"
+        ? "neutral"
+        : "warn";
   const titleLabel = activeTab?.name ?? workspace?.name ?? "Bara IDE";
   const statusBusy = importing
     ? (cloneProgress ?? "clonando…")
@@ -1518,6 +1616,86 @@ export default function App() {
                   onOpenFile={(entry) => {
                     void openWorkspaceFile(entry);
                   }}
+                  onCreateFile={() => {
+                    const name = window.prompt(
+                      "Ruta relativa del archivo nuevo (ej. src/nota.md)",
+                    );
+                    const relative = name?.trim() ?? "";
+                    if (!relative) {
+                      return;
+                    }
+                    void workspaceCreateEntry(relative, "file")
+                      .then(async (doc) => {
+                        await refreshWorkspace();
+                        void openWorkspaceFile({
+                          name: doc.name,
+                          path: doc.path,
+                          kind: "file",
+                          bara: doc.path.toLowerCase().endsWith(".bara"),
+                          children: [],
+                        });
+                      })
+                      .catch((reason: unknown) => setError(describeError(reason)));
+                  }}
+                  onCreateDir={() => {
+                    const name = window.prompt("Ruta relativa de la carpeta nueva");
+                    const relative = name?.trim() ?? "";
+                    if (!relative) {
+                      return;
+                    }
+                    void workspaceCreateEntry(relative, "dir")
+                      .then(() => refreshWorkspace())
+                      .catch((reason: unknown) => setError(describeError(reason)));
+                  }}
+                  onRenameActive={() => {
+                    if (!activePath) {
+                      return;
+                    }
+                    const next = window.prompt("Nueva ruta relativa", activePath);
+                    const to = next?.trim() ?? "";
+                    if (!to || to === activePath) {
+                      return;
+                    }
+                    void workspaceRenameEntry(activePath, to)
+                      .then(async () => {
+                        setTabs((current) =>
+                          current.map((tab) =>
+                            pathsEqual(tab.path, activePath)
+                              ? {
+                                  ...tab,
+                                  path: to,
+                                  name: to.split("/").pop() ?? to,
+                                }
+                              : tab,
+                          ),
+                        );
+                        setActivePath(to);
+                        await refreshWorkspace();
+                      })
+                      .catch((reason: unknown) => setError(describeError(reason)));
+                  }}
+                  onDeleteActive={() => {
+                    if (!activePath) {
+                      return;
+                    }
+                    if (!confirmDeletePath(activePath)) {
+                      return;
+                    }
+                    void workspaceDeleteEntry(activePath)
+                      .then(async () => {
+                        const removed = activePath;
+                        setTabs((current) => {
+                          const next = current.filter((tab) => !pathsEqual(tab.path, removed));
+                          setActivePath(next[0]?.path ?? null);
+                          return next;
+                        });
+                        if (workspaceRoot) {
+                          clearDraft(workspaceRoot, removed);
+                        }
+                        await refreshWorkspace();
+                      })
+                      .catch((reason: unknown) => setError(describeError(reason)));
+                  }}
                 />
               ) : null}
               {sideMode === "search" ? (
@@ -1552,6 +1730,16 @@ export default function App() {
               {sideMode === "settings" ? (
                 <div className="side-settings">
                   <p className="muted">Ajustes rápidos del escritorio.</p>
+                  <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+                    <input
+                      type="checkbox"
+                      defaultChecked={loadAutosaveEnabled()}
+                      onChange={(event) => {
+                        saveAutosaveEnabled(event.target.checked);
+                      }}
+                    />
+                    Autoguardado a disco (on/off)
+                  </label>
                   <button type="button" onClick={() => setAiOpen(true)}>
                     Abrir chat y ajustes de IA
                   </button>
@@ -1736,7 +1924,7 @@ export default function App() {
                       })}
                       {tabs.length === 0 ? (
                         <span className="muted tab-empty">
-                          Abre un documento <code>.bara</code> del explorador.
+                          Abre un documento del explorador (.bara, .rs, .ts, .md…).
                         </span>
                       ) : null}
                     </div>
@@ -1745,16 +1933,11 @@ export default function App() {
                       <span className="status" title={origin}>
                         {activeTab ? origin : "sin documento"}
                         {dirty ? " · sin guardar" : activeTab ? " · guardado" : ""}
-                        {activeTab && !activeTab.path.endsWith(".bara") ? " · lectura" : ""}
                       </span>
                       <span className="grow" />
                       <button
                         type="button"
-                        disabled={
-                          !dirty ||
-                          saving ||
-                          (activeTab !== null && !activeTab.path.endsWith(".bara"))
-                        }
+                        disabled={!dirty || saving}
                         onClick={() => {
                           void saveActive();
                         }}
@@ -2041,7 +2224,8 @@ export default function App() {
       <StatusBar
         fileLabel={activeTab ? activeTab.path : "sin archivo"}
         kernel={kernelPill}
-        verified={verifiedBool}
+        badgeLabel={activeTab ? badge : "sin análisis"}
+        badgeTone={activeTab ? badgeTone : "neutral"}
         tokenCount={analysis ? analysis.summary.total : null}
         onFile={() => {
           editorFocusRef.current?.focus();

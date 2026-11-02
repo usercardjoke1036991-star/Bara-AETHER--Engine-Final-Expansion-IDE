@@ -31,12 +31,21 @@ function writeAll(bucket: Bucket): void {
   }
 }
 
-/** Quita cargas útiles pesadas; nunca persiste claves. */
+/** Patrones tipicos de secreto en prosa (nunca se persisten). */
+const SECRET_IN_TEXT =
+  /\b(?:sk-[A-Za-z0-9_-]{8,}|api[_-]?key\s*[:=]\s*\S+|Bearer\s+[A-Za-z0-9._\-+/=]{12,})\b/gi;
+
+/** Redacta fragmentos que parecen claves API en el texto del mensaje. */
+export function redactSecrets(text: string): string {
+  return text.replace(SECRET_IN_TEXT, "[redacted]");
+}
+
+/** Quita imagenes utiles pesadas; nunca persiste claves. */
 export function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.slice(-MAX_MESSAGES).map((message) => ({
     id: message.id,
     role: message.role,
-    text: message.text,
+    text: redactSecrets(message.text),
     model: message.model,
     createdAt: message.createdAt,
     error: message.error,

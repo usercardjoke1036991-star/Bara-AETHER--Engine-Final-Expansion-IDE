@@ -1041,8 +1041,14 @@ export default function ChatPanel({
                   ) : null}
                   <p className="muted">
                     Diff propuesto ({review.report.glyph}
-                    {review.report.verified ? " · verificado" : " · no verificado"}). Aceptar
-                    escribe con respaldo; rechazar no toca el disco.
+                    {documentName.toLowerCase().endsWith(".bara")
+                      ? review.report.verified
+                        ? " · verificado"
+                        : " · no verificado"
+                      : review.report.status === "both"
+                        ? " · sin choque"
+                        : " · equilibrado"}
+                    ). Aceptar escribe con respaldo; rechazar no toca el disco.
                   </p>
                   <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
                 </div>

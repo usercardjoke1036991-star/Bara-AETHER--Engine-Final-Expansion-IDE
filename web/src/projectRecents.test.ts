@@ -7,9 +7,16 @@ import {
   rememberShelf,
   shortPath,
 } from "./projectRecents";
-import { clearChatHistory, loadChatHistory, saveChatHistory, sanitizeMessages } from "./ai/chatHistory";
+import {
+  clearChatHistory,
+  loadChatHistory,
+  redactSecrets,
+  saveChatHistory,
+  sanitizeMessages,
+} from "./ai/chatHistory";
 import { projectKey } from "./ai/projectKey";
 import type { ChatMessage } from "./ai/types";
+import { WORKSPACE_ROOT_CHANGED } from "./workspaceEvents";
 
 describe("shortPath", () => {
   it("recorta paths largos", () => {
@@ -98,5 +105,31 @@ describe("chatHistory por proyecto", () => {
     clearChatHistory(keyA);
     expect(loadChatHistory(keyA)).toHaveLength(0);
     expect(loadChatHistory(keyB)).toHaveLength(1);
+  });
+
+  it("no persiste secretos en el texto del historial", () => {
+    const key = projectKey("C:/proj/secret");
+    saveChatHistory(key, [
+      {
+        id: "1",
+        role: "user",
+        text: "usa sk-abcdefghijklmnop y api_key=supersecreta123",
+        model: "",
+        createdAt: 1,
+        error: null,
+        images: [],
+      },
+    ]);
+    const stored = loadChatHistory(key)[0]?.text ?? "";
+    expect(stored).not.toMatch(/sk-abcdefghijklmnop/);
+    expect(stored).not.toMatch(/supersecreta123/);
+    expect(redactSecrets("Bearer tokentokentoken")).toContain("[redacted]");
+    expect(sanitizeMessages([])).toEqual([]);
+  });
+});
+
+describe("workspace-root-changed", () => {
+  it("exporta el mismo nombre de evento que emite el backend al activar", () => {
+    expect(WORKSPACE_ROOT_CHANGED).toBe("workspace-root-changed");
   });
 });
