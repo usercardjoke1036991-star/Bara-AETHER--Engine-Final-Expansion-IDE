@@ -542,9 +542,10 @@ mod tests {
         )
         .expect("limpio");
         assert!(!preview.applied);
-        assert!(preview.can_apply);
+        // A4/M7: no-.bara no es «verificado» → Auto-Apply bloqueado; Aceptar manual sí.
+        assert!(!preview.can_apply);
         assert_eq!(preview.glyph, "⊤");
-        assert!(preview.verified);
+        assert!(!preview.verified);
         assert!(!preview.preview_diff.is_empty());
         assert_eq!(fs::read_to_string(&file).expect("disco"), "fn alpha() {}\n");
 
