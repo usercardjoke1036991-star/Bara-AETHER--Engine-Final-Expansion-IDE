@@ -1610,11 +1610,18 @@ td {
 
 .ai-log {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.6rem;
+  /* Flex: sin esto el historial no encoge y no aparece scrollbar. */
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Los mensajes no se comprimen: el overflow lo absorbe .ai-log. */
+.ai-log > * {
+  flex-shrink: 0;
 }
 
 .ai-welcome p {
