@@ -140,6 +140,9 @@ mod ai_http;
 // Cancelación cooperativa de `ai_exchange` (B8: Detener).
 mod ai_flight;
 
+// M5 — Workspace Trust (confianza por carpeta canónica).
+mod workspace_trust;
+
 // Segunda capa de permisos: etiqueta de la ventana frente a lista fija.
 mod window_guard;
 
@@ -243,12 +246,14 @@ fn get_workspace_topology_graph(
 }
 
 /// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
+/// M5: el gate de confianza vive dentro de `orchestrate::run` (sin bypass).
 #[tauri::command]
 async fn run_workspace_recipe(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     recipe: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
 ) -> Result<orchestrate::RecipeReport, String> {
     window_guard::require(&window, window_guard::MAIN)?;
     let name = recipe.trim().to_string();
@@ -256,12 +261,57 @@ async fn run_workspace_recipe(
         return Err("la receta no está en el catálogo cerrado".to_string());
     }
     let root = state.get().ok();
+    let trust_store = trust.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let active = root.as_deref().map(std::path::Path::new);
-        orchestrate::run(&name, active, Some(app))
+        orchestrate::run(&name, active, Some(app), &trust_store)
     })
     .await
     .map_err(|_| "la receta se interrumpió".to_string())?
+}
+
+/// M5 — lista de carpetas canónicas confiadas.
+#[tauri::command]
+fn workspace_trust_list(
+    window: tauri::WebviewWindow,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<Vec<String>, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    Ok(trust.list())
+}
+
+/// M5 — ¿esta ruta está confiada?
+#[tauri::command]
+fn workspace_trust_is_trusted(
+    window: tauri::WebviewWindow,
+    path: String,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<bool, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    let canonical = workspace::resolve_root(path.trim())?;
+    Ok(trust.is_trusted(&canonical))
+}
+
+/// M5 — Confiar en una carpeta canónica.
+#[tauri::command]
+fn workspace_trust_grant(
+    window: tauri::WebviewWindow,
+    path: String,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<String, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    trust.trust(&path)
+}
+
+/// M5 — Revocar confianza.
+#[tauri::command]
+fn workspace_trust_revoke(
+    window: tauri::WebviewWindow,
+    path: String,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<(), String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    trust.revoke(&path)
 }
 
 /// Publica el documento activo de `main` para las ventanas de asistencia.
@@ -1252,6 +1302,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(kernel)
         .manage(workspace::ActiveWorkspace::bootstrap())
+        .manage(workspace_trust::TrustStore::load_default())
         .manage(Mutex::new(idle_loop::IdleBridge::new()))
         .manage(Mutex::new(secrets::Session::default()))
         .manage(ai_flight::AiFlight::new())
@@ -1326,6 +1377,10 @@ pub fn run() {
             editor_context_publish,
             editor_context_get,
             run_workspace_recipe,
+            workspace_trust_list,
+            workspace_trust_is_trusted,
+            workspace_trust_grant,
+            workspace_trust_revoke,
             judge_auto_patch,
             confirm_auto_patch,
             undo_auto_patch,
@@ -1378,6 +1433,10 @@ mod ipc_boundary {
         assert!(handler.contains("editor_context_publish"));
         assert!(handler.contains("editor_context_get"));
         assert!(handler.contains("run_workspace_recipe"));
+        assert!(handler.contains("workspace_trust_list"));
+        assert!(handler.contains("workspace_trust_is_trusted"));
+        assert!(handler.contains("workspace_trust_grant"));
+        assert!(handler.contains("workspace_trust_revoke"));
         assert!(handler.contains("judge_auto_patch"));
         assert!(handler.contains("confirm_auto_patch"));
         assert!(handler.contains("undo_auto_patch"));

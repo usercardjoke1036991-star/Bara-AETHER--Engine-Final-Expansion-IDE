@@ -55,6 +55,12 @@ import {
   type WorkspaceEntry,
   type WorkspaceTree,
 } from "./workspace";
+import {
+  workspaceTrustGrant,
+  workspaceTrustIsTrusted,
+  workspaceTrustList,
+  workspaceTrustRevoke,
+} from "./workspaceTrust";
 import { analysisStillCurrent } from "./analysisGate";
 import { projectKey } from "./ai/projectKey";
 import {
@@ -167,6 +173,10 @@ export default function App() {
   /** Raíz canónica del explorador y su última enumeración. */
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceTree | null>(null);
+  /** M5: ruta pendiente de «¿Confías en esta carpeta?»; null = sin diálogo. */
+  const [trustPrompt, setTrustPrompt] = useState<string | null>(null);
+  /** M5: lista de carpetas confiadas (Ajustes). */
+  const [trustedRoots, setTrustedRoots] = useState<string[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   /** Puerta de apertura: carpeta local o clon de GitHub. */
   const [showWelcome, setShowWelcome] = useState(true);
@@ -444,6 +454,29 @@ export default function App() {
     }).catch(() => undefined);
   }, []);
 
+  const refreshTrustedRoots = useCallback(async () => {
+    try {
+      setTrustedRoots(await workspaceTrustList());
+    } catch {
+      setTrustedRoots([]);
+    }
+  }, []);
+
+  /** M5: si la carpeta no está confiada, muestra el diálogo. */
+  const maybePromptTrust = useCallback((root: string) => {
+    if (!root.trim()) {
+      setTrustPrompt(null);
+      return;
+    }
+    void workspaceTrustIsTrusted(root)
+      .then((trusted) => {
+        setTrustPrompt(trusted ? null : root);
+      })
+      .catch(() => {
+        setTrustPrompt(root);
+      });
+  }, []);
+
   const refreshWorkspace = useCallback(async () => {
     setWorkspaceLoading(true);
     try {
@@ -455,12 +488,13 @@ export default function App() {
       setWorkspace(deduped);
       setWorkspaceRoot(deduped.root);
       setError(null);
+      maybePromptTrust(deduped.root);
     } catch (failure) {
       setError(describeError(failure));
     } finally {
       setWorkspaceLoading(false);
     }
-  }, []);
+  }, [maybePromptTrust]);
 
   // El explorador arranca en paralelo con el catálogo y el documento de
   // ejemplo: un fallo del árbol no impide analizar el texto del editor.
@@ -563,8 +597,41 @@ export default function App() {
       setShowWelcome(false);
       setCloneProgress(null);
       resetEditorForRootChange(`adopt:${deduped.root}`);
+      maybePromptTrust(deduped.root);
     },
-    [resetEditorForRootChange],
+    [maybePromptTrust, resetEditorForRootChange],
+  );
+
+  const acceptTrust = useCallback(async () => {
+    if (!trustPrompt) {
+      return;
+    }
+    try {
+      await workspaceTrustGrant(trustPrompt);
+      setTrustPrompt(null);
+      await refreshTrustedRoots();
+    } catch (failure) {
+      setError(describeError(failure));
+    }
+  }, [refreshTrustedRoots, trustPrompt]);
+
+  const declineTrust = useCallback(() => {
+    setTrustPrompt(null);
+  }, []);
+
+  const revokeTrusted = useCallback(
+    async (path: string) => {
+      try {
+        await workspaceTrustRevoke(path);
+        await refreshTrustedRoots();
+        if (workspaceRoot && pathsEqual(path, workspaceRoot)) {
+          setTrustPrompt(workspaceRoot);
+        }
+      } catch (failure) {
+        setError(describeError(failure));
+      }
+    },
+    [refreshTrustedRoots, workspaceRoot],
   );
 
   /** El diálogo del sistema elige la carpeta; el WebView no manda la ruta. */
@@ -1235,6 +1302,12 @@ export default function App() {
     ["nucleo", "Núcleo"],
   ];
 
+  useEffect(() => {
+    if (sideMode === "settings") {
+      void refreshTrustedRoots();
+    }
+  }, [refreshTrustedRoots, sideMode]);
+
   return (
     <div
       className={`app ide-shell${aiOpen ? " ai-open" : ""}${sideOpen ? " side-open" : ""}${bottomOpen ? " bottom-open" : ""}`}
@@ -1246,6 +1319,26 @@ export default function App() {
         } as CSSProperties
       }
     >
+      {trustPrompt ? (
+        <div className="trust-dialog" role="dialog" aria-modal="true" aria-labelledby="trust-title">
+          <div className="trust-dialog-card">
+            <h2 id="trust-title">¿Confías en esta carpeta?</h2>
+            <p className="muted">
+              Sin confianza no se ejecuta ninguna receta (check, test, typecheck). El código se
+              puede editar; sólo se bloquea el spawn.
+            </p>
+            <code className="trust-path">{trustPrompt}</code>
+            <div className="row trust-actions">
+              <button type="button" className="trust-yes" onClick={() => void acceptTrust()}>
+                Confiar
+              </button>
+              <button type="button" onClick={declineTrust}>
+                No
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <header className="title-bar">
         <BrandMark size={28} variant="mark" title="AETHER-Ω" className="title-brand" />
         <h1 title={workspaceRoot || "Bara IDE"}>{titleLabel}</h1>
@@ -1461,6 +1554,36 @@ export default function App() {
                     Abrir paleta de comandos
                   </button>
                   <p className="muted">Tipografía mínima 14px · contraste AA · Esc cierra paneles.</p>
+                  <section className="trust-settings" aria-label="Carpetas de confianza">
+                    <h3>Carpetas de confianza</h3>
+                    <p className="muted">
+                      Sin confianza no se ejecutan recetas (check / test / typecheck).
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void refreshTrustedRoots();
+                      }}
+                    >
+                      Actualizar lista
+                    </button>
+                    {trustedRoots.length === 0 ? (
+                      <p className="muted">Ninguna carpeta confiada.</p>
+                    ) : (
+                      <ul className="trust-list">
+                        {trustedRoots.map((path) => (
+                          <li key={path}>
+                            <code className="inline-code" title={path}>
+                              {path}
+                            </code>
+                            <button type="button" onClick={() => void revokeTrusted(path)}>
+                              Revocar
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
                 </div>
               ) : null}
             </aside>

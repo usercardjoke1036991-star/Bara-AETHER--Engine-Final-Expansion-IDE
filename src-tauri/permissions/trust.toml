@@ -1,0 +1,9 @@
+[[set]]
+identifier = "trust"
+description = "M5 Workspace Trust: listar, consultar, confiar y revocar carpetas."
+permissions = [
+  "allow-workspace-trust-list",
+  "allow-workspace-trust-is-trusted",
+  "allow-workspace-trust-grant",
+  "allow-workspace-trust-revoke",
+]
