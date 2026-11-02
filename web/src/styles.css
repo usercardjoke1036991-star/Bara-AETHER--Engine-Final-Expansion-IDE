@@ -39,6 +39,7 @@
 .ai-log,
 .ai-diff,
 .ai-code-body,
+.ai-settings,
 .zone-scroll,
 .welcome,
 .console-log,
@@ -55,6 +56,7 @@
 .ai-log::-webkit-scrollbar,
 .ai-diff::-webkit-scrollbar,
 .ai-code-body::-webkit-scrollbar,
+.ai-settings::-webkit-scrollbar,
 .zone-scroll::-webkit-scrollbar,
 .welcome::-webkit-scrollbar,
 .console-log::-webkit-scrollbar,
@@ -71,6 +73,7 @@
 .ai-log::-webkit-scrollbar-thumb,
 .ai-diff::-webkit-scrollbar-thumb,
 .ai-code-body::-webkit-scrollbar-thumb,
+.ai-settings::-webkit-scrollbar-thumb,
 .zone-scroll::-webkit-scrollbar-thumb,
 .welcome::-webkit-scrollbar-thumb,
 .console-log::-webkit-scrollbar-thumb,
@@ -87,6 +90,7 @@
 .ai-log::-webkit-scrollbar-track,
 .ai-diff::-webkit-scrollbar-track,
 .ai-code-body::-webkit-scrollbar-track,
+.ai-settings::-webkit-scrollbar-track,
 .zone-scroll::-webkit-scrollbar-track,
 .welcome::-webkit-scrollbar-track,
 .console-log::-webkit-scrollbar-track,
@@ -297,7 +301,8 @@ body,
 .ide-side .side-settings {
   flex: 1;
   min-height: 0;
-  overflow: auto; /* único scroll de la zona lateral */
+  overflow-x: hidden;
+  overflow-y: auto; /* lateral: scroll si hace falta; hijos también scrollean */
 }
 
 .side-head {
@@ -483,7 +488,8 @@ body,
 .zone-scroll {
   flex: 1;
   min-height: 0;
-  overflow: auto; /* único scroll de la zona del panel inferior */
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
 .expert-embed h3 {
@@ -814,7 +820,9 @@ body,
 .ws-projects {
   flex: 0 0 auto;
   max-height: 42%;
-  overflow: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--line);
 }
@@ -898,7 +906,10 @@ body,
 }
 
 .ws-files {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.35rem;
   min-height: 0;
 }
 
@@ -927,7 +938,8 @@ body,
 .workspace-tree {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
 .workspace-head {
@@ -1112,9 +1124,10 @@ body,
 }
 
 .workspace-tree {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   padding-top: 0.35rem;
   border-top: 1px solid var(--line);
 }
@@ -1320,11 +1333,14 @@ body,
 }
 
 .bara-editor .cm-scroller {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
+  min-height: 0;
 }
 
-/* Ajustes IA: scroll del cuerpo si no cabe; sin apretar el resto del chat. */
+/* Ajustes IA: scrollea el cuerpo del diálogo si no cabe. */
 .ai-body:has(> .ai-settings) {
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -1782,7 +1798,7 @@ td {
   flex-direction: column;
   gap: 0.4rem;
   flex-shrink: 0;
-  min-height: 0;
+  min-height: auto;
 }
 
 .ai-pending-bar {
@@ -1859,6 +1875,8 @@ td {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .ai-field {
@@ -2684,7 +2702,8 @@ tr.vb-selected td {
   max-height: min(10rem, 22vh);
   min-height: 3rem;
   margin: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   font-size: 0.8rem;
 }
 
