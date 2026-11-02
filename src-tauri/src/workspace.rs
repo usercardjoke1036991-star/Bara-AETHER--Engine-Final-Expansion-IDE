@@ -781,14 +781,15 @@ pub fn create_entry(root: &str, relative: &str, kind: &str) -> Result<WorkspaceD
         return Err("el tipo debe ser file o dir".to_string());
     }
     if !is_project_source(Path::new(relative)) {
-        return Err(format!("«{relative}» no es una extensión editable del proyecto"));
+        return Err(format!(
+            "«{relative}» no es una extensión editable del proyecto"
+        ));
     }
     let canonical = resolve_for_write(&canonical_root, relative)?;
     if canonical.exists() {
         return Err(format!("«{relative}» ya existe"));
     }
-    write_atomic(&canonical, "")
-        .map_err(|err| format!("no se pudo crear «{relative}»: {err}"))?;
+    write_atomic(&canonical, "").map_err(|err| format!("no se pudo crear «{relative}»: {err}"))?;
     Ok(document_of(
         path_to_api(&canonical_root),
         normalize_relative(relative),
