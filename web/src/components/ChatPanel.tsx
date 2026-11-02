@@ -40,15 +40,18 @@ import {
   loadChatHistory,
   saveChatHistory,
 } from "../ai/chatHistory";
-import type { AutoApplyReport } from "../autoApply";
+import { emptyReport, type AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
 import { buildReviewChrome, type ReviewChromeLive } from "../reviewChrome";
 import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
 import {
+  filesFromUnifiedDiff,
+  liveMapApplyBatch,
   liveMapContext,
   liveMapGate,
   liveMapImpact,
   spliceHost,
+  type BatchChange,
 } from "../liveMap";
 import { loadLocalWeights, localComplete } from "../offline";
 import {
@@ -240,11 +243,12 @@ export default function ChatPanel({
     patch: string;
     report: AutoApplyReport;
     impactSummary?: string;
-    /** Bloqueo duro del mapa (import roto) → sin Aceptar. */
+    /** Bloqueo duro del mapa (import roto o mapa caído) → sin Aceptar. */
     mapBlock?: string;
-    /** Aviso si el IPC del mapa falló; Aceptar manual sigue con banner. */
     mapWarn?: string;
     nextSource?: string;
+    /** Más de un archivo: se escribe con liveMapApplyBatch, no con confirm. */
+    batch?: BatchChange[];
   } | null>(null);
   const [liveMapText, setLiveMapText] = useState("");
   const [lastBackup, setLastBackup] = useState<{ path: string; backupPath: string } | null>(
@@ -252,6 +256,8 @@ export default function ChatPanel({
   );
 
   const abortRef = useRef<AbortController | null>(null);
+  /** `fail` si el IPC de Detener no llegó: no pintar «Consulta cancelada». */
+  const stopOutcome = useRef<"ok" | "fail" | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const projectIdRef = useRef(projectId);
   const messagesRef = useRef(messages);
@@ -378,6 +384,52 @@ export default function ChatPanel({
             detail: `len=${early.code.length}`,
           }),
         );
+        const batchFiles = filesFromUnifiedDiff(early.code);
+        if (batchFiles.length > 1) {
+          const batch: BatchChange[] = batchFiles.map((file) => ({
+            path: file.path,
+            source: file.source,
+          }));
+          let mapBlock = "";
+          let impactSummary = "";
+          try {
+            const impact = await liveMapImpact(batch.map((file) => file.path));
+            impactSummary = impact.summary;
+            for (const file of batch) {
+              const gate = await liveMapGate(file.path, file.source);
+              if (!gate.ok) {
+                mapBlock = gate.blockReason || "el cambio rompería imports; no se escribe";
+                break;
+              }
+            }
+          } catch {
+            mapBlock = "mapa no respondió; no se escribe";
+            impactSummary = impactSummary || mapBlock;
+          }
+          setReview({
+            patch: early.code,
+            report: {
+              ...emptyReport(1),
+              glyph: "∅",
+              status: "neither",
+              path: batch[0]?.path ?? "",
+              previewDiff: early.code,
+              canApply: false,
+              verified: false,
+              blockReason: "lote de varios archivos",
+              judgmentId: "batch",
+            },
+            impactSummary,
+            mapBlock,
+            batch,
+          });
+          publishNotice(
+            mapBlock
+              ? `${impactSummary || "Lote"} · ${mapBlock}`
+              : impactSummary || `Lote de ${batch.length} archivos. Nada se ha escrito.`,
+          );
+          return;
+        }
         const report = await onJudge(early.code);
         const resolved = resolvePatchAttempt(early.code, documentName, report);
         console.info(formatPatchDebug(resolved.log));
@@ -386,7 +438,6 @@ export default function ChatPanel({
           const nextSource = spliceHost(documentSource, resolved.outcome.patch, line);
           let impactSummary = "";
           let mapBlock = "";
-          let mapWarn = "";
           let mapIpcOk = false;
           try {
             const impact = await liveMapImpact([documentName]);
@@ -398,16 +449,14 @@ export default function ChatPanel({
               impactSummary = `${impactSummary} · ${mapBlock}`;
             }
           } catch {
-            // §9.4b: Auto-Apply fail-closed; Aceptar manual con aviso visible.
-            mapWarn = "mapa no respondió; Auto-Apply bloqueado — Aceptar manual con aviso";
-            impactSummary = impactSummary || mapWarn;
+            mapBlock = "mapa no respondió; no se escribe";
+            impactSummary = impactSummary || mapBlock;
           }
           setReview({
             patch: resolved.outcome.patch,
             report: resolved.outcome.report,
             impactSummary,
             mapBlock,
-            mapWarn,
             nextSource,
           });
           publishNotice(
@@ -724,7 +773,9 @@ export default function ChatPanel({
         (error instanceof DOMException && error.name === "AbortError") ||
         /abort|cancel/i.test(reasonOf(error));
       if (aborted) {
-        setNotice("Consulta cancelada.");
+        if (stopOutcome.current !== "fail") {
+          setNotice("Consulta cancelada.");
+        }
         return;
       }
       setMessages((previous) => [
@@ -780,11 +831,42 @@ export default function ChatPanel({
             return;
           }
         } catch {
-          const warn = "mapa no respondió al revalidar; se escribe con aviso";
+          const warn = "mapa no respondió al revalidar; no se escribe";
           setNotice(warn);
           publishNotice(warn);
-          setReview((prev) => (prev ? { ...prev, mapWarn: warn } : prev));
+          setReview((prev) => (prev ? { ...prev, mapBlock: warn } : prev));
+          return;
         }
+      }
+      if (review.batch && review.batch.length > 1) {
+        try {
+          for (const change of review.batch) {
+            const gate = await liveMapGate(change.path, change.source);
+            if (!gate.ok) {
+              const msg = gate.blockReason || "el cambio rompería imports; no se escribió";
+              setNotice(msg);
+              publishNotice(msg);
+              setReview((prev) => (prev ? { ...prev, mapBlock: msg } : prev));
+              return;
+            }
+          }
+        } catch {
+          const warn = "mapa no respondió al revalidar; no se escribe";
+          setNotice(warn);
+          publishNotice(warn);
+          setReview((prev) => (prev ? { ...prev, mapBlock: warn } : prev));
+          return;
+        }
+        const applied = await liveMapApplyBatch(review.batch);
+        if (!applied.applied) {
+          setNotice(applied.detail || "el lote no se escribió");
+          publishNotice(applied.detail || "el lote no se escribió");
+          return;
+        }
+        setNotice(applied.detail);
+        publishNotice(applied.detail);
+        setReview(null);
+        return;
       }
       const report = await onConfirm(review.patch, review.report.judgmentId);
       if (report.applied) {
@@ -853,12 +935,29 @@ export default function ChatPanel({
     });
   }, [acceptReview, lastBackup, onReviewChrome, rejectReview, review, undoLast]);
 
-  /** B8 — Detener: aborta el turno JS y cancela el lado Rust (HTTP + kernel). */
+  /** B8 — Detener: aborta el turno JS y corta HTTP + kernel. Si el IPC falla, no dice «cancelada». */
   const stop = useCallback(() => {
-    abortRef.current?.abort();
-    void cancelAiInFlight().catch(() => undefined);
-    void interruptKernel().catch(() => undefined);
-    setNotice("Consulta cancelada.");
+    void (async () => {
+      const errors: string[] = [];
+      try {
+        await cancelAiInFlight();
+      } catch (error) {
+        errors.push(reasonOf(error));
+      }
+      try {
+        await interruptKernel();
+      } catch (error) {
+        errors.push(reasonOf(error));
+      }
+      if (errors.length > 0) {
+        stopOutcome.current = "fail";
+        setNotice(`No se pudo detener: ${errors.join(" · ")}`);
+      } else {
+        stopOutcome.current = "ok";
+        setNotice("Consulta cancelada.");
+      }
+      abortRef.current?.abort();
+    })();
   }, []);
 
   /** Traduce un texto a Shoresh con el léxico del propio kernel (IPC). */
@@ -1198,7 +1297,7 @@ export default function ChatPanel({
                   ) : null}
                   {review.mapBlock ? (
                     <p className="ai-warn-banner" role="alert">
-                      {review.mapBlock} — no se aplicará hasta corregir el import.
+                      {review.mapBlock}
                     </p>
                   ) : null}
                   {review.mapWarn && !review.mapBlock ? (

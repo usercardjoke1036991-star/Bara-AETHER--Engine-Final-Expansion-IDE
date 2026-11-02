@@ -489,6 +489,9 @@ fn confirm_auto_patch(
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
     window_guard::require(&window, window_guard::MAIN)?;
+    let root = state.get()?;
+    // Misma puerta que el lote: IPC directo no escribe si el mapa bloquea o cae.
+    bara_kernel_host::gate_confirm_preview(&root, &path, &host, &patch, line)?;
     let report = kernel_call(
         &kernel,
         "confirm_patch",
@@ -1337,8 +1340,7 @@ fn ai_key_delete(
 }
 
 /// Llama al proveedor. La clave la pone este proceso; la respuesta ya viene limpia.
-/// B8: `ai_cancel_in_flight` hace que este comando responda `cancelado` sin
-/// seguir bloqueando el IPC (el hilo ureq puede drenar el socket en segundo plano).
+/// B8: `ai_cancel_in_flight` cierra el socket del vuelo y este comando responde `cancelado`.
 #[tauri::command]
 async fn ai_exchange(
     window: tauri::WebviewWindow,
@@ -1350,19 +1352,21 @@ async fn ai_exchange(
     body: Option<String>,
 ) -> Result<ai_http::Exchange, String> {
     window_guard::require(&window, window_guard::CHAT)?;
-    // §9.5.12: `local` no usa llavero ni Authorization.
-    let secret = if provider.trim() == "local" {
-        String::new()
-    } else {
-        let session = state
-            .lock()
-            .map_err(|_| "el llavero está ocupado".to_string())?;
-        secrets::lookup(&session, &secrets::System, &provider)?
+    // Clave atada al host: local/loopback sin secreto; nube sólo a su host oficial.
+    let secret = match ai_http::politica_clave(&provider, &url)? {
+        ai_http::PoliticaClave::SinSecreto => String::new(),
+        ai_http::PoliticaClave::Exigir => {
+            let session = state
+                .lock()
+                .map_err(|_| "el llavero está ocupado".to_string())?;
+            secrets::lookup(&session, &secrets::System, &provider)?
+        }
     };
     let payload = body.unwrap_or_default();
     flight.begin();
+    let handle = flight.handle();
     let mut work = tauri::async_runtime::spawn_blocking(move || {
-        ai_http::exchange(&provider, &url, &method, &payload, &secret)
+        ai_http::exchange_with(&provider, &url, &method, &payload, &secret, Some(&handle))
     });
     loop {
         tokio::select! {
@@ -1410,10 +1414,11 @@ fn git_branches(
 fn git_commit(
     window: tauri::WebviewWindow,
     message: String,
+    confirmed: bool,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<git_workspace::GitCommitReport, String> {
     window_guard::require(&window, window_guard::WRITE)?;
-    git_workspace::commit(&state.get()?, &message)
+    git_workspace::commit(&state.get()?, &message, confirmed)
 }
 
 #[tauri::command]
@@ -1459,13 +1464,14 @@ async fn ai_probe_connection(
     base_url: String,
 ) -> Result<ai_http::ProbeReport, String> {
     window_guard::require(&window, window_guard::CHAT)?;
-    let secret = if provider.trim() == "local" {
-        String::new()
-    } else {
-        let session = state
-            .lock()
-            .map_err(|_| "el llavero está ocupado".to_string())?;
-        secrets::lookup(&session, &secrets::System, &provider)?
+    let secret = match ai_http::politica_clave(&provider, &base_url)? {
+        ai_http::PoliticaClave::SinSecreto => String::new(),
+        ai_http::PoliticaClave::Exigir => {
+            let session = state
+                .lock()
+                .map_err(|_| "el llavero está ocupado".to_string())?;
+            secrets::lookup(&session, &secrets::System, &provider)?
+        }
     };
     tauri::async_runtime::spawn_blocking(move || {
         Ok(ai_http::probe_connection(&provider, &base_url, &secret))
@@ -1796,6 +1802,18 @@ mod ipc_boundary {
                 assert!(has_llavero && has_receta && has_github && has_write);
             }
         }
+        let llavero = include_str!("../permissions/llavero.toml");
+        let kernel_perms = include_str!("../permissions/kernel.toml");
+        assert!(
+            llavero.contains("allow-ai-cancel-in-flight"),
+            "Detener necesita cancelar el HTTP en el set llavero"
+        );
+        assert!(
+            kernel_perms.contains("allow-kernel-interrupt"),
+            "Detener necesita interrumpir el kernel"
+        );
+        let main = std::fs::read_to_string(dir.join("main.json")).expect("main");
+        assert!(main.contains("\"llavero\"") && main.contains("\"kernel\""));
         for expected in [
             "main",
             "topology",

@@ -39,3 +39,23 @@ pub mod dispatch;
 pub mod supervisor;
 
 pub use supervisor::{new_group, terminate_pid, terminate_tree, KernelHost, KernelStatus};
+
+/// Puerta del mapa antes de escribir un parche. Bloqueo o mapa caído → error, sin disco.
+pub fn gate_confirm_preview(
+    root: &str,
+    path: &str,
+    host: &str,
+    patch: &str,
+    line: u32,
+) -> Result<(), String> {
+    let next = auto_apply::planned_next(host, patch, line);
+    match live_map::gate_change(root, path, &next) {
+        Ok(gate) if gate.ok => Ok(()),
+        Ok(gate) => Err(if gate.block_reason.is_empty() {
+            "el cambio rompería imports; no se escribió".to_string()
+        } else {
+            gate.block_reason
+        }),
+        Err(err) => Err(format!("mapa no disponible; no se escribió: {err}")),
+    }
+}

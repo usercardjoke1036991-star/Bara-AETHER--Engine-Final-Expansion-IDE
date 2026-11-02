@@ -79,8 +79,7 @@ export function liveMapGate(path: string, source: string): Promise<ChangeGate> {
 
 /**
  * Lote atómico multiarchivo (§9.4 / §9.4b).
- * IPC + rollback listos; el chat hoy aplica un solo archivo vía confirm_auto_patch.
- * Cuando la UI de revisión emita un lote (>1 archivo), cablear aquí.
+ * El chat lo usa cuando el diff unificado toca más de un archivo.
  */
 export function liveMapApplyBatch(changes: BatchChange[]): Promise<BatchReport> {
   return invoke<BatchReport>("live_map_apply_batch", { changes });
@@ -96,6 +95,55 @@ export function isExternalJsSpecifier(spec: string): boolean {
     return true;
   }
   return !(t.startsWith(".") || t.startsWith("/") || t.startsWith("#"));
+}
+
+export interface DiffFile {
+  path: string;
+  source: string;
+}
+
+/** Reconstruye archivos desde un diff unificado (`+++ b/ruta`). Un solo archivo no es lote. */
+export function filesFromUnifiedDiff(diff: string): DiffFile[] {
+  const files: { path: string; lines: string[] }[] = [];
+  let current: { path: string; lines: string[] } | null = null;
+  for (const line of diff.replace(/\r\n/g, "\n").split("\n")) {
+    const plus = /^\+\+\+ (?:b\/)?(\S.*)$/.exec(line);
+    if (plus && plus[1] !== "/dev/null") {
+      if (current) {
+        files.push(current);
+      }
+      current = { path: plus[1].trim(), lines: [] };
+      continue;
+    }
+    if (!current) {
+      continue;
+    }
+    if (
+      line.startsWith("--- ") ||
+      line.startsWith("diff --git ") ||
+      line.startsWith("@@") ||
+      line.startsWith("\\")
+    ) {
+      continue;
+    }
+    if (line.startsWith("+")) {
+      current.lines.push(line.slice(1));
+    } else if (line.startsWith("-")) {
+      continue;
+    } else if (line.startsWith(" ")) {
+      current.lines.push(line.slice(1));
+    }
+  }
+  if (current) {
+    files.push(current);
+  }
+  return files.map((file) => {
+    const body = file.lines.join("\n");
+    return {
+      path: file.path.replace(/\\/g, "/"),
+      source: body.length > 0 && !body.endsWith("\n") ? `${body}\n` : body,
+    };
+  });
 }
 
 export function liveMapContext(focus: string[], maxLines = 48): Promise<MapContext> {

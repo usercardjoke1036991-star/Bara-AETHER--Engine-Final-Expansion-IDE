@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isExternalJsSpecifier, spliceHost } from "./liveMap";
+import { filesFromUnifiedDiff, isExternalJsSpecifier, spliceHost } from "./liveMap";
 
 describe("spliceHost", () => {
   it("inserta el parche en la línea pedida", () => {
@@ -13,6 +13,28 @@ describe("spliceHost", () => {
   it("al final si la línea supera el archivo", () => {
     const host = "a\nb\n";
     expect(spliceHost(host, "c", 99)).toBe("a\nb\nc\n");
+  });
+});
+
+describe("filesFromUnifiedDiff", () => {
+  it("reconstruye un lote de más de un archivo", () => {
+    const diff = [
+      "diff --git a/src/a.rs b/src/a.rs",
+      "--- a/src/a.rs",
+      "+++ b/src/a.rs",
+      "+fn a() {}",
+      "diff --git a/src/b.py b/src/b.py",
+      "--- a/src/b.py",
+      "+++ b/src/b.py",
+      "+def b():",
+      "+    return 1",
+    ].join("\n");
+    const files = filesFromUnifiedDiff(diff);
+    expect(files).toHaveLength(2);
+    expect(files[0]?.path).toBe("src/a.rs");
+    expect(files[0]?.source).toContain("fn a()");
+    expect(files[1]?.path).toBe("src/b.py");
+    expect(files[1]?.source).toContain("return 1");
   });
 });
 

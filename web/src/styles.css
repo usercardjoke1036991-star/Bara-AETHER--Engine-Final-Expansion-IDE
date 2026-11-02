@@ -2001,6 +2001,8 @@ td {
   padding: 0.35rem 0 0.15rem;
   border-top: 1px solid var(--line);
   background: var(--pane);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .ai-backup-hint {
@@ -2838,7 +2840,8 @@ tr.vb-selected td {
   margin: 0;
   padding: 0;
   border: none;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .ai-warn-banner {

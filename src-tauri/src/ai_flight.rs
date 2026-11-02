@@ -1,30 +1,89 @@
-//! Cancelación cooperativa de `ai_exchange` en vuelo (B8: Detener).
+//! Cancelación de `ai_exchange` en vuelo (B8: Detener).
+//!
+//! Además de la bandera, guarda clones del socket para cerrarlo: Detener
+//! corta el TCP, no sólo la promesa del WebView.
 
+use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
-/// Bandera compartida: Detener marca cancelado; `ai_exchange` deja de esperar.
-#[derive(Default)]
-pub struct AiFlight {
+struct FlightInner {
     cancel: AtomicBool,
+    sockets: Mutex<Vec<TcpStream>>,
+}
+
+/// Handle clonable que viaja al hilo de `ureq`/HTTP.
+#[derive(Clone)]
+pub struct FlightHandle {
+    inner: Arc<FlightInner>,
+}
+
+impl FlightHandle {
+    pub fn begin(&self) {
+        self.inner.cancel.store(false, Ordering::SeqCst);
+        if let Ok(mut sockets) = self.inner.sockets.lock() {
+            sockets.clear();
+        }
+    }
+
+    pub fn request_cancel(&self) {
+        self.inner.cancel.store(true, Ordering::SeqCst);
+        self.shutdown_sockets();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.cancel.load(Ordering::SeqCst)
+    }
+
+    /// Clon del socket vivo. `request_cancel` hace `shutdown` y desbloquea el read.
+    pub fn track_socket(&self, stream: &TcpStream) {
+        if let Ok(clone) = stream.try_clone() {
+            if let Ok(mut sockets) = self.inner.sockets.lock() {
+                sockets.push(clone);
+            }
+        }
+    }
+
+    fn shutdown_sockets(&self) {
+        if let Ok(mut sockets) = self.inner.sockets.lock() {
+            for sock in sockets.drain(..) {
+                let _ = sock.shutdown(Shutdown::Both);
+            }
+        }
+    }
+}
+
+/// Estado Tauri: un solo vuelo de chat a la vez.
+pub struct AiFlight {
+    handle: FlightHandle,
 }
 
 impl AiFlight {
     pub fn new() -> Self {
         Self {
-            cancel: AtomicBool::new(false),
+            handle: FlightHandle {
+                inner: Arc::new(FlightInner {
+                    cancel: AtomicBool::new(false),
+                    sockets: Mutex::new(Vec::new()),
+                }),
+            },
         }
     }
 
+    pub fn handle(&self) -> FlightHandle {
+        self.handle.clone()
+    }
+
     pub fn begin(&self) {
-        self.cancel.store(false, Ordering::SeqCst);
+        self.handle.begin();
     }
 
     pub fn request_cancel(&self) {
-        self.cancel.store(true, Ordering::SeqCst);
+        self.handle.request_cancel();
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::SeqCst)
+        self.handle.is_cancelled()
     }
 }
 

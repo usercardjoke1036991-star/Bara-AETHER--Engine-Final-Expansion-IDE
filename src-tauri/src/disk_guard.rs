@@ -67,9 +67,54 @@ fn free_bytes_c() -> Result<u64, String> {
 
 #[cfg(not(windows))]
 fn free_bytes_c() -> Result<u64, String> {
-    // CI Linux: umbral informativo (el aviso in-app es para el escritorio Windows).
-    let _ = PathBuf::from("/");
-    Ok(16 * 1024 * 1024 * 1024)
+    // No se finge un disco de 16 GiB: se lee el sistema de archivos real.
+    let output = std::process::Command::new("df")
+        .args(["-B1", "--output=avail", "/"])
+        .output()
+        .map_err(|err| format!("no se pudo consultar el espacio libre: {err}"))?;
+    if !output.status.success() {
+        return Err("no se pudo leer el espacio libre".to_string());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut found = None;
+    for line in text.lines() {
+        if let Ok(bytes) = line.trim().parse::<u64>() {
+            found = Some(bytes);
+        }
+    }
+    found.ok_or_else(|| format!("respuesta de espacio libre ilegible: {text}"))
+}
+
+/// `target/debug` canónico y dentro del workspace. Un symlink que sale no se borra.
+fn canonical_debug_dir(workspace_root: &Path) -> Result<Option<PathBuf>, String> {
+    let root = fs::canonicalize(workspace_root).map_err(|err| {
+        format!(
+            "no se pudo canonizar el workspace {}: {err}",
+            workspace_root.display()
+        )
+    })?;
+    let debug = root.join("target").join("debug");
+    if !debug.exists() {
+        return Ok(None);
+    }
+    let canonical = fs::canonicalize(&debug)
+        .map_err(|err| format!("no se pudo canonizar target/debug: {err}"))?;
+    if !canonical.starts_with(&root) {
+        return Err(format!(
+            "target/debug sale del workspace ({})",
+            canonical.display()
+        ));
+    }
+    let rel = canonical
+        .strip_prefix(&root)
+        .map_err(|_| "target/debug no es relativo al workspace".to_string())?;
+    let rel_s = rel.to_string_lossy().replace('\\', "/");
+    if rel_s != "target/debug" {
+        return Err(format!(
+            "target/debug no es el directorio esperado: {rel_s}"
+        ));
+    }
+    Ok(Some(canonical))
 }
 
 fn bytes_to_gb(bytes: u64) -> f64 {
@@ -142,13 +187,25 @@ pub fn clean_safe(workspace_root: &str, min_gb: f64) -> Result<DiskCleanReport, 
     let mut freed = 0u64;
     let mut notes = Vec::new();
 
-    let debug = root.join("target").join("debug");
-    match remove_tree(&debug) {
-        Ok(n) => {
-            freed = freed.saturating_add(n);
-            notes.push(format!("target/debug ~{:.2} GB", bytes_to_gb(n)));
+    let debug = match canonical_debug_dir(&root) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            notes.push("sin target/debug".to_string());
+            PathBuf::new()
         }
-        Err(err) => notes.push(err),
+        Err(err) => {
+            notes.push(err);
+            PathBuf::new()
+        }
+    };
+    if !debug.as_os_str().is_empty() {
+        match remove_tree(&debug) {
+            Ok(n) => {
+                freed = freed.saturating_add(n);
+                notes.push(format!("target/debug ~{:.2} GB", bytes_to_gb(n)));
+            }
+            Err(err) => notes.push(err),
+        }
     }
 
     let vite = root.join("web").join("node_modules").join(".vite");
@@ -222,5 +279,49 @@ mod tests {
             .exists());
         assert!(report.detail.contains("release") || report.freed_gb >= 0.0);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a9_no_finge_16_gib() {
+        let src = include_str!("disk_guard.rs");
+        let fake = format!("{} * {} * {} * {}", 16, 1024, 1024, 1024);
+        assert!(!src.contains(&fake), "el espacio libre no se inventa");
+    }
+
+    #[test]
+    fn a9_no_borra_si_debug_sale_por_symlink() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bara-disk-link-{nonce}"));
+        let outside = std::env::temp_dir().join(format!("bara-disk-out-{nonce}"));
+        fs::create_dir_all(root.join("target")).expect("target");
+        fs::create_dir_all(&outside).expect("out");
+        fs::write(outside.join("keep.txt"), b"keep").expect("keep");
+        let link = root.join("target").join("debug");
+        let linked = {
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_dir(&outside, &link)
+            }
+            #[cfg(not(windows))]
+            {
+                std::os::unix::fs::symlink(&outside, &link)
+            }
+        };
+        if linked.is_err() {
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(&outside);
+            return;
+        }
+        let report = clean_safe(root.to_str().expect("utf8"), 8.0).expect("clean");
+        assert!(
+            outside.join("keep.txt").exists(),
+            "no se borra fuera del workspace: {}",
+            report.detail
+        );
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
     }
 }

@@ -1,13 +1,27 @@
 // Orquestación de «usar en el editor» (testeable sin Tauri).
 
+import { isEditorPath } from "./editorFiles";
+import { filesFromUnifiedDiff } from "./liveMap";
 import {
-  NEED_BARA_FILE,
-  isActiveBaraPath,
   proposeFromJudge,
   reviewNotice,
   type ProposeOutcome,
 } from "./proposePatch";
 import type { AutoApplyReport } from "./autoApply";
+
+/** Aviso cuando el documento activo no es editable. */
+export const NEED_EDITOR_FILE = "Abre un archivo del editor primero";
+
+function isSafeEditorPath(path: string | null | undefined): boolean {
+  const name = (path ?? "").trim().replace(/\\/g, "/");
+  if (!name || name === "<fragmento>" || name === "<editor>") {
+    return false;
+  }
+  if (name.startsWith("/") || name.includes("..") || /^[A-Za-z]:/.test(name)) {
+    return false;
+  }
+  return isEditorPath(name);
+}
 
 /** Fases de depuración (nunca incluyen secretos). */
 export type PatchFlowPhase =
@@ -42,7 +56,7 @@ export function shouldListenForPropose(inDesktop: boolean, _chatOpen?: boolean):
   return inDesktop;
 }
 
-/** Validación previa al juez: vacío o sin `.bara` activo. */
+/** Validación previa al juez: vacío, o sin archivo editable (cualquier extensión del editor). */
 export function preflightPatch(
   patch: string,
   documentName: string | null | undefined,
@@ -57,14 +71,30 @@ export function preflightPatch(
       log: { phase: "blocked", document: documentName ?? "", detail: "empty_patch" },
     };
   }
-  if (!isActiveBaraPath(documentName)) {
+  const batch = filesFromUnifiedDiff(code);
+  if (batch.length > 1) {
+    const bad = batch.find((file) => !isSafeEditorPath(file.path));
+    if (bad) {
+      return {
+        ok: false,
+        notice: `«${bad.path}» no es un archivo del editor`,
+        log: {
+          phase: "blocked",
+          document: bad.path,
+          detail: "lote con ruta no editable",
+        },
+      };
+    }
+    return { ok: true, code };
+  }
+  if (!isSafeEditorPath(documentName)) {
     return {
       ok: false,
-      notice: NEED_BARA_FILE,
+      notice: NEED_EDITOR_FILE,
       log: {
         phase: "need_file",
         document: documentName ?? "",
-        detail: "sin .bara activo",
+        detail: "sin archivo del editor",
       },
     };
   }

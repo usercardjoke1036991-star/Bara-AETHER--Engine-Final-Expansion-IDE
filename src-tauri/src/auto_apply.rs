@@ -66,6 +66,10 @@ pub struct AutoApplyReport {
 }
 
 /// Inserta `patch` en la línea 1-based. `line == 0` añade al final.
+pub(crate) fn planned_next(host: &str, patch: &str, line: u32) -> String {
+    splice(host, patch, line).0
+}
+
 fn splice(host: &str, patch: &str, line: u32) -> (String, u32, u32) {
     let patch = patch.trim_matches(|ch: char| ch == '\r' || ch == '\n');
     let patch_lines: Vec<&str> = if patch.is_empty() {
@@ -451,8 +455,23 @@ pub fn confirm(
     if on_disk.source != host {
         return Err("el archivo en disco no coincide con el editor; no se escribió".to_string());
     }
-    let backup_path = write_backup(root, path, &on_disk.source)?;
     let (next, at, inserted) = splice(&on_disk.source, patch, line);
+    match crate::live_map::gate_change(root, path, &next) {
+        Ok(gate) if gate.ok => {}
+        Ok(gate) => {
+            verdict.can_apply = false;
+            verdict.block_reason = if gate.block_reason.is_empty() {
+                "el cambio rompería imports; no se escribió".to_string()
+            } else {
+                gate.block_reason
+            };
+            return Ok(empty_report(path, line, host, patch, verdict));
+        }
+        Err(err) => {
+            return Err(format!("mapa no disponible; no se escribió: {err}"));
+        }
+    }
+    let backup_path = write_backup(root, path, &on_disk.source)?;
     let document: WorkspaceDocument =
         workspace::write_source_checked(root, path, &next, Some(on_disk.content_hash.as_str()))?;
     Ok(AutoApplyReport {
@@ -551,6 +570,19 @@ mod tests {
 
         let token = preview.judgment_id.clone();
         assert!(!token.is_empty());
+        let blocked = confirm(
+            &root_text,
+            "src/lib.rs",
+            1,
+            "fn alpha() {}\n",
+            "mod totally_missing;\n",
+            &judgment_token(1, "fn alpha() {}\n", "mod totally_missing;\n"),
+        )
+        .expect("gate");
+        assert!(!blocked.applied, "import nuevo sin destino no escribe");
+        assert!(!blocked.block_reason.is_empty(), "{}", blocked.block_reason);
+        assert_eq!(fs::read_to_string(&file).expect("disco"), "fn alpha() {}\n");
+
         let written = confirm(
             &root_text,
             "src/lib.rs",

@@ -47,6 +47,8 @@ vi.mock("../offline", () => ({
 
 vi.mock("../engine", () => ({
   shoreshTranslate: vi.fn(async () => ({ text: "", synthesized: 0 })),
+  cancelAiInFlight: vi.fn(async () => undefined),
+  interruptKernel: vi.fn(async () => undefined),
 }));
 
 vi.mock("../windows", () => ({
@@ -58,12 +60,46 @@ vi.mock("../clipboard", () => ({
   writeClipboard: vi.fn(async () => true),
 }));
 
+vi.mock("../liveMap", async () => {
+  const actual = await vi.importActual<typeof import("../liveMap")>("../liveMap");
+  return {
+    ...actual,
+    liveMapImpact: vi.fn(async () => ({
+      focus: ["doc.bara"],
+      filesAffected: 1,
+      testsAffected: 0,
+      related: ["doc.bara"],
+      summary: "afecta a 1 archivo(s) y 0 test(s)",
+    })),
+    liveMapGate: vi.fn(async () => ({
+      ok: true,
+      impact: {
+        focus: ["doc.bara"],
+        filesAffected: 1,
+        testsAffected: 0,
+        related: ["doc.bara"],
+        summary: "ok",
+      },
+      broken: [],
+      blockReason: "",
+    })),
+    liveMapApplyBatch: vi.fn(async () => ({
+      applied: true,
+      paths: [],
+      backups: [],
+      rolledBack: false,
+      detail: "aplicados",
+    })),
+  };
+});
+
 vi.mock("../baraVerify", () => ({
   verifyBaraBlock: vi.fn(async () => "unverified"),
   statusFromAnalysis: vi.fn(() => "unverified"),
 }));
 
 import ChatPanel from "./ChatPanel";
+import { liveMapGate } from "../liveMap";
 
 function reviewReport(): AutoApplyReport {
   return {
@@ -146,5 +182,50 @@ describe("ChatPanel Aceptar / Rechazar / Deshacer", () => {
       expect(screen.queryByRole("button", { name: /^Aceptar$/i })).toBeNull();
     });
     expect(onJudge).toHaveBeenCalled();
+  });
+
+  it("si el mapa cae al revalidar, Aceptar no confirma", async () => {
+    const onJudge = vi.fn(async () => reviewReport());
+    const onConfirm = vi.fn();
+    const gate = vi.mocked(liveMapGate);
+    gate.mockResolvedValueOnce({
+      ok: true,
+      blockReason: "",
+      broken: [],
+      impact: {
+        focus: ["doc.bara"],
+        filesAffected: 1,
+        testsAffected: 0,
+        related: ["doc.bara"],
+        summary: "ok",
+      },
+    });
+    gate.mockRejectedValueOnce(new Error("mapa caído"));
+
+    render(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource="ברא\n"
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        acceptRemotePatches
+        onJudge={onJudge}
+        onConfirm={onConfirm}
+        onUndo={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(listenHandler.current).not.toBeNull();
+    });
+    listenHandler.current?.({ payload: { patch: "ברא\n" } });
+    const accept = await screen.findByRole("button", { name: /^Aceptar$/i });
+    fireEvent.click(accept);
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent ?? "").toMatch(/no se escribe/i);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

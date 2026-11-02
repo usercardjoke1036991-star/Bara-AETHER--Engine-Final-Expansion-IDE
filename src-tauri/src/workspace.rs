@@ -597,6 +597,12 @@ pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String
 
 fn assistant_path_denied(relative: &str) -> bool {
     let normalized = relative.replace('\\', "/");
+    if normalized
+        .split('/')
+        .any(|segment| segment.eq_ignore_ascii_case(".bara-trash"))
+    {
+        return true;
+    }
     let name = normalized.rsplit('/').next().unwrap_or(&normalized);
     let lower = name.to_ascii_lowercase();
     let rel_lower = normalized.to_ascii_lowercase();
@@ -1492,6 +1498,11 @@ mod tests {
             "papelera o borrado directo: {trash}"
         );
         assert!(delete_entry(root_s, ".env").is_err());
+        fs::write(root.join(".bara-trash").join("nota.md"), "secreto\n").expect("trash");
+        assert!(
+            read_assistant(root_s, ".bara-trash/nota.md").is_err(),
+            "el asistente no lee la papelera"
+        );
         fs::remove_dir_all(&root).expect("limpiar");
     }
 }

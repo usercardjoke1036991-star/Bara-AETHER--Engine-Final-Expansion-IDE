@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.5.0",
   "type": "module",
-  "description": "Interfaz grafica del IDE Bara (Tauri v2 + React + TypeScript)",
+  "description": "Interfaz gráfica del IDE Bara (Tauri v2 + React + TypeScript)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

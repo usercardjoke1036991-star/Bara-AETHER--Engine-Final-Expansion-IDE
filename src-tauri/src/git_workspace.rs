@@ -202,10 +202,17 @@ pub fn branches(root: &str) -> Result<GitBranchReport, String> {
 }
 
 /// `git add -A` + `git commit -m`. Sin push.
-pub fn commit(root: &str, message: &str) -> Result<GitCommitReport, String> {
+///
+/// `confirmed` es la segunda confirmación: sin ella no se hace `add -A`.
+pub fn commit(root: &str, message: &str, confirmed: bool) -> Result<GitCommitReport, String> {
     let msg = message.trim();
     if msg.is_empty() {
         return Err("el mensaje de commit está vacío".to_string());
+    }
+    if !confirmed {
+        return Err(
+            "segunda confirmación: git add -A abarca todo el árbol; confirma otra vez".to_string(),
+        );
     }
     if msg.len() > 4000 {
         return Err("el mensaje de commit supera 4000 caracteres".to_string());
@@ -293,7 +300,12 @@ mod tests {
         assert!(!st.entries.is_empty());
         let before = diff(root).expect("diff sin HEAD");
         assert!(!before.patch.is_empty());
-        let done = commit(root, "chore: semilla a6").expect("commit");
+        assert!(
+            commit(root, "chore: semilla a6", false).is_err(),
+            "sin segunda confirmación no hay git add -A"
+        );
+        assert!(status(root).expect("sigue sucio").dirty);
+        let done = commit(root, "chore: semilla a6", true).expect("commit");
         assert!(done.ok);
         let clean = status(root).expect("clean");
         assert!(!clean.dirty);

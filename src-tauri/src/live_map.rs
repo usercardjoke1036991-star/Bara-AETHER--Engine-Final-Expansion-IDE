@@ -137,6 +137,9 @@ pub fn snapshot(root: &str) -> Result<LiveMapSnapshot, String> {
     for path in &file_list {
         if let Ok(doc) = workspace::read_text(root, path) {
             for raw in extract_imports(path, &doc.source) {
+                if path.ends_with(".py") && is_python_stdlib(&raw.target) {
+                    continue;
+                }
                 if let Some(resolved) = resolve_import_target(&files, &raw.target) {
                     import_deps.push(FileDep {
                         from: path.clone(),
@@ -711,6 +714,9 @@ fn should_gate_as_project(path: &str, raw: &RawImport) -> bool {
             if is_python_stdlib(t) {
                 return false;
             }
+            // Relativo siempre. Bare: sólo si ya es ruta; el que coincide con
+            // un `.py` del mapa sale como arista en `resolve_import_target`
+            // (no se marca roto un `import` de paquete externo).
             t.starts_with('.') || t.contains('/')
         }
         _ => t.starts_with('.') || t.starts_with('/') || t.starts_with("crate::"),
@@ -827,19 +833,26 @@ fn resolve_import_target(files: &BTreeSet<String>, target: &str) -> Option<Strin
         .next()
         .unwrap_or(cleaned.as_str())
         .trim_end_matches(':');
+    let dotted = cleaned.replace('.', "/");
     let candidates = [
         cleaned.clone(),
         format!("{cleaned}.rs"),
+        format!("{cleaned}.py"),
         format!("{cleaned}.ts"),
         format!("{cleaned}.tsx"),
         format!("{cleaned}.js"),
         format!("{cleaned}/mod.rs"),
+        format!("{cleaned}/__init__.py"),
         format!("{cleaned}/index.ts"),
         format!("{bare}.rs"),
+        format!("{bare}.py"),
         format!("{bare}.ts"),
         format!("{bare}.tsx"),
         format!("{bare}/mod.rs"),
+        format!("{bare}/__init__.py"),
         format!("{bare}/index.ts"),
+        format!("{dotted}.py"),
+        format!("{dotted}/__init__.py"),
     ];
     for cand in candidates {
         if files.contains(&cand) {
@@ -1127,6 +1140,31 @@ mod tests {
             !gate.ok,
             "vaciar util con dependientes debe romper: {:?}",
             gate.broken
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn python_bare_que_coincide_con_py_es_arista() {
+        let root = scratch("pyedge");
+        fs::write(root.join("app.py"), "import helper\nimport os\n").expect("app");
+        fs::write(root.join("helper.py"), "def x():\n    return 1\n").expect("helper");
+        let root_s = root.to_str().expect("utf8");
+        let snap = snapshot(root_s).expect("map");
+        assert!(
+            snap.deps.iter().any(|d| {
+                d.kind == "import" && d.from.ends_with("app.py") && d.to.ends_with("helper.py")
+            }),
+            "deps={:?}",
+            snap.deps
+        );
+        assert!(
+            !snap
+                .deps
+                .iter()
+                .any(|d| d.kind == "import" && d.to.ends_with("/os.py") || d.to == "os.py"),
+            "stdlib no es arista: {:?}",
+            snap.deps
         );
         let _ = fs::remove_dir_all(root);
     }

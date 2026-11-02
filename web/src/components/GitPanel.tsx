@@ -25,6 +25,7 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [commitArmed, setCommitArmed] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!workspaceRoot) {
@@ -64,19 +65,26 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
       setError("Escribe un mensaje de commit.");
       return;
     }
+    if (!commitArmed) {
+      setCommitArmed(true);
+      setError(null);
+      setNotice("Segunda confirmación: el commit hace git add -A. Pulsa otra vez.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const report = await gitCommit(text);
+      const report = await gitCommit(text, true);
       setNotice(report.summary);
       setMessage("");
+      setCommitArmed(false);
       await refresh();
     } catch (reason: unknown) {
       setError(describeError(reason));
     } finally {
       setBusy(false);
     }
-  }, [message, refresh]);
+  }, [commitArmed, message, refresh]);
 
   const onSwitch = useCallback(
     async (name: string, create: boolean) => {
@@ -143,10 +151,13 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
         value={message}
         disabled={busy}
         placeholder="Mensaje del commit"
-        onChange={(event) => setMessage(event.target.value)}
+        onChange={(event) => {
+          setMessage(event.target.value);
+          setCommitArmed(false);
+        }}
       />
       <button type="button" disabled={busy || !message.trim()} onClick={() => void onCommit()}>
-        Crear commit
+        {commitArmed ? "Confirmar commit (git add -A)" : "Crear commit"}
       </button>
 
       <h4>Ramas</h4>

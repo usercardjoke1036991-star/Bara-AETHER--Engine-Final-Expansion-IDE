@@ -3,11 +3,12 @@ import { describe, expect, it } from "vitest";
 import type { AutoApplyReport } from "./autoApply";
 import { emptyReport } from "./autoApply";
 import {
+  NEED_EDITOR_FILE,
   formatPatchDebug,
+  preflightPatch,
   resolvePatchAttempt,
   shouldListenForPropose,
 } from "./patchFlow";
-import { NEED_BARA_FILE } from "./proposePatch";
 
 function readyReport(): AutoApplyReport {
   return {
@@ -40,7 +41,7 @@ describe("resolvePatchAttempt (flujo e2e lógico)", () => {
 
   it("sin archivo → aviso obligatorio (nunca silencio)", () => {
     const { notice, log } = resolvePatchAttempt("ברא", "<editor>", readyReport());
-    expect(notice).toBe(NEED_BARA_FILE);
+    expect(notice).toBe(NEED_EDITOR_FILE);
     expect(log.phase).toBe("need_file");
   });
 
@@ -111,9 +112,14 @@ describe("integración entre ventanas (orquestación)", () => {
     expect(formatPatchDebug({ phase: "ensure_open", vista: "main" })).toMatch(/ensure_open/);
   });
 
-  it("root_reset deja need_file hasta abrir otro .bara", () => {
+  it("un .rs del editor pasa el preflight", () => {
+    const ready = preflightPatch("fn main() {}\n", "src/main.rs");
+    expect(ready.ok).toBe(true);
+  });
+
+  it("root_reset deja need_file hasta abrir otro archivo del editor", () => {
     const afterReset = resolvePatchAttempt("ברא", "<editor>", readyReport());
-    expect(afterReset.notice).toBe(NEED_BARA_FILE);
+    expect(afterReset.notice).toBe(NEED_EDITOR_FILE);
     expect(afterReset.log.phase).toBe("need_file");
   });
 });
