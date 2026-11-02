@@ -45,6 +45,20 @@ describe("baraSystemPrompt", () => {
     }
   });
 
+  it("inyecta el submapa vivo cuando hay contexto de código", () => {
+    const prompt = baraSystemPrompt({
+      catalogue: [{ glyph: "ברא", meaning: "manifestar" }],
+      sample: "ברא\n",
+      documentName: "src/a.rs",
+      documentSource: "mod util;\n",
+      analysis: null,
+      liveMapText: "## Mapa vivo (subgrafo) · afecta a 2 archivo(s) y 0 test(s)\n- src/a.rs → src/util.rs (import)",
+      userText: "modifica el import",
+    });
+    expect(prompt).toContain("Mapa vivo");
+    expect(prompt).toContain("src/a.rs → src/util.rs");
+  });
+
   it("un Hola omite documento y queda bajo 3000 tokens estimados", () => {
     const catalogue = Array.from({ length: 40 }, (_, i) => ({
       glyph: `אבג`,

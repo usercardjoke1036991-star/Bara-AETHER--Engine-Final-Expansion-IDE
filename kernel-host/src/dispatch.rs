@@ -13,6 +13,7 @@ use crate::completion;
 use crate::global_transmute;
 use crate::graph;
 use crate::idle_worker::{self, IdleNotice};
+use crate::live_map;
 use crate::local_infer;
 use crate::telemetry::{self, CognitiveShelf, OracleShelf};
 
@@ -166,6 +167,39 @@ fn handle(world: &mut World, op: &str, args: &Value) -> Result<Value, String> {
             ))
         }
         "topology" => result_of(graph::build(text(args, "root")?)),
+        "live_map_snapshot" => result_of(live_map::snapshot(text(args, "root")?)),
+        "live_map_impact" => result_of(live_map::impact(
+            text(args, "root")?,
+            &strings(args, "focus")?,
+        )),
+        "live_map_gate" => result_of(live_map::gate_change(
+            text(args, "root")?,
+            text(args, "path")?,
+            text(args, "source")?,
+        )),
+        "live_map_apply_batch" => {
+            let changes: Vec<live_map::BatchChange> = args
+                .get("changes")
+                .cloned()
+                .ok_or_else(|| "falta changes".to_string())
+                .and_then(|value| {
+                    serde_json::from_value(value)
+                        .map_err(|_| "changes no es un lote válido".to_string())
+                })?;
+            result_of(live_map::apply_batch(text(args, "root")?, &changes))
+        }
+        "live_map_context" => {
+            let max_lines = args
+                .get("maxLines")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(48);
+            result_of(live_map::context_for(
+                text(args, "root")?,
+                &strings(args, "focus")?,
+                max_lines,
+            ))
+        }
         "judge_patch" => result_of(auto_apply::judge(
             text(args, "root")?,
             text(args, "path")?,

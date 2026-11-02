@@ -252,6 +252,88 @@ fn get_workspace_topology_graph(
     kernel_call(&kernel, "topology", json!({ "root": state.get()? }))
 }
 
+/// §9.4 — instantánea del mapa vivo (archivo→archivo + avisos).
+#[tauri::command]
+fn live_map_snapshot(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(&kernel, "live_map_snapshot", json!({ "root": state.get()? }))
+}
+
+/// §9.4 — impacto estimado («afecta a N archivos y M tests»).
+#[tauri::command]
+fn live_map_impact(
+    focus: Vec<String>,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "live_map_impact",
+        json!({ "root": state.get()?, "focus": focus }),
+    )
+}
+
+/// §9.4 — puerta pre-apply: rotura de imports antes de escribir.
+#[tauri::command]
+fn live_map_gate(
+    path: String,
+    source: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "live_map_gate",
+        json!({ "root": state.get()?, "path": path, "source": source }),
+    )
+}
+
+/// §9.4 — lote multiarchivo atómico (todo o nada + backup/rollback).
+#[tauri::command]
+fn live_map_apply_batch(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    changes: Value,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    let report = kernel_call(
+        &kernel,
+        "live_map_apply_batch",
+        json!({ "root": state.get()?, "changes": changes }),
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(paths) = report.get("paths").and_then(Value::as_array) {
+            for path in paths.iter().filter_map(Value::as_str) {
+                emit_workspace_file_changed(&app, path);
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// §9.4 — subgrafo textual acotado para el prompt de la IA.
+#[tauri::command]
+fn live_map_context(
+    focus: Vec<String>,
+    max_lines: Option<u32>,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "live_map_context",
+        json!({
+            "root": state.get()?,
+            "focus": focus,
+            "maxLines": max_lines.unwrap_or(48),
+        }),
+    )
+}
+
 /// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
 /// M5: el gate de confianza vive dentro de `orchestrate::run` (sin bypass).
 #[tauri::command]
@@ -1488,6 +1570,11 @@ pub fn run() {
             transmute_input,
             get_local_completions,
             get_workspace_topology_graph,
+            live_map_snapshot,
+            live_map_impact,
+            live_map_gate,
+            live_map_apply_batch,
+            live_map_context,
             workspace_source_text,
             workspace_read_project_file,
             editor_context_publish,
@@ -1558,6 +1645,11 @@ mod ipc_boundary {
         assert!(handler.contains("inspect_media_dialog"));
         assert!(handler.contains("get_local_completions"));
         assert!(handler.contains("get_workspace_topology_graph"));
+        assert!(handler.contains("live_map_snapshot"));
+        assert!(handler.contains("live_map_impact"));
+        assert!(handler.contains("live_map_gate"));
+        assert!(handler.contains("live_map_apply_batch"));
+        assert!(handler.contains("live_map_context"));
         assert!(handler.contains("workspace_source_text"));
         assert!(handler.contains("workspace_read_project_file"));
         assert!(handler.contains("editor_context_publish"));
@@ -1606,6 +1698,10 @@ mod ipc_boundary {
             "fn workspace_delete_entry(",
             "fn get_local_completions(",
             "fn get_workspace_topology_graph(",
+            "fn live_map_snapshot(",
+            "fn live_map_impact(",
+            "fn live_map_gate(",
+            "fn live_map_context(",
             "fn workspace_source_text(",
             "fn workspace_read_project_file(",
             "fn editor_context_publish(",

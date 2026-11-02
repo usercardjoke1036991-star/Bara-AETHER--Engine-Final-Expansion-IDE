@@ -23,6 +23,9 @@ pub(crate) mod completion;
 #[path = "../../src-tauri/src/auto_apply.rs"]
 pub(crate) mod auto_apply;
 
+#[path = "../../src-tauri/src/live_map.rs"]
+pub(crate) mod live_map;
+
 #[path = "../../src-tauri/src/local_infer.rs"]
 pub(crate) mod local_infer;
 

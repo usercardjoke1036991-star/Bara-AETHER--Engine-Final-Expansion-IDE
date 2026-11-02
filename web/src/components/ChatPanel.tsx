@@ -43,6 +43,12 @@ import type { AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
 import { buildReviewChrome, type ReviewChromeLive } from "../reviewChrome";
 import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
+import {
+  liveMapContext,
+  liveMapGate,
+  liveMapImpact,
+  spliceHost,
+} from "../liveMap";
 import { loadLocalWeights, localComplete } from "../offline";
 import {
   formatPatchDebug,
@@ -222,7 +228,14 @@ export default function ChatPanel({
   const [offline, setOffline] = useState(false);
   const [weights, setWeights] = useState<string | null>(null);
   const [autoApply, setAutoApply] = useState(() => readAutoApplyEnabled());
-  const [review, setReview] = useState<{ patch: string; report: AutoApplyReport } | null>(null);
+  const [review, setReview] = useState<{
+    patch: string;
+    report: AutoApplyReport;
+    impactSummary?: string;
+    mapBlock?: string;
+    nextSource?: string;
+  } | null>(null);
+  const [liveMapText, setLiveMapText] = useState("");
   const [lastBackup, setLastBackup] = useState<{ path: string; backupPath: string } | null>(
     null,
   );
@@ -272,9 +285,35 @@ export default function ChatPanel({
       documentSource,
       analysis,
       treeOutline,
+      liveMapText,
     }),
-    [catalogue, sample, documentName, documentSource, analysis, treeOutline],
+    [catalogue, sample, documentName, documentSource, analysis, treeOutline, liveMapText],
   );
+
+  // §9.4 — subgrafo del mapa para el prompt (solo foco del documento abierto).
+  useEffect(() => {
+    let cancel = false;
+    const focus = documentName.trim();
+    if (!focus || focus === "<editor>") {
+      setLiveMapText("");
+      return;
+    }
+    void (async () => {
+      try {
+        const ctx = await liveMapContext([focus], 40);
+        if (!cancel) {
+          setLiveMapText(ctx.text || "");
+        }
+      } catch {
+        if (!cancel) {
+          setLiveMapText("");
+        }
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [documentName, workspaceEpoch]);
 
   useEffect(() => {
     if (open && !settings) {
@@ -332,11 +371,39 @@ export default function ChatPanel({
         const resolved = resolvePatchAttempt(early.code, documentName, report);
         console.info(formatPatchDebug(resolved.log));
         if (resolved.outcome.kind === "review") {
-          setReview({ patch: resolved.outcome.patch, report: resolved.outcome.report });
-          publishNotice(resolved.notice);
-          // Auto-Apply: sólo escribe solo si el juicio es ⊤ verificado.
+          const line = Math.max(1, resolved.outcome.report.line || 1);
+          const nextSource = spliceHost(documentSource, resolved.outcome.patch, line);
+          let impactSummary = "";
+          let mapBlock = "";
+          try {
+            const impact = await liveMapImpact([documentName]);
+            impactSummary = impact.summary;
+            const gate = await liveMapGate(documentName, nextSource);
+            if (!gate.ok) {
+              mapBlock = gate.blockReason || "el cambio rompería imports";
+              impactSummary = `${impactSummary} · ${mapBlock}`;
+            } else if (impactSummary) {
+              // ok
+            }
+          } catch {
+            // El mapa es aditivo: si falla el IPC, el flujo Aceptar/diff sigue.
+          }
+          setReview({
+            patch: resolved.outcome.patch,
+            report: resolved.outcome.report,
+            impactSummary,
+            mapBlock,
+            nextSource,
+          });
+          publishNotice(
+            impactSummary
+              ? `${resolved.notice} · ${impactSummary}`
+              : resolved.notice,
+          );
+          // Auto-Apply: sólo escribe si ⊤ verificado y el mapa no bloquea.
           if (
             autoApply &&
+            !mapBlock &&
             resolved.outcome.report.verified &&
             resolved.outcome.report.canApply
           ) {
@@ -377,7 +444,7 @@ export default function ChatPanel({
         publishNotice(message);
       }
     },
-    [autoApply, documentName, onConfirm, onEnsureOpen, onJudge, publishNotice],
+    [autoApply, documentName, documentSource, onConfirm, onEnsureOpen, onJudge, publishNotice],
   );
 
   /**
@@ -677,6 +744,25 @@ export default function ChatPanel({
       return;
     }
     try {
+      // §9.4 — revalidar puerta del mapa antes de escribir.
+      if (review.nextSource && documentName) {
+        try {
+          const gate = await liveMapGate(documentName, review.nextSource);
+          if (!gate.ok) {
+            const msg =
+              gate.blockReason ||
+              "el cambio rompería imports; no se escribió";
+            setNotice(msg);
+            publishNotice(msg);
+            setReview((prev) =>
+              prev ? { ...prev, mapBlock: msg, impactSummary: gate.impact.summary } : prev,
+            );
+            return;
+          }
+        } catch {
+          // Si el mapa no responde, no bloqueamos el Aceptar manual ya juzgado.
+        }
+      }
       const report = await onConfirm(review.patch, review.report.judgmentId);
       if (report.applied) {
         setLastBackup(
@@ -694,7 +780,7 @@ export default function ChatPanel({
     } catch (error) {
       setNotice(reasonOf(error));
     }
-  }, [onConfirm, publishNotice, review]);
+  }, [documentName, onConfirm, publishNotice, review]);
 
   const rejectReview = useCallback(() => {
     setReview(null);
@@ -1077,6 +1163,16 @@ export default function ChatPanel({
                         : " · equilibrado"}
                     ). Aceptar escribe con respaldo; rechazar no toca el disco.
                   </p>
+                  {review.impactSummary ? (
+                    <p className="ai-impact" role="status">
+                      Mapa: {review.impactSummary}
+                    </p>
+                  ) : null}
+                  {review.mapBlock ? (
+                    <p className="ai-warn-banner" role="alert">
+                      {review.mapBlock} — no se aplicará hasta corregir el import.
+                    </p>
+                  ) : null}
                   <pre className="ai-code-body ai-diff">{review.report.previewDiff}</pre>
                 </div>
               ) : lastBackup ? (

@@ -74,6 +74,7 @@ import {
 } from "./workspace";
 import GitPanel from "./components/GitPanel";
 import ProblemsPanel from "./components/ProblemsPanel";
+import LiveMapPanel from "./components/LiveMapPanel";
 import {
   workspaceTrustGrant,
   workspaceTrustIsTrusted,
@@ -1460,6 +1461,7 @@ export default function App() {
     ["tokens", "Tokens"],
     ["problemas", `Problemas${editorProblems.length ? ` (${editorProblems.length})` : ""}`],
     ["git", "Git"],
+    ["mapa", "Mapa"],
     ["oraculo", "Oráculo"],
     ["catalogo", "Catálogo"],
     ["bilattice", "Bilattice"],
@@ -2171,6 +2173,14 @@ export default function App() {
                 {bottomTab === "git" ? (
                   <div className="zone-scroll">
                     <GitPanel workspaceRoot={workspaceRoot} />
+                  </div>
+                ) : null}
+                {bottomTab === "mapa" ? (
+                  <div className="zone-scroll">
+                    <LiveMapPanel
+                      workspaceRoot={workspaceRoot}
+                      focusPath={activePath ?? ""}
+                    />
                   </div>
                 ) : null}
                 {bottomTab === "oraculo" ? (

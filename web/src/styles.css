@@ -840,9 +840,44 @@ body,
 
 .problems-panel,
 .problems-list,
-.git-panel {
+.git-panel,
+.live-map-panel {
   min-height: 0;
   overflow-y: auto;
+}
+
+.live-map-panel h4 {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+.live-map-toolbar {
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.live-map-deps,
+.live-map-warnings {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.75rem;
+  font-size: 0.82rem;
+}
+
+.live-map-deps li,
+.live-map-warnings li {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #444) 50%, transparent);
+}
+
+.live-map-kind {
+  opacity: 0.65;
+  font-size: 0.75rem;
+}
+
+.ai-impact {
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
 }
 
 .problems-list {

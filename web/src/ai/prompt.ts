@@ -34,6 +34,10 @@ export interface PromptContext {
   /** Árbol de la carpeta abierta (texto), sin `.git`/`target`/`node_modules`. */
   treeOutline?: string;
   /**
+   * Subgrafo del mapa vivo (§9.4) relevante al cambio — no el mapa entero.
+   */
+  liveMapText?: string;
+  /**
    * Texto del usuario del turno actual. Sirve para omitir documento/ejemplo
    * en saludos cortos y ahorrar tokens.
    */
@@ -125,8 +129,9 @@ export function promptBudgetParts(context: PromptContext): PromptBudgetPart[] {
     : "";
   const sample = withCode ? excerpt(context.sample || "", MAX_SAMPLE_CHARS) : "";
 
+  const mapText = withCode ? (context.liveMapText ?? "").trim() : "";
   const liveHeader = withCode
-    ? `## Documento\n${docName} · ${analysis}\n\`\`\`bara\n${document || "(vacío)"}\n\`\`\`\n\n## Árbol (rutas)\n${tree || "(sin carpeta)"}\n\n## Catálogo\n${catalogue}\n\n## Ejemplo kernel\n\`\`\`bara\n${sample || "(omitido)"}\n\`\`\`\n\n## Herramienta\nUsa leer_archivo(path) vía function calling nativo; no escribas DSML ni XML de herramientas.`
+    ? `## Documento\n${docName} · ${analysis}\n\`\`\`bara\n${document || "(vacío)"}\n\`\`\`\n\n## Árbol (rutas)\n${tree || "(sin carpeta)"}\n\n## Catálogo\n${catalogue}\n\n## Ejemplo kernel\n\`\`\`bara\n${sample || "(omitido)"}\n\`\`\`\n\n## Herramienta\nUsa leer_archivo(path) vía function calling nativo; no escribas DSML ni XML de herramientas.${mapText ? `\n\n${mapText}` : ""}`
     : `## Sesión\nSaludo / chat corto: sin documento ni ejemplo. Catálogo: ${catalogue}\nÁrbol: ${tree || "(sin carpeta)"}\nHerramienta: leer_archivo(path) nativa si hace falta un archivo.`;
 
   const parts: PromptBudgetPart[] = [
@@ -137,6 +142,7 @@ export function promptBudgetParts(context: PromptContext): PromptBudgetPart[] {
     partOf("arbol", tree),
     partOf("documento", withCode ? `${docName}\n${analysis}\n${document}` : ""),
     partOf("ejemplo", sample),
+    partOf("mapa", mapText),
     partOf("vivo.resto", liveHeader),
   ];
   return parts;
@@ -199,6 +205,7 @@ Catálogo: ${catalogue}
 Árbol (muestra): ${tree || "(sin carpeta)"}
 Herramienta: leer_archivo(path) por function calling nativo (nunca markup DSML).`;
   }
+  const mapText = (context.liveMapText ?? "").trim();
   return `## Documento
 ${context.documentName || "(sin nombre)"} · ${inventoryLine(context.analysis)}
 \`\`\`bara
@@ -217,7 +224,7 @@ ${excerpt(context.sample, MAX_SAMPLE_CHARS)}
 \`\`\`
 
 ## Herramienta
-Usa leer_archivo(path) vía function calling nativo; no escribas DSML ni XML de herramientas en el chat.`;
+Usa leer_archivo(path) vía function calling nativo; no escribas DSML ni XML de herramientas en el chat.${mapText ? `\n\n${mapText}` : ""}`;
 }
 
 /** Prompt del sistema completo. */

@@ -9,6 +9,7 @@ export type BottomTab =
   | "tokens"
   | "problemas"
   | "git"
+  | "mapa"
   | "oraculo"
   | "catalogo"
   | "bilattice"
