@@ -70,6 +70,7 @@ import {
   undoAutoPatch,
 } from "./autoApply";
 import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
+import { runWithBusy } from "./busyGuard";
 import { runWorkspaceRecipe, type RecipeName } from "./recipes";
 import { publishVeto } from "./topology";
 import { openDevtools, outlineTree, publishEditorContext } from "./editorBridge";
@@ -925,19 +926,56 @@ export default function App() {
 
   /** Receta del catálogo cerrado. No abre un shell. */
   const runRecipe = useCallback(async (recipe: RecipeName) => {
-    setBusy(true);
     const live: string[] = [];
     setConsoleLog((current) => [
       ...current,
       { input: recipe, reply: "… ejecutando (salida en vivo)", roots: "" },
     ].slice(-40));
-    const stop = await listen<{ stream: string; text: string; exitCode?: number }>(
-      "recipe-output",
-      (event) => {
-        const chunk = event.payload;
-        const prefix = chunk.stream === "stderr" ? "stderr" : chunk.stream === "exit" ? "exit" : "out";
-        live.push(`[${prefix}] ${chunk.text}`);
-        const reply = live.slice(-80).join("\n");
+    // B2: listen dentro del mismo try/finally que libera busy.
+    await runWithBusy(setBusy, async () => {
+      let stop: (() => void) | undefined;
+      try {
+        stop = await listen<{ stream: string; text: string; exitCode?: number }>(
+          "recipe-output",
+          (event) => {
+            const chunk = event.payload;
+            const prefix =
+              chunk.stream === "stderr" ? "stderr" : chunk.stream === "exit" ? "exit" : "out";
+            live.push(`[${prefix}] ${chunk.text}`);
+            const reply = live.slice(-80).join("\n");
+            setConsoleLog((current) => {
+              const next = [...current];
+              for (let i = next.length - 1; i >= 0; i -= 1) {
+                if (next[i]?.input === recipe) {
+                  next[i] = { input: recipe, reply, roots: "" };
+                  break;
+                }
+              }
+              return next.slice(-40);
+            });
+          },
+        );
+        const report = await runWorkspaceRecipe(recipe);
+        const faults = report.lines.filter((line) => line.status === "false").slice(0, 6);
+        const summary = [
+          `${report.recipe} · salida ${report.exitCode} · ⊤ ${report.trueCount} · ⊥ ${report.falseCount} · ⊤∧⊥ ${report.bothCount} · ∅ ${report.neitherCount}${report.truncated ? " · recortado" : ""}${report.timedOut ? " · tiempo agotado" : ""}`,
+          ...faults.map((line) => `${line.glyph} ${line.text}`),
+          ...(live.length > 0 ? ["———", ...live.slice(-40)] : []),
+        ].join("\n");
+        setConsoleLog((current) => {
+          const next = [...current];
+          for (let i = next.length - 1; i >= 0; i -= 1) {
+            if (next[i]?.input === recipe) {
+              next[i] = { input: recipe, reply: summary, roots: "" };
+              break;
+            }
+          }
+          return next.slice(-40);
+        });
+      } catch (failure) {
+        const message = describeError(failure);
+        setError(message);
+        const reply = [message, ...live.slice(-20)].join("\n");
         setConsoleLog((current) => {
           const next = [...current];
           for (let i = next.length - 1; i >= 0; i -= 1) {
@@ -948,42 +986,10 @@ export default function App() {
           }
           return next.slice(-40);
         });
-      },
-    );
-    try {
-      const report = await runWorkspaceRecipe(recipe);
-      const faults = report.lines.filter((line) => line.status === "false").slice(0, 6);
-      const summary = [
-        `${report.recipe} · salida ${report.exitCode} · ⊤ ${report.trueCount} · ⊥ ${report.falseCount} · ⊤∧⊥ ${report.bothCount} · ∅ ${report.neitherCount}${report.truncated ? " · recortado" : ""}${report.timedOut ? " · tiempo agotado" : ""}`,
-        ...faults.map((line) => `${line.glyph} ${line.text}`),
-        ...(live.length > 0 ? ["———", ...live.slice(-40)] : []),
-      ].join("\n");
-      setConsoleLog((current) => {
-        const next = [...current];
-        for (let i = next.length - 1; i >= 0; i -= 1) {
-          if (next[i]?.input === recipe) {
-            next[i] = { input: recipe, reply: summary, roots: "" };
-            break;
-          }
-        }
-        return next.slice(-40);
-      });
-    } catch (failure) {
-      const reply = [describeError(failure), ...live.slice(-20)].join("\n");
-      setConsoleLog((current) => {
-        const next = [...current];
-        for (let i = next.length - 1; i >= 0; i -= 1) {
-          if (next[i]?.input === recipe) {
-            next[i] = { input: recipe, reply, roots: "" };
-            break;
-          }
-        }
-        return next.slice(-40);
-      });
-    } finally {
-      stop();
-      setBusy(false);
-    }
+      } finally {
+        stop?.();
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -1368,10 +1374,18 @@ export default function App() {
         <IdleNote
           message={idle.message}
           onApply={() => {
-            void idleApply().finally(() => setIdle(null));
+            void idleApply()
+              .catch((failure: unknown) => {
+                setError(describeError(failure));
+              })
+              .finally(() => setIdle(null));
           }}
           onDismiss={() => {
-            void idleDismiss().finally(() => setIdle(null));
+            void idleDismiss()
+              .catch((failure: unknown) => {
+                setError(describeError(failure));
+              })
+              .finally(() => setIdle(null));
           }}
         />
       ) : null}

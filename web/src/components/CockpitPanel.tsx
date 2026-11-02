@@ -183,10 +183,18 @@ export default function CockpitPanel({
         <IdleNote
           message={idle.message}
           onApply={() => {
-            void idleApply().finally(() => setIdle(null));
+            void idleApply()
+              .catch((failure: unknown) => {
+                setError(describeError(failure));
+              })
+              .finally(() => setIdle(null));
           }}
           onDismiss={() => {
-            void idleDismiss().finally(() => setIdle(null));
+            void idleDismiss()
+              .catch((failure: unknown) => {
+                setError(describeError(failure));
+              })
+              .finally(() => setIdle(null));
           }}
         />
       ) : null}
