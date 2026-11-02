@@ -815,15 +815,7 @@ body,
 }
 
 .shelf-path {
-  font-size: 0.62rem;
-  line-height: 1.2;
-  padding-left: calc(14px + 0.4rem);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0.72;
-  color: var(--muted);
+  display: none; /* mockup: sólo nombre + icono; path completo en title */
 }
 
 .shelf-active,

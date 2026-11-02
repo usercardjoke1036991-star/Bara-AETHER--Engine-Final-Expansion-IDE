@@ -95,7 +95,14 @@ function claveFicticia(marca: string): string {
 
 /** Configuración lista para enviar (clave ficticia). */
 function readyConfig(): AiConfig {
-  return { ...DEFAULT_CONFIG, apiKey: claveFicticia("autocomprobacion"), hasKey: true };
+  return {
+    ...DEFAULT_CONFIG,
+    provider: "anthropic",
+    model: PROVIDER_MODEL_PRESETS.anthropic[0],
+    baseUrl: PROVIDER_ENDPOINTS.anthropic,
+    apiKey: claveFicticia("autocomprobacion"),
+    hasKey: true,
+  };
 }
 
 /** Adjunto de mentira con la forma real de una imagen normalizada. */
@@ -193,7 +200,7 @@ const CHECKS: Check[] = [
       const cambiada = withProvider(readyConfig(), "openai");
       expect(cambiada.hasKey === false, "el otro proveedor heredó el indicio de clave");
       expect(cambiada.baseUrl === PROVIDER_ENDPOINTS.openai, "raíz de API incorrecta");
-      expect(cambiada.model === PROVIDER_MODEL_PRESETS.openai[0], "modelo por defecto incorrecto");
+      expect(cambiada.model === "", "al cambiar de proveedor el modelo queda vacío hasta listar");
       const store = memoryStore();
       const propia = "https://api.example/v1";
       expect(

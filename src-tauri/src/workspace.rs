@@ -19,6 +19,51 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
+/// Quita el prefijo Win32 extendido (`\\?\` / `\\?\UNC\`) y unifica `/`.
+///
+/// `fs::canonicalize` en Windows suele devolver `\\?\C:\…`; sin esto la UI y
+/// `root_id` duplican la misma carpeta. Equivale a lo que haría `dunce` sin
+/// añadir dependencia.
+pub fn simplify_path(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    PathBuf::from(strip_verbatim_prefix(&raw))
+}
+
+/// Forma estable para IPC/UI: sin `\\?\`, barras `/`.
+pub fn path_to_api(path: &Path) -> String {
+    simplify_path(path).to_string_lossy().replace('\\', "/")
+}
+
+fn strip_verbatim_prefix(raw: &str) -> String {
+    let trimmed = raw.trim();
+    // `\\?\UNC\server\share\…` → `\\server\share\…`
+    if let Some(rest) = trimmed.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = trimmed.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    // Tras normalizar a `/`: `//?/C:/…` o `//?/UNC/…`
+    let forward = trimmed.replace('\\', "/");
+    if let Some(rest) = forward.strip_prefix("//?/UNC/") {
+        return format!("//{rest}");
+    }
+    if let Some(rest) = forward.strip_prefix("//?/") {
+        return rest.to_string();
+    }
+    trimmed.to_string()
+}
+
+/// Clave de identidad de raíz (case-fold en Windows).
+pub fn normalize_root_key(path: &str) -> String {
+    let simplified = strip_verbatim_prefix(path).replace('\\', "/");
+    let mut out = simplified.trim_end_matches('/').to_string();
+    if cfg!(windows) {
+        out = out.to_ascii_lowercase();
+    }
+    out
+}
+
 /// Directorios que nunca se enumeran (artefactos y metadatos del repositorio).
 const EXCLUDED_DIRS: [&str; 4] = ["target", "node_modules", ".git", ".bara-backup"];
 
@@ -155,9 +200,11 @@ pub fn resolve_root(root: &str) -> Result<PathBuf, String> {
     if !canonical.is_dir() {
         return Err(format!(
             "«{}» no es un directorio de workspace",
-            canonical.display()
+            path_to_api(&canonical)
         ));
     }
+    // Se conserva el PathBuf canónico del SO (con `\\?\` en Windows) para
+    // `starts_with` al validar miembros; la UI recibe `path_to_api`.
     Ok(canonical)
 }
 
@@ -173,11 +220,11 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
     let files = count_bara(&entries);
 
     Ok(WorkspaceTree {
-        root: canonical.display().to_string(),
+        root: path_to_api(&canonical),
         name: canonical
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| canonical.display().to_string()),
+            .unwrap_or_else(|| path_to_api(&canonical)),
         entries,
         files,
         truncated,
@@ -259,10 +306,11 @@ pub struct ActiveWorkspace {
     shelf: Mutex<Shelf>,
 }
 
-/// Identificador determinista de una ruta canónica.
+/// Identificador determinista de una ruta canónica (sin `\\?\`, case-fold Win).
 pub fn root_id(path: &str) -> String {
+    let key = normalize_root_key(path);
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in path.as_bytes() {
+    for byte in key.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
@@ -270,10 +318,11 @@ pub fn root_id(path: &str) -> String {
 }
 
 fn folder_name(path: &str) -> String {
-    Path::new(path)
+    let simplified = strip_verbatim_prefix(path);
+    Path::new(&simplified)
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string())
+        .unwrap_or_else(|| simplified)
 }
 
 impl ActiveWorkspace {
@@ -287,7 +336,7 @@ impl ActiveWorkspace {
         if let Some(path) = default_root()
             .ok()
             .and_then(|raw| resolve_root(&raw).ok())
-            .map(|path| path.display().to_string())
+            .map(|path| path_to_api(&path))
         {
             shelf.admit(path);
         }
@@ -405,11 +454,21 @@ impl Shelf {
 
     /// `Some` es la ruta canónica expulsada por LRU. `None` si nadie salió.
     fn admit(&mut self, path: String) -> Option<String> {
-        if let Some(index) = self.slots.iter().position(|slot| slot.path == path) {
+        let path = path_to_api(Path::new(&path));
+        let key = normalize_root_key(&path);
+        if let Some(index) = self
+            .slots
+            .iter()
+            .position(|slot| normalize_root_key(&slot.path) == key)
+        {
             self.active = index;
             let used = self.tick();
             if let Some(slot) = self.slots.get_mut(index) {
                 slot.used = used;
+                // Canoniza la forma guardada (sin `\\?\`) si venía distinta.
+                slot.path = path;
+                slot.name = folder_name(&slot.path);
+                slot.id = root_id(&slot.path);
             }
             return None;
         }
@@ -523,7 +582,7 @@ pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
     Ok(document_of(
-        canonical_root.display().to_string(),
+        path_to_api(&canonical_root),
         normalize_relative(relative),
         file_name(&canonical),
         source,
@@ -572,7 +631,7 @@ pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, S
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
     Ok(document_of(
-        canonical_root.display().to_string(),
+        path_to_api(&canonical_root),
         normalize_relative(relative),
         file_name(&canonical),
         source,
@@ -590,7 +649,7 @@ pub fn read(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
 
     Ok(document_of(
-        canonical_root.display().to_string(),
+        path_to_api(&canonical_root),
         normalize_relative(relative),
         file_name(&canonical),
         source,
@@ -641,7 +700,7 @@ pub fn write(
         .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
 
     Ok(document_of(
-        canonical_root.display().to_string(),
+        path_to_api(&canonical_root),
         normalize_relative(relative),
         file_name(&canonical),
         source.to_string(),
@@ -681,7 +740,7 @@ pub fn write_source_checked(
     write_atomic(&canonical, source)
         .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
     Ok(document_of(
-        canonical_root.display().to_string(),
+        path_to_api(&canonical_root),
         normalize_relative(relative),
         file_name(&canonical),
         source.to_string(),
@@ -842,7 +901,7 @@ fn open_absolute(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
     let source =
         fs::read_to_string(&canonical).map_err(|err| format!("no se pudo leer «{path}»: {err}"))?;
     Ok(document_of(
-        canonical_root.display().to_string(),
+        path_to_api(&canonical_root),
         normalize_relative(&relative.to_string_lossy()),
         file_name(&canonical),
         source,
@@ -1240,5 +1299,16 @@ mod tests {
             fs::remove_dir_all(dir).expect("limpiar");
         }
         fs::remove_dir_all(extra_dir).expect("limpiar extra");
+    }
+
+    #[test]
+    fn strip_verbatim_win32_y_root_id_estable() {
+        let a = normalize_root_key(r"\\?\C:\Users\Vexor\Downloads\BAR");
+        let b = normalize_root_key(r"C:\Users\Vexor\Downloads\BAR");
+        let c = normalize_root_key("C:/Users/Vexor/Downloads/BAR");
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(root_id(r"\\?\C:\Users\Vexor\Downloads\BAR"), root_id("C:/Users/Vexor/Downloads/BAR"));
+        assert!(!path_to_api(Path::new(r"\\?\C:\foo\bar")).contains(r"\\?\"));
     }
 }

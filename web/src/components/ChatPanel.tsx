@@ -249,11 +249,12 @@ export default function ChatPanel({
     saveChatHistory(projectId, messages);
   }, [projectId, messages]);
   const storeAvailable = useMemo(() => defaultStore() !== null, []);
-  const problems = configProblems(config);
+  const liveModelIds = models.map((model) => model.id);
+  const problems = configProblems(config, liveModelIds);
   const composerPayload = [draft.trim(), fileNotesForPrompt(attachments)]
     .filter((part) => part.length > 0)
     .join("\n\n");
-  const sendGate = chatSendGate(config, composerPayload, pending, offline);
+  const sendGate = chatSendGate(config, composerPayload, pending, offline, liveModelIds);
 
   /** Prompt base (sin texto de usuario); el envío añade `userText` del turno. */
   const promptContextBase = useMemo(
@@ -484,7 +485,7 @@ export default function ChatPanel({
   const send = useCallback(async () => {
     const notes = fileNotesForPrompt(attachments);
     const text = [draft.trim(), notes].filter((part) => part.length > 0).join("\n\n");
-    if (chatSendGate(config, text, pending, offline) !== null) {
+    if (chatSendGate(config, text, pending, offline, models.map((m) => m.id)) !== null) {
       return;
     }
     const user: ChatMessage = {

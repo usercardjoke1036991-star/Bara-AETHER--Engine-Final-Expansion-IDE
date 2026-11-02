@@ -998,7 +998,7 @@ fn workspace_reopen(
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceShelf, String> {
     let canonical = workspace::resolve_root(path.trim())?;
-    let root = canonical.display().to_string();
+    let root = workspace::path_to_api(&canonical);
     adopt_root(&state, &kernel, root.clone());
     let _ = app.emit(
         "workspace-root-changed",
@@ -1059,7 +1059,7 @@ async fn workspace_open_dialog(
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceTree, String> {
     let folder = pick_folder(&app, "Abrir carpeta del workspace")?;
-    let tree = workspace::tree(&folder.display().to_string())?;
+    let tree = workspace::tree(&workspace::path_to_api(&folder))?;
     adopt_root(&state, &kernel, tree.root.clone());
     let _ = app.emit(
         "workspace-root-changed",
@@ -1091,7 +1091,7 @@ async fn github_clone(
     })
     .await
     .map_err(|_| "el clon se interrumpió".to_string())??;
-    let tree = workspace::tree(&cloned.display().to_string())?;
+    let tree = workspace::tree(&workspace::path_to_api(&cloned))?;
     adopt_root(&state, &kernel, tree.root.clone());
     let _ = app.emit(
         "workspace-root-changed",

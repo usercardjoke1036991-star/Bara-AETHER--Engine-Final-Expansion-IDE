@@ -2,7 +2,7 @@
 // ni el IPC del kernel, ni la red, de modo que puede comprobarse en Node.
 
 /** Proveedores soportados por el cliente de chat. */
-export type ProviderId = "anthropic" | "openai";
+export type ProviderId = "anthropic" | "openai" | "deepseek";
 
 /** Rol de un mensaje dentro de la conversación. */
 export type ChatRole = "user" | "assistant";

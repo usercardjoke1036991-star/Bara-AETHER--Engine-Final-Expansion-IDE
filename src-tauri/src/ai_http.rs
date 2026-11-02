@@ -93,8 +93,8 @@ fn cabeceras(provider: &str, secret: &str) -> Result<Vec<(&'static str, String)>
             ("x-api-key", secret.to_string()),
             ("anthropic-version", ANTHROPIC_VERSION.to_string()),
         ]),
-        // OpenAI y compatibles (DeepSeek, Ollama local, …) usan Bearer.
-        "openai" => Ok(vec![("authorization", format!("Bearer {secret}"))]),
+        // OpenAI, DeepSeek y compatibles locales usan Bearer.
+        "openai" | "deepseek" => Ok(vec![("authorization", format!("Bearer {secret}"))]),
         _ => Err("el proveedor no tiene transporte".to_string()),
     }
 }

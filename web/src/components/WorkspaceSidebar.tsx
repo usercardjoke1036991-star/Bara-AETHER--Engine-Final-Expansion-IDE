@@ -8,7 +8,6 @@ import {
   loadRecents,
   mergeShelfDisplay,
   rememberShelf,
-  shortPath,
   type RecentProject,
 } from "../projectRecents";
 import { ICON_FOLDER, WorkspaceIcon } from "../shell/WorkspaceIcons";
@@ -114,10 +113,6 @@ export default function WorkspaceSidebar({
 
   return (
     <aside className="workspace" aria-label="Explorador del workspace">
-      <header className="ws-title">
-        <h1>Workspace</h1>
-      </header>
-
       <section className="ws-section ws-projects" aria-label="Proyectos">
         <div className="ws-section-head">
           <h2>PROYECTOS</h2>
@@ -160,7 +155,6 @@ export default function WorkspaceSidebar({
                       <WorkspaceIcon src={ICON_FOLDER} label="Proyecto" />
                       <span className="shelf-name">{slot.name}</span>
                     </span>
-                    <span className="shelf-path muted">{shortPath(slot.path)}</span>
                   </button>
                   <button
                     type="button"
@@ -190,14 +184,10 @@ export default function WorkspaceSidebar({
         {shelfError ? <p className="error">{shelfError}</p> : null}
       </section>
 
-      <section className="ws-section ws-files" aria-label="Archivos">
+      <section className="ws-section ws-files" aria-label="Archivos del proyecto activo">
         <div className="ws-section-head">
-          <h2>ARCHIVOS</h2>
+          <h2 title={root || undefined}>ARCHIVOS</h2>
         </div>
-
-        <p className="workspace-root path" title={root}>
-          {root ? shortPath(root, 52) : "Sin carpeta activa"}
-        </p>
 
         {tree?.truncated ? (
           <p className="workspace-meta">Vista recortada</p>

@@ -1,5 +1,6 @@
 // Recientes de PROYECTOS (localStorage). Sin secretos ni API keys.
 
+import { normalizeWorkspacePath, pathKey } from "./paths";
 import type { WorkspaceRootView, WorkspaceShelf } from "./workspace";
 
 const KEY = "bara.projects.v1";
@@ -16,10 +17,9 @@ interface Store {
   roots: RecentProject[];
 }
 
-/** Path corto para la lista (cola legible). */
+/** Path corto para tooltips (cola legible; sin `\\?\`). */
 export function shortPath(path: string, max = 42): string {
-  let normalized = path.replace(/\\/g, "/").trim();
-  normalized = normalized.replace(/^\/\/\?\//, "").replace(/^\/\?\//, "");
+  const normalized = normalizeWorkspacePath(path);
   if (normalized.length <= max) {
     return normalized;
   }
@@ -121,17 +121,23 @@ export function mergeShelfDisplay(
 ): WorkspaceRootView[] {
   const live = shelf?.roots ?? [];
   const byId = new Map(live.map((item) => [item.id, item]));
-  const out: WorkspaceRootView[] = live.map((item) => ({ ...item }));
+  const byPath = new Set(live.map((item) => pathKey(item.path)));
+  const out: WorkspaceRootView[] = live.map((item) => ({
+    ...item,
+    path: normalizeWorkspacePath(item.path),
+  }));
   for (const recent of recents) {
-    if (byId.has(recent.id)) {
+    if (byId.has(recent.id) || byPath.has(pathKey(recent.path))) {
       continue;
     }
+    const path = normalizeWorkspacePath(recent.path);
     out.push({
       id: recent.id,
-      path: recent.path,
+      path,
       name: recent.name,
       active: false,
     });
+    byPath.add(pathKey(path));
   }
   return out;
 }

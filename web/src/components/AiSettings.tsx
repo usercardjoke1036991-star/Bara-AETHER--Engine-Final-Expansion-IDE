@@ -5,12 +5,12 @@
 
 import {
   DEFAULT_CONFIG,
+  DEEPSEEK_ROOTS,
   PROVIDER_ENDPOINTS,
   PROVIDER_LABELS,
   PROVIDER_MODEL_PRESETS,
   TOKEN_RANGE,
   configProblems,
-  isLocalApiRoot,
   temperatureRange,
   describeConfig,
   withProvider,
@@ -18,7 +18,7 @@ import {
 import type { AiConfig, ModelInfo, ProviderId } from "../ai/types";
 
 /** Orden estable de los proveedores en el selector. */
-const PROVIDERS: ProviderId[] = ["anthropic", "openai"];
+const PROVIDERS: ProviderId[] = ["deepseek", "openai", "anthropic"];
 
 /** Ajusta un número a un rango, ignorando valores no finitos. */
 function clamp(value: number, min: number, max: number): number {
@@ -53,10 +53,10 @@ export default function AiSettings({
   onProbe: () => void;
   onClose: () => void;
 }) {
-  const problems = configProblems(config);
+  const liveIds = models.map((model) => model.id);
+  const problems = configProblems(config, liveIds);
   const presets = PROVIDER_MODEL_PRESETS[config.provider];
   const heat = temperatureRange(config.provider);
-  const localOverride = isLocalApiRoot(config.baseUrl);
 
   return (
     <div className="ai-settings">
@@ -80,6 +80,7 @@ export default function AiSettings({
           list="ai-model-presets"
           spellCheck={false}
           value={config.model}
+          placeholder="listar modelos o preset oficial"
           onChange={(event) => onChange({ ...config, model: event.target.value })}
         />
         <datalist id="ai-model-presets">
@@ -125,19 +126,14 @@ export default function AiSettings({
         <span>Raíz de la API</span>
         <input
           spellCheck={false}
-          readOnly={!localOverride}
           value={config.baseUrl}
           placeholder={PROVIDER_ENDPOINTS[config.provider]}
           aria-label="Raíz de la API"
-          onChange={(event) => {
-            if (localOverride) {
-              onChange({ ...config, baseUrl: event.target.value });
-            }
-          }}
+          onChange={(event) => onChange({ ...config, baseUrl: event.target.value })}
         />
         <span className="muted">
-          En la nube sólo la raíz oficial del proveedor (OpenAI admite DeepSeek). Para un servidor
-          local usa el botón de abajo; entonces podrás editar la URL.
+          Editable; se valida contra la allowlist (oficiales, DeepSeek, localhost). DeepSeek admite
+          con o sin <code className="inline-code">/v1</code>.
         </span>
       </label>
       <div className="row">
@@ -148,6 +144,18 @@ export default function AiSettings({
           }
         >
           raíz oficial
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (config.provider === "anthropic") {
+              onChange({ ...withProvider(config, "deepseek"), baseUrl: DEEPSEEK_ROOTS[0] });
+              return;
+            }
+            onChange({ ...config, baseUrl: DEEPSEEK_ROOTS[0] });
+          }}
+        >
+          DeepSeek
         </button>
         <button
           type="button"

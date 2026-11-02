@@ -11,14 +11,31 @@ export function isWindowsHost(): boolean {
   return false;
 }
 
-/** Normaliza separadores y recorta; no resuelve `.`/`..`. */
+/** Quita `\\?\` / `//?/` (Win32 extendido) y unifica separadores a `/`. */
+export function stripVerbatimPrefix(path: string): string {
+  let value = path.trim();
+  if (value.startsWith("\\\\?\\UNC\\")) {
+    value = `\\\\${value.slice("\\\\?\\UNC\\".length)}`;
+  } else if (value.startsWith("\\\\?\\")) {
+    value = value.slice("\\\\?\\".length);
+  }
+  value = value.replaceAll("\\", "/");
+  if (value.startsWith("//?/UNC/")) {
+    value = `//${value.slice("//?/UNC/".length)}`;
+  } else if (value.startsWith("//?/")) {
+    value = value.slice("//?/".length);
+  }
+  return value;
+}
+
+/** Normaliza separadores, quita `\\?\` y recorta; no resuelve `.`/`..`. */
 export function normalizeWorkspacePath(path: string | null | undefined): string {
-  return (path ?? "").trim().replaceAll("\\", "/");
+  return stripVerbatimPrefix(path ?? "");
 }
 
 /** Clave de comparación: en Windows, minúsculas ASCII. */
 export function pathKey(path: string | null | undefined): string {
-  const normalized = normalizeWorkspacePath(path);
+  const normalized = normalizeWorkspacePath(path).replace(/\/+$/, "");
   return isWindowsHost() ? normalized.toLowerCase() : normalized;
 }
 

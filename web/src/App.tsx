@@ -1384,24 +1384,20 @@ export default function App() {
         {sideOpen ? (
           <>
             <aside className="ide-side" aria-label="Panel lateral">
-              <div className="side-head">
-                <strong>
-                  {sideMode === "files"
-                    ? "Archivos"
-                    : sideMode === "search"
-                      ? "Buscar"
-                      : "Ajustes"}
-                </strong>
-                <button
-                  type="button"
-                  className="side-close"
-                  title="Cerrar panel lateral"
-                  aria-label="Cerrar panel lateral"
-                  onClick={() => setSideMode(null)}
-                >
-                  ×
-                </button>
-              </div>
+              {sideMode !== "files" ? (
+                <div className="side-head">
+                  <strong>{sideMode === "search" ? "Buscar" : "Ajustes"}</strong>
+                  <button
+                    type="button"
+                    className="side-close"
+                    title="Cerrar panel lateral"
+                    aria-label="Cerrar panel lateral"
+                    onClick={() => setSideMode(null)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : null}
               {sideMode === "files" ? (
                 <WorkspaceSidebar
                   root={workspaceRoot}
@@ -1411,7 +1407,13 @@ export default function App() {
                   onPickFolder={() => {
                     void pickFolder();
                   }}
-                  onClone={() => setShowWelcome(true)}
+                  onClone={() => {
+                    const url = window.prompt("Repositorio de GitHub (HTTPS o SSH)");
+                    const next = url?.trim() ?? "";
+                    if (next) {
+                      void cloneRepository(next);
+                    }
+                  }}
                   onRefresh={() => {
                     void refreshWorkspace();
                   }}
@@ -1557,7 +1559,7 @@ export default function App() {
               <div className="editor-shell">
                 <div className="editor-main">
                   <div className="editor-stage">
-                    {showWelcome ? (
+                    {showWelcome && !workspaceRoot ? (
                       <WelcomeGate
                         busy={workspaceLoading || importing}
                         progress={cloneProgress}

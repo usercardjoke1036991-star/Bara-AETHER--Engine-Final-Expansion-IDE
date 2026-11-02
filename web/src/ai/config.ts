@@ -13,23 +13,31 @@ export const STORAGE_KEY = "bara-ide.ai.config.v1";
 export const PROVIDER_ENDPOINTS: Record<ProviderId, string> = {
   anthropic: "https://api.anthropic.com/v1",
   openai: "https://api.openai.com/v1",
+  deepseek: "https://api.deepseek.com",
 };
 
 /** Nombre visible de cada proveedor. */
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   anthropic: "Anthropic · Claude (Messages API)",
-  openai: "OpenAI o compatible (Chat Completions · visión)",
+  openai: "OpenAI (Chat Completions · visión)",
+  deepseek: "DeepSeek (OpenAI-compatible)",
 };
 
 /**
- * Modelos sugeridos. Se toman de los ejemplos de la documentación oficial y
- * **no** se dan por válidos: el panel ofrece «Detectar modelos», que consulta
- * `GET /models` del proveedor y devuelve la lista real de la cuenta.
+ * Modelos sugeridos oficiales. No sustituyen `GET /models`: si hay lista viva
+ * y el modelo no está en ella, el envío se bloquea hasta listar/elegir.
  */
 export const PROVIDER_MODEL_PRESETS: Record<ProviderId, string[]> = {
-  anthropic: ["claude-opus-5-5"],
-  openai: ["gpt-5.6-sol", "gpt-6-astra"],
+  anthropic: ["claude-sonnet-4-5", "claude-haiku-4-5"],
+  openai: ["gpt-4o", "gpt-4o-mini"],
+  deepseek: ["deepseek-chat", "deepseek-reasoner"],
 };
+
+/** Raíz oficial DeepSeek (también acepta `/v1`). */
+export const DEEPSEEK_ROOTS: readonly string[] = [
+  "https://api.deepseek.com",
+  "https://api.deepseek.com/v1",
+];
 
 /** Versión de la Messages API que habla este cliente. */
 export const ANTHROPIC_VERSION = "2023-06-01";
@@ -37,25 +45,25 @@ export const ANTHROPIC_VERSION = "2023-06-01";
 /** Cabecera histórica de Anthropic. El proceso ya no la envía: no habla un navegador. */
 export const ANTHROPIC_BROWSER_HEADER = "anthropic-dangerous-direct-browser-access";
 
-/** Configuración de fábrica (Anthropic y sin clave: la pone el usuario). */
+/** Configuración de fábrica (sin modelo inventado: el usuario lista o elige). */
 export const DEFAULT_CONFIG: AiConfig = {
-  provider: "anthropic",
-  model: PROVIDER_MODEL_PRESETS.anthropic[0],
+  provider: "deepseek",
+  model: "",
   apiKey: "",
   hasKey: false,
-  baseUrl: PROVIDER_ENDPOINTS.anthropic,
+  baseUrl: PROVIDER_ENDPOINTS.deepseek,
   maxTokens: 2048,
   temperature: null,
-  useMaxCompletionTokens: true,
+  useMaxCompletionTokens: false,
   rememberKey: false,
 };
 
 /** Rango de tokens que el panel acepta. */
 export const TOKEN_RANGE = { min: 256, max: 8192 };
 
-/** Anthropic admite 0–1. OpenAI y los compatibles, 0–2. */
+/** Anthropic admite 0–1. OpenAI / DeepSeek compatibles, 0–2. */
 export function temperatureRange(provider: ProviderId): { min: number; max: number } {
-  if (provider === "openai") {
+  if (provider === "openai" || provider === "deepseek") {
     return { min: 0, max: 2 };
   }
   return { min: 0, max: 1 };
@@ -87,7 +95,11 @@ export function sanitizeConfig(raw: unknown): Partial<AiConfig> | null {
   }
   const source = raw as Record<string, unknown>;
   const out: Partial<AiConfig> = {};
-  if (source.provider === "anthropic" || source.provider === "openai") {
+  if (
+    source.provider === "anthropic" ||
+    source.provider === "openai" ||
+    source.provider === "deepseek"
+  ) {
     out.provider = source.provider;
   }
   if (typeof source.model === "string") {
@@ -155,7 +167,13 @@ export function peekStoredSecret(
   if (!secret) {
     return null;
   }
-  return { provider: stored?.provider === "openai" ? "openai" : "anthropic", secret };
+  const provider: ProviderId =
+    stored?.provider === "openai"
+      ? "openai"
+      : stored?.provider === "deepseek"
+        ? "deepseek"
+        : "anthropic";
+  return { provider, secret };
 }
 
 /** Borra la clave del almacén sin tocar el resto de los ajustes. */
@@ -208,8 +226,9 @@ export function withProvider(config: AiConfig, provider: ProviderId): AiConfig {
     provider,
     apiKey: "",
     hasKey: false,
-    model: PROVIDER_MODEL_PRESETS[provider][0],
+    model: "",
     baseUrl: PROVIDER_ENDPOINTS[provider],
+    useMaxCompletionTokens: provider === "openai",
   };
 }
 
@@ -234,12 +253,8 @@ export function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
-/** Raíces HTTPS permitidas para OpenAI-compatible (incluye DeepSeek oficial). */
-export const OPENAI_CLOUD_ROOTS: readonly string[] = [
-  PROVIDER_ENDPOINTS.openai,
-  "https://api.deepseek.com",
-  "https://api.deepseek.com/v1",
-];
+/** Raíces HTTPS permitidas para OpenAI (el proveedor OpenAI puro). */
+export const OPENAI_CLOUD_ROOTS: readonly string[] = [PROVIDER_ENDPOINTS.openai];
 
 /** `http` sólo en la máquina local (override explícito del panel). */
 export function isLocalApiRoot(value: string): boolean {
@@ -257,7 +272,7 @@ export function isLocalApiRoot(value: string): boolean {
   }
 }
 
-/** En la nube la raíz tiene que coincidir con la del proveedor (sin HTTPS arbitrario). */
+/** En la nube la raíz tiene que coincidir con allowlist (oficiales + DeepSeek + local). */
 export function allowedApiRoot(provider: ProviderId, baseUrl: string): boolean {
   const trimmed = stripTrailingSlashes(baseUrl.trim());
   if (isLocalApiRoot(trimmed)) {
@@ -269,7 +284,15 @@ export function allowedApiRoot(provider: ProviderId, baseUrl: string): boolean {
       trimmed === "https://api.anthropic.com"
     );
   }
-  return OPENAI_CLOUD_ROOTS.some((root) => stripTrailingSlashes(root) === trimmed);
+  if (provider === "deepseek") {
+    return DEEPSEEK_ROOTS.some((root) => stripTrailingSlashes(root) === trimmed);
+  }
+  // OpenAI: raíz oficial; también admite DeepSeek si el usuario pega esa URL
+  // (compatible) sin cambiar de proveedor.
+  return (
+    OPENAI_CLOUD_ROOTS.some((root) => stripTrailingSlashes(root) === trimmed) ||
+    DEEPSEEK_ROOTS.some((root) => stripTrailingSlashes(root) === trimmed)
+  );
 }
 
 /** `https` con anfitrión permitido, o `http` sólo en localhost. Sin credenciales en la URL. */
@@ -304,6 +327,7 @@ export function chatSendGate(
   draft: string,
   pending: boolean,
   offline: boolean,
+  liveModels: string[] = [],
 ): string | null {
   if (pending) {
     return "hay un turno en curso";
@@ -314,21 +338,34 @@ export function chatSendGate(
   if (offline) {
     return null;
   }
-  return configProblems(config)[0] ?? null;
+  return configProblems(config, liveModels)[0] ?? null;
 }
 
-/** Problemas de configuración que impiden enviar (lista vacía = todo listo). */
-export function configProblems(config: AiConfig): string[] {
+/**
+ * Problemas de configuración que impiden enviar (lista vacía = todo listo).
+ * `liveModels`: ids de `GET /models` si ya se listaron; vacío = aún no.
+ */
+export function configProblems(config: AiConfig, liveModels: string[] = []): string[] {
   const problems: string[] = [];
-  if (!config.model.trim()) {
-    problems.push("Falta el modelo: escríbelo o usa «Detectar modelos».");
+  const model = config.model.trim();
+  const presets = PROVIDER_MODEL_PRESETS[config.provider];
+  if (!model) {
+    problems.push("Falta el modelo: pulsa «listar modelos» o elige un preset oficial.");
+  } else if (liveModels.length > 0 && !liveModels.includes(model)) {
+    problems.push(
+      `El modelo «${model}» no está en la lista viva. Elige uno de «listar modelos» o Probar conexión.`,
+    );
+  } else if (liveModels.length === 0 && !presets.includes(model)) {
+    problems.push(
+      "Modelo no reconocido: pulsa «listar modelos» (o elige un preset oficial) antes de enviar.",
+    );
   }
   if (!config.hasKey && !config.apiKey.trim()) {
     problems.push("Falta la clave de API del proveedor activo.");
   }
   if (!isApiRoot(config.baseUrl, config.provider)) {
     problems.push(
-      "La raíz de la API tiene que ser la oficial del proveedor, DeepSeek (OpenAI) o http en localhost.",
+      "La raíz de la API tiene que ser la oficial del proveedor, DeepSeek o http en localhost.",
     );
   }
   const { min, max } = TOKEN_RANGE;

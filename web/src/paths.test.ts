@@ -22,6 +22,16 @@ describe("pathsEqual / pathKey (Windows)", () => {
   it("normaliza barras", () => {
     expect(normalizeWorkspacePath("a\\b\\c.bara")).toBe("a/b/c.bara");
   });
+
+  it("quita el prefijo Win32 \\\\?\\", () => {
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    expect(normalizeWorkspacePath(String.raw`\\?\C:\Users\Vexor\Downloads\BAR`)).toBe(
+      "C:/Users/Vexor/Downloads/BAR",
+    );
+    expect(pathKey(String.raw`\\?\C:\Users\Vexor\Downloads\BAR`)).toBe(
+      pathKey("C:/Users/Vexor/Downloads/BAR"),
+    );
+  });
 });
 
 describe("dedupeTreeByPathKey", () => {

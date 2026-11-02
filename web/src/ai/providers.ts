@@ -358,7 +358,7 @@ export function openAiBody(
   };
   // Los modelos de razonamiento de OpenAI exigen `max_completion_tokens`.
   // DeepSeek rechaza ese campo y sólo acepta `max_tokens`.
-  const deepseek = isDeepSeekRoot(config.baseUrl);
+  const deepseek = config.provider === "deepseek" || isDeepSeekRoot(config.baseUrl);
   if (config.useMaxCompletionTokens && !deepseek) {
     body.max_completion_tokens = config.maxTokens;
   } else {
@@ -450,7 +450,12 @@ export function chatRequest(
 
 /** Mensaje de error legible de un proveedor, sin filtrar nunca la clave. */
 export function extractApiError(status: number, payload: unknown, provider: ProviderId): string {
-  const name = provider === "anthropic" ? "Anthropic" : "OpenAI/compatible";
+  const name =
+    provider === "anthropic"
+      ? "Anthropic"
+      : provider === "deepseek"
+        ? "DeepSeek"
+        : "OpenAI/compatible";
   const shape = payload as
     | { error?: { message?: unknown; code?: unknown; type?: unknown } | string; message?: unknown }
     | null;
@@ -611,7 +616,7 @@ export function parseOpenAiToolCalls(raw: unknown): ChatToolCall[] {
 export function parseChatResponse(provider: ProviderId, payload: unknown): ChatResult {
   return provider === "anthropic"
     ? parseAnthropicResponse(payload)
-    : parseOpenAiResponse(payload);
+    : parseOpenAiResponse(payload); // openai + deepseek
 }
 
 /**
@@ -816,7 +821,7 @@ async function exchangeChatRound(
 /** Lista real de modelos de la cuenta (`GET {base}/models`). La clave la pone el proceso. */
 export async function listModels(config: AiConfig, signal?: AbortSignal): Promise<ModelInfo[]> {
   const base =
-    config.provider === "openai"
+    config.provider === "openai" || config.provider === "deepseek"
       ? openAiCompatibleRoot(config.baseUrl)
       : normalizeBaseUrl(config.baseUrl, PROVIDER_ENDPOINTS[config.provider]);
   const response = await exchange(config.provider, `${base}/models`, "GET", undefined, signal);
