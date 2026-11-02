@@ -99,7 +99,7 @@ jobs:
     # tsc, Vitest y el autodiagnóstico no ejecutan el CLI de Tauri ni vite build.
     # package.json no declara preinstall, install, postinstall ni prepare.
     - name: Frontend
-      run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run test:ai
+      run: npm ci --ignore-scripts && npm run typecheck && npm run lint && npm test && npm run test:ai
 
   # MSVC en windows-latest: el runner trae VS/Build Tools y WebView2; ring y
   # Tauri enlazan sin instalar LLVM MinGW (más frágil en GHA). El target local
@@ -136,4 +136,4 @@ jobs:
         cargo build --manifest-path src-tauri/Cargo.toml --locked
         cargo test --manifest-path src-tauri/Cargo.toml --locked --no-run
     - name: Frontend
-      run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run test:ai
+      run: npm ci --ignore-scripts && npm run typecheck && npm run lint && npm test && npm run test:ai

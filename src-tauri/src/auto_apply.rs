@@ -8,9 +8,11 @@
 //! * `can_apply` (Auto-Apply) exige `⊤` **verificado**; `∅` / no verificado
 //!   nunca escriben solos.
 //! * `confirm` (Aceptar a mano) escribe con `⊤` o `∅` (también no verificados);
-//!   veto `⊤∧⊥` y `⊥` vacío no escriben. Antes crea `.bara-backup/<fecha>/`.
+//!   veto `⊤∧⊥` y `⊥` vacío no escriben. Antes crea `.bara-backup/<fecha_nanos>/`.
 //! * `undo` restaura **siempre** desde el respaldo bajo `.bara-backup/` (no hay
 //!   deshacer sin ruta de copia).
+//! * B4: cada respaldo lleva stamp único (segundos + nanos); se conservan los
+//!   últimos [`BACKUP_RETENTION`] por archivo relativo.
 
 #![forbid(unsafe_code)]
 
@@ -22,12 +24,16 @@ use bara::syntax::{self, shoresh_unverified_reason};
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::workspace::{self, WorkspaceDocument};
 
 /// Tope del bloque que se inserta. El archivo completo sigue en 2 MiB.
 const MAX_PATCH: usize = 32 * 1024;
+
+/// B4 — cuántos respaldos conservar por archivo relativo bajo `.bara-backup/`.
+const BACKUP_RETENTION: usize = 10;
 
 const MAX_HOST: usize = 2 * 1024 * 1024;
 
@@ -102,10 +108,11 @@ fn language_of_path(path: &str) -> bara::transmuter::SourceLanguage {
 }
 
 fn stamp() -> String {
-    let secs = SystemTime::now()
+    let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    let nanos = duration.subsec_nanos();
     // Fecha UTC compacta a partir del epoch (sin dependencia de calendario).
     let days = secs / 86_400;
     let time = secs % 86_400;
@@ -113,8 +120,9 @@ fn stamp() -> String {
     let mm = (time % 3600) / 60;
     let ss = time % 60;
     // 1970-01-01 + days → YYYYMMDD aproximado civil via algoritmo civil.
+    // B4: sufijo de nanos → dos respaldos en el mismo segundo no se pisan.
     let (y, m, d) = civil_from_days(days as i64);
-    format!("{y:04}{m:02}{d:02}_{hh:02}{mm:02}{ss:02}")
+    format!("{y:04}{m:02}{d:02}_{hh:02}{mm:02}{ss:02}_{nanos:09}")
 }
 
 /// Algoritmo civil de Howard Hinnant (días desde 1970-01-01 → Y-M-D).
@@ -149,7 +157,61 @@ pub(crate) fn write_backup(root: &str, relative: &str, contents: &str) -> Result
         }
     }
     fs::write(&target, contents).map_err(|err| format!("no se pudo guardar el respaldo: {err}"))?;
+    prune_backups(&root_path, &safe)?;
     Ok(backup_rel.replace('\\', "/"))
+}
+
+/// B4 — conserva los [`BACKUP_RETENTION`] más recientes del mismo relativo.
+fn prune_backups(root_path: &Path, safe_relative: &str) -> Result<(), String> {
+    let backup_root = root_path.join(".bara-backup");
+    if !backup_root.is_dir() {
+        return Ok(());
+    }
+    let mut found = list_backups_for(&backup_root, safe_relative);
+    if found.len() <= BACKUP_RETENTION {
+        return Ok(());
+    }
+    // Stamp en el path: orden lexicográfico descendente = más reciente primero.
+    found.sort_by(|a, b| b.cmp(a));
+    for stale in found.into_iter().skip(BACKUP_RETENTION) {
+        let _ = fs::remove_file(&stale);
+        if let Some(parent) = stale.parent() {
+            let _ = fs::remove_dir(parent); // p.ej. …/stamp/src/
+            if let Ok(rel) = parent.strip_prefix(&backup_root) {
+                if let Some(stamp_name) = rel.components().next() {
+                    let _ = fs::remove_dir(backup_root.join(stamp_name.as_os_str()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rutas `backup_root/<stamp>/<safe_relative>.bak` existentes.
+fn list_backups_for(backup_root: &Path, safe_relative: &str) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(backup_root) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let stamp_dir = entry.path();
+        if !stamp_dir.is_dir() {
+            continue;
+        }
+        let mut candidate = stamp_dir;
+        let parts: Vec<&str> = safe_relative.split('/').filter(|p| !p.is_empty()).collect();
+        for (index, part) in parts.iter().enumerate() {
+            if index + 1 == parts.len() {
+                candidate = candidate.join(format!("{part}.bak"));
+            } else {
+                candidate = candidate.join(part);
+            }
+        }
+        if candidate.is_file() {
+            found.push(candidate);
+        }
+    }
+    found
 }
 
 fn unified_diff(path: &str, before: &str, after: &str) -> String {
@@ -635,5 +697,38 @@ mod tests {
         let root_text = root.display().to_string();
         let err = confirm(&root_text, "doc.bara", 1, "ברא\n", "ברא\n", "").expect_err("token");
         assert!(err.contains("token"));
+    }
+
+    #[test]
+    fn b4_dos_backups_mismo_segundo_tienen_rutas_distintas() {
+        let root = scratch();
+        let root_text = root.display().to_string();
+        let a = write_backup(&root_text, "src/lib.rs", "uno\n").expect("a");
+        let b = write_backup(&root_text, "src/lib.rs", "dos\n").expect("b");
+        assert_ne!(a, b, "nanos en el stamp deben distinguir respaldos");
+        assert!(a.starts_with(".bara-backup/"));
+        assert!(b.starts_with(".bara-backup/"));
+        assert!(root.join(&a).is_file());
+        assert!(root.join(&b).is_file());
+    }
+
+    #[test]
+    fn b4_retencion_deja_como_mucho_n_por_archivo() {
+        let root = scratch();
+        let root_text = root.display().to_string();
+        for index in 0..(BACKUP_RETENTION + 3) {
+            let body = format!("v{index}\n");
+            write_backup(&root_text, "src/lib.rs", &body).expect("backup");
+            // Pausa mínima: el stamp usa nanos; en Windows a veces el reloj no avanza.
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let backup_root = root.join(".bara-backup");
+        let kept = list_backups_for(&backup_root, "src/lib.rs");
+        assert!(
+            kept.len() <= BACKUP_RETENTION,
+            "quedaron {} respaldos (máx {BACKUP_RETENTION})",
+            kept.len()
+        );
+        assert!(!kept.is_empty());
     }
 }

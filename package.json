@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint web/src vite.config.ts",
     "test": "vitest run",
     "test:ai": "node web/scripts/ai-check.mjs",
     "test:unit": "vitest run",
@@ -34,14 +35,18 @@
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@tauri-apps/cli": "^2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "jsdom": "^26.1.0",
     "typescript": "^5",
+    "typescript-eslint": "^8.46.2",
     "vite": "^7",
     "vitest": "^3.2.7"
   }

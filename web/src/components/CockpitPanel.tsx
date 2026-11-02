@@ -21,6 +21,7 @@ import {
   type TransmutationResult,
 } from "../telemetry";
 import { AttentionCard, CensoCard, RecorderCard, ShoreshCard, TransmuterCard } from "./CockpitCards";
+import IdleNote from "./IdleNote";
 
 export default function CockpitPanel({
   open,
@@ -179,25 +180,15 @@ export default function CockpitPanel({
 
       {error ? <p className="ai-error">{error}</p> : null}
       {idle ? (
-        <div className="idle-note" role="status">
-          <span>{idle.message}</span>
-          <button
-            type="button"
-            onClick={() => {
-              void idleApply().finally(() => setIdle(null));
-            }}
-          >
-            transmutar
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void idleDismiss().finally(() => setIdle(null));
-            }}
-          >
-            ahora no
-          </button>
-        </div>
+        <IdleNote
+          message={idle.message}
+          onApply={() => {
+            void idleApply().finally(() => setIdle(null));
+          }}
+          onDismiss={() => {
+            void idleDismiss().finally(() => setIdle(null));
+          }}
+        />
       ) : null}
 
       {manifest && frame && logs ? (

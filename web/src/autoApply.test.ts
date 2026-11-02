@@ -93,7 +93,7 @@ describe("Aceptar / Rechazar / Deshacer (contrato)", () => {
 
   it("Aceptar: confirm con applied + backupPath; Deshacer restaura", async () => {
     const disk = { text: "fn alpha() {}\n" };
-    const confirm = vi.fn(async () => {
+    const confirm = vi.fn(async (_patch: string) => {
       disk.text = "fn alpha() {}\nfn beta() {}\n";
       return {
         ...emptyReport(1),
@@ -108,7 +108,7 @@ describe("Aceptar / Rechazar / Deshacer (contrato)", () => {
         judgmentId: "abc",
       };
     });
-    const undo = vi.fn(async () => {
+    const undo = vi.fn(async (_path: string, _backup: string) => {
       disk.text = "fn alpha() {}\n";
       return {
         ...emptyReport(1),

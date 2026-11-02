@@ -1,9 +1,10 @@
-//! # Bara IDE Desktop — backend Tauri v2 del IDE Bara (AETHER‑Ω)
+//! # Bara IDE Desktop — backend Tauri v2 del IDE Bara (AETHER‑Ω) v0.5.0
 //!
 //! **Puente** entre la interfaz React (`web/`) y el motor de análisis
-//! `bara-ide`, que a su vez envuelve el kernel congelado `bara` (etiqueta
-//! `v0.1.0-kernel`). Aquí **no hay lógica lingüística**: sólo comandos
-//! `#[tauri::command]` que proyectan el modelo de `bara-ide` a JSON.
+//! `bara-ide`. El kernel `bara` corre en el sidecar `bara-kernel-host`
+//! (pin git `fa3d308552f3cc69ccdab8f141d56399e35c2ff6`); este proceso no
+//! ejecuta el núcleo. Aquí **no hay lógica lingüística**: sólo comandos
+//! `#[tauri::command]` que proyectan el modelo a JSON vía el supervisor.
 //!
 //! ## Comandos expuestos al front-end
 //! * `analyze_source(source)` — analiza el texto del editor (siempre `Ok`:
@@ -1595,6 +1596,26 @@ mod ipc_boundary {
             );
         }
         assert!(!production.contains("https:"));
+        // B12: producción sin loopback Vite; `http://ipc.localhost` (IPC) sí vale.
+        let prod_connect = connect_src(production);
+        assert!(
+            !prod_connect.split_whitespace().any(|token| {
+                token.starts_with("http://localhost")
+                    || token.starts_with("http://127.0.0.1")
+                    || token.starts_with("ws://localhost")
+                    || token.starts_with("ws://127.0.0.1")
+            }),
+            "csp de producción no debe abrir loopback Vite: {prod_connect}"
+        );
+        assert!(
+            prod_connect.contains("http://ipc.localhost") || prod_connect.contains("ipc:"),
+            "csp de producción debe conservar el canal IPC"
+        );
+        let dev_connect = connect_src(csp_value(conf, "devCsp"));
+        assert!(
+            dev_connect.contains("http://localhost") || dev_connect.contains("127.0.0.1"),
+            "devCsp debe permitir Vite en localhost"
+        );
         assert!(!origen_https_concreto("https:"));
         assert!(!origen_https_concreto("https://"));
         assert!(!origen_https_concreto("https://*"));

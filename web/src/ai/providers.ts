@@ -325,7 +325,7 @@ export function isDeepSeekRoot(baseUrl: string): boolean {
  */
 export function openAiCompatibleRoot(baseUrl: string): string {
   const fallback = PROVIDER_ENDPOINTS.openai;
-  let root = normalizeBaseUrl(baseUrl, fallback);
+  const root = normalizeBaseUrl(baseUrl, fallback);
   try {
     const url = new URL(root);
     if (url.hostname === "api.deepseek.com") {

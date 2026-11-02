@@ -82,14 +82,24 @@ function TopologyDesk() {
 function TelemetryDesk() {
   const [source, setSource] = useState("");
   useEffect(() => {
+    let alive = true;
     let stop: (() => void) | undefined;
     void getEditorContext()
-      .then((snap) => setSource(snap.source))
+      .then((snap) => {
+        if (alive) {
+          setSource(snap.source);
+        }
+      })
       .catch(() => undefined);
-    void onEditorContext((snap) => setSource(snap.source)).then((unlisten) => {
+    void onEditorContext((snap) => {
+      if (alive) {
+        setSource(snap.source);
+      }
+    }).then((unlisten) => {
       stop = unlisten;
     });
     return () => {
+      alive = false;
       stop?.();
     };
   }, []);
@@ -117,18 +127,33 @@ function AutopoiesisDesk() {
   }, []);
 
   useEffect(() => {
+    let alive = true;
     sampleGenesis()
       .then((sample) => {
+        if (!alive) {
+          return;
+        }
         setSource(sample);
         project(sample);
       })
-      .catch((reason: unknown) => setError(describeError(reason)));
+      .catch((reason: unknown) => {
+        if (alive) {
+          setError(describeError(reason));
+        }
+      });
+    return () => {
+      alive = false;
+    };
   }, [project]);
 
   useEffect(() => {
+    let alive = true;
     let stop: (() => void) | undefined;
     void getEditorContext()
       .then((snap) => {
+        if (!alive) {
+          return;
+        }
         if (snap.source.trim().length > 0) {
           setSource(snap.source);
           project(snap.source);
@@ -136,6 +161,9 @@ function AutopoiesisDesk() {
       })
       .catch(() => undefined);
     void onEditorContext((snap) => {
+      if (!alive) {
+        return;
+      }
       if (snap.source.trim().length > 0) {
         setSource(snap.source);
         project(snap.source);
@@ -144,6 +172,7 @@ function AutopoiesisDesk() {
       stop = unlisten;
     });
     return () => {
+      alive = false;
       stop?.();
     };
   }, [project]);
@@ -355,14 +384,24 @@ function AiDesk() {
   }, []);
 
   useEffect(() => {
+    let alive = true;
     let stop: (() => void) | undefined;
     void getEditorContext()
-      .then(applySnapshot)
+      .then((snap) => {
+        if (alive) {
+          applySnapshot(snap);
+        }
+      })
       .catch(() => undefined);
-    void onEditorContext(applySnapshot).then((unlisten) => {
+    void onEditorContext((snap) => {
+      if (alive) {
+        applySnapshot(snap);
+      }
+    }).then((unlisten) => {
       stop = unlisten;
     });
     return () => {
+      alive = false;
       stop?.();
     };
   }, [applySnapshot]);

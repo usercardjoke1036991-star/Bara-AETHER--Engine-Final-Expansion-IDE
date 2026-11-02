@@ -83,6 +83,7 @@ import KernelConsole, { type ConsoleLine } from "./components/KernelConsole";
 import KernelPanel from "./components/KernelPanel";
 import VisualBuilder from "./components/VisualBuilder";
 import DeskHost from "./components/DeskWindows";
+import IdleNote from "./components/IdleNote";
 import WelcomeGate from "./components/WelcomeGate";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import { readReveal, TOPOLOGY_CHANNEL } from "./topology";
@@ -1200,6 +1201,12 @@ export default function App() {
     return hits.slice(0, 80);
   }, [workspace, searchQuery]);
 
+  useEffect(() => {
+    if (sideMode === "settings") {
+      void refreshTrustedRoots();
+    }
+  }, [refreshTrustedRoots, sideMode]);
+
   if (vista === null) {
     return <p className="muted">Abriendo ventana…</p>;
   }
@@ -1302,12 +1309,6 @@ export default function App() {
     ["nucleo", "Núcleo"],
   ];
 
-  useEffect(() => {
-    if (sideMode === "settings") {
-      void refreshTrustedRoots();
-    }
-  }, [refreshTrustedRoots, sideMode]);
-
   return (
     <div
       className={`app ide-shell${aiOpen ? " ai-open" : ""}${sideOpen ? " side-open" : ""}${bottomOpen ? " bottom-open" : ""}`}
@@ -1364,25 +1365,15 @@ export default function App() {
         </button>
       </header>
       {idle ? (
-        <div className="idle-note" role="status">
-          <span>{idle.message}</span>
-          <button
-            type="button"
-            onClick={() => {
-              void idleApply().finally(() => setIdle(null));
-            }}
-          >
-            transmutar
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void idleDismiss().finally(() => setIdle(null));
-            }}
-          >
-            ahora no
-          </button>
-        </div>
+        <IdleNote
+          message={idle.message}
+          onApply={() => {
+            void idleApply().finally(() => setIdle(null));
+          }}
+          onDismiss={() => {
+            void idleDismiss().finally(() => setIdle(null));
+          }}
+        />
       ) : null}
 
       {error ? <div className="error">{error}</div> : null}
