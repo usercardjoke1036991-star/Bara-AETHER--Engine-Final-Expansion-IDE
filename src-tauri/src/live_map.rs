@@ -169,14 +169,9 @@ pub fn impact(root: &str, focus: &[String]) -> Result<ImpactReport, String> {
         related.extend(grow);
     }
     let related_list: Vec<String> = related.into_iter().collect();
-    let tests_affected = related_list
-        .iter()
-        .filter(|p| is_test_path(p))
-        .count();
+    let tests_affected = related_list.iter().filter(|p| is_test_path(p)).count();
     let files_affected = related_list.len();
-    let summary = format!(
-        "afecta a {files_affected} archivo(s) y {tests_affected} test(s)"
-    );
+    let summary = format!("afecta a {files_affected} archivo(s) y {tests_affected} test(s)");
     Ok(ImpactReport {
         focus,
         files_affected,
@@ -189,15 +184,14 @@ pub fn impact(root: &str, focus: &[String]) -> Result<ImpactReport, String> {
 /// Evalúa un cambio propuesto **antes** de escribir.
 pub fn gate_change(root: &str, path: &str, next_source: &str) -> Result<ChangeGate, String> {
     let path = path.replace('\\', "/");
-    let impact = impact(root, &[path.clone()])?;
+    let impact = impact(root, std::slice::from_ref(&path))?;
     let map = snapshot(root)?;
+    let files: BTreeSet<String> = map.files.iter().cloned().collect();
     let mut broken = Vec::new();
 
     // Imports del propio archivo hacia destinos inexistentes.
     for target in extract_imports(&path, next_source) {
-        if resolve_import_target(&map.files.iter().cloned().collect(), &target).is_none()
-            && looks_like_project_import(&target)
-        {
+        if resolve_import_target(&files, &target).is_none() && looks_like_project_import(&target) {
             broken.push(BrokenImport {
                 path: path.clone(),
                 target: target.clone(),
@@ -209,7 +203,11 @@ pub fn gate_change(root: &str, path: &str, next_source: &str) -> Result<ChangeGa
     // Si el archivo nuevo deja de exportar símbolos que otros importan por nombre de módulo.
     let stem = file_stem(&path);
     if !stem.is_empty() {
-        for dep in map.deps.iter().filter(|d| d.to == path || d.to.ends_with(&path)) {
+        for dep in map
+            .deps
+            .iter()
+            .filter(|d| d.to == path || d.to.ends_with(&path))
+        {
             if dep.kind == "import" && dep.from != path {
                 // Dependiente sigue apuntando aquí: OK mientras el archivo exista.
             }
@@ -292,10 +290,11 @@ pub fn apply_batch(root: &str, changes: &[BatchChange]) -> Result<BatchReport, S
     let mut written = 0usize;
     for (index, change) in changes.iter().enumerate() {
         let path = change.path.replace('\\', "/");
-        let expected = change
-            .expected_hash
-            .clone()
-            .or_else(|| previous.get(index).map(|(_, src)| workspace::content_hash(src)));
+        let expected = change.expected_hash.clone().or_else(|| {
+            previous
+                .get(index)
+                .map(|(_, src)| workspace::content_hash(src))
+        });
         if let Err(err) =
             workspace::write_source_checked(root, &path, &change.source, expected.as_deref())
         {
@@ -340,7 +339,12 @@ pub fn context_for(root: &str, focus: &[String], max_lines: usize) -> Result<Map
             }
         }
     }
-    for warn in map.warnings.iter().filter(|w| related.contains(&w.path)).take(8) {
+    for warn in map
+        .warnings
+        .iter()
+        .filter(|w| related.contains(&w.path))
+        .take(8)
+    {
         lines.push(format!("! {} · {} · {}", warn.kind, warn.path, warn.detail));
     }
     Ok(MapContext {
@@ -399,7 +403,7 @@ fn desync_warnings(
     topology: &WorkspaceTopology,
 ) -> Vec<DesyncWarning> {
     let mut warnings = Vec::new();
-    let file_set: BTreeSet<&str> = files.iter().map(String::as_str).collect();
+    let file_set: BTreeSet<String> = files.iter().cloned().collect();
     let mut inbound: BTreeSet<&str> = BTreeSet::new();
     let mut outbound: BTreeSet<&str> = BTreeSet::new();
     for dep in deps {
@@ -407,7 +411,9 @@ fn desync_warnings(
         outbound.insert(dep.from.as_str());
     }
     for path in files {
-        if !inbound.contains(path.as_str()) && !outbound.contains(path.as_str()) && !is_test_path(path)
+        if !inbound.contains(path.as_str())
+            && !outbound.contains(path.as_str())
+            && !is_test_path(path)
         {
             warnings.push(DesyncWarning {
                 kind: "isolated".to_string(),
@@ -418,7 +424,7 @@ fn desync_warnings(
         if let Ok(doc) = workspace::read_text(root, path) {
             for target in extract_imports(path, &doc.source) {
                 if looks_like_project_import(&target)
-                    && resolve_import_target(&files.iter().cloned().collect(), &target).is_none()
+                    && resolve_import_target(&file_set, &target).is_none()
                 {
                     warnings.push(DesyncWarning {
                         kind: "broken_import".to_string(),
@@ -442,11 +448,13 @@ fn desync_warnings(
             warnings.push(DesyncWarning {
                 kind: "dead".to_string(),
                 path: node.path.clone(),
-                detail: format!("función «{}» sin referencias entrantes en el mapa", node.label),
+                detail: format!(
+                    "función «{}» sin referencias entrantes en el mapa",
+                    node.label
+                ),
             });
         }
     }
-    let _ = file_set;
     warnings.truncate(80);
     warnings
 }
@@ -580,7 +588,8 @@ fn regex_captures(source: &str, pattern_hint: &str) -> Vec<String> {
 }
 
 fn looks_like_project_import(target: &str) -> bool {
-    if target.starts_with("std::") || target.starts_with("core::") || target.starts_with("alloc::") {
+    if target.starts_with("std::") || target.starts_with("core::") || target.starts_with("alloc::")
+    {
         return false;
     }
     target.starts_with('.')
@@ -601,10 +610,7 @@ fn looks_like_project_import(target: &str) -> bool {
 }
 
 fn resolve_import_target(files: &BTreeSet<String>, target: &str) -> Option<String> {
-    let cleaned = target
-        .trim()
-        .trim_start_matches("./")
-        .replace('\\', "/");
+    let cleaned = target.trim().trim_start_matches("./").replace('\\', "/");
     if files.contains(&cleaned) {
         return Some(cleaned);
     }
@@ -709,8 +715,13 @@ mod tests {
         assert!(map.files.iter().any(|f| f.ends_with("lib.rs")));
         assert!(map.files.iter().any(|f| f.ends_with("util.rs")));
         assert!(
-            map.deps.iter().any(|d| d.from.contains("lib") && d.to.contains("util"))
-                || map.deps.iter().any(|d| d.kind == "import" || d.kind == "call"),
+            map.deps
+                .iter()
+                .any(|d| d.from.contains("lib") && d.to.contains("util"))
+                || map
+                    .deps
+                    .iter()
+                    .any(|d| d.kind == "import" || d.kind == "call"),
             "deps={:?}",
             map.deps
         );
