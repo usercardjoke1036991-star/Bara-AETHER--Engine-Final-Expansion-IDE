@@ -475,7 +475,12 @@ fn read_until_http(
             return Err("tiempo de espera agotado al hablar con el proveedor".to_string());
         }
         match read.read(&mut buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                if flight.is_some_and(|item| item.is_cancelled()) {
+                    return Err("cancelado".to_string());
+                }
+                break;
+            }
             Ok(n) => {
                 raw.extend_from_slice(&buf[..n]);
                 if raw.len() > BODY_CAP.saturating_add(65_536) {
@@ -504,6 +509,9 @@ fn read_until_http(
                 return Err(error_de_transporte(&error));
             }
         }
+    }
+    if flight.is_some_and(|item| item.is_cancelled()) {
+        return Err("cancelado".to_string());
     }
     if raw.is_empty() {
         return Err("sin respuesta del servidor".to_string());
