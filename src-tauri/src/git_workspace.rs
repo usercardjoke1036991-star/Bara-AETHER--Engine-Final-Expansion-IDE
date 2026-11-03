@@ -5,8 +5,11 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -201,18 +204,51 @@ pub fn branches(root: &str) -> Result<GitBranchReport, String> {
     })
 }
 
+struct CommitArm {
+    message: String,
+    at: Instant,
+}
+
+fn commit_arms() -> &'static Mutex<BTreeMap<String, CommitArm>> {
+    static ARMS: OnceLock<Mutex<BTreeMap<String, CommitArm>>> = OnceLock::new();
+    ARMS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+const ARM_TTL: Duration = Duration::from_secs(120);
+const ARM_AGAIN: &str = "segunda confirmación: git add -A abarca todo el árbol; confirma otra vez";
+
+/// Arma o consume la segunda confirmación en este proceso.
+///
+/// Un `confirmed: true` aislado no hace `git add`. Hace falta un armado previo
+/// del mismo mensaje en esta raíz (el bool del WebView no basta).
+fn take_commit_arm(key: &str, message: &str, confirmed: bool) -> Result<(), String> {
+    let mut arms = commit_arms()
+        .lock()
+        .map_err(|_| "el confirmador de git está ocupado".to_string())?;
+    let fresh = arms
+        .get(key)
+        .is_some_and(|arm| arm.message == message && arm.at.elapsed() <= ARM_TTL);
+    if confirmed && fresh {
+        arms.remove(key);
+        return Ok(());
+    }
+    arms.insert(
+        key.to_string(),
+        CommitArm {
+            message: message.to_string(),
+            at: Instant::now(),
+        },
+    );
+    Err(ARM_AGAIN.to_string())
+}
+
 /// `git add -A` + `git commit -m`. Sin push.
 ///
-/// `confirmed` es la segunda confirmación: sin ella no se hace `add -A`.
+/// La segunda confirmación vive en el proceso: sin un armado previo no hay `add -A`.
 pub fn commit(root: &str, message: &str, confirmed: bool) -> Result<GitCommitReport, String> {
     let msg = message.trim();
     if msg.is_empty() {
         return Err("el mensaje de commit está vacío".to_string());
-    }
-    if !confirmed {
-        return Err(
-            "segunda confirmación: git add -A abarca todo el árbol; confirma otra vez".to_string(),
-        );
     }
     if msg.len() > 4000 {
         return Err("el mensaje de commit supera 4000 caracteres".to_string());
@@ -221,12 +257,16 @@ pub fn commit(root: &str, message: &str, confirmed: bool) -> Result<GitCommitRep
         return Err("el mensaje de commit no puede llevar NUL".to_string());
     }
     let cwd = ensure_repo(root)?;
+    let key = cwd.to_string_lossy().to_string();
+    take_commit_arm(&key, msg, confirmed)?;
     let (code_add, _, err_add) = run_git(&cwd, &["add", "-A"])?;
     if code_add != 0 {
+        let _ = take_commit_arm(&key, msg, false);
         return Err(err_add.trim().to_string());
     }
     let (code, out, err) = run_git(&cwd, &["commit", "-m", msg])?;
     if code != 0 {
+        let _ = take_commit_arm(&key, msg, false);
         let detail = if err.trim().is_empty() {
             out.trim().to_string()
         } else {
@@ -313,6 +353,23 @@ mod tests {
         let branched = checkout(root, "feat/a6", true).expect("branch");
         assert_eq!(branched.current, "feat/a6");
         assert!(branched.branches.iter().any(|b| b == "feat/a6"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a6_un_true_no_hace_add() {
+        let dir = scratch();
+        git_init(&dir);
+        fs::write(dir.join("nota.md"), "hola\n").expect("write");
+        let root = dir.to_str().expect("utf8");
+        assert!(
+            commit(root, "chore: uno", true).is_err(),
+            "un solo confirmed=true no hace git add"
+        );
+        assert!(status(root).expect("sigue sucio").dirty);
+        let done = commit(root, "chore: uno", true).expect("segundo");
+        assert!(done.ok);
+        assert!(!status(root).expect("limpio").dirty);
         let _ = fs::remove_dir_all(&dir);
     }
 

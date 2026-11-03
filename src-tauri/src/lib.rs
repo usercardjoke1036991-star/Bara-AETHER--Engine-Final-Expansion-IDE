@@ -1363,7 +1363,10 @@ async fn ai_exchange(
         }
     };
     let payload = body.unwrap_or_default();
-    flight.begin();
+    let _stay = flight.enter();
+    if flight.is_cancelled() {
+        return Err("cancelado".to_string());
+    }
     let handle = flight.handle();
     let mut work = tauri::async_runtime::spawn_blocking(move || {
         ai_http::exchange_with(&provider, &url, &method, &payload, &secret, Some(&handle))
@@ -1386,6 +1389,12 @@ async fn ai_exchange(
 #[tauri::command]
 fn ai_cancel_in_flight(flight: tauri::State<'_, ai_flight::AiFlight>) {
     flight.request_cancel();
+}
+
+/// Nuevo turno. No borra un Detener si `ai_exchange` sigue dentro de `enter`.
+#[tauri::command]
+fn ai_arm_turn(flight: tauri::State<'_, ai_flight::AiFlight>) {
+    flight.arm_turn();
 }
 
 /// A6 — estado porcelain del repo en la raíz activa.
@@ -1613,6 +1622,7 @@ pub fn run() {
             ai_key_delete,
             ai_exchange,
             ai_cancel_in_flight,
+            ai_arm_turn,
             ai_probe_connection,
             kernel_host_status,
             kernel_interrupt,
@@ -1688,6 +1698,7 @@ mod ipc_boundary {
         assert!(handler.contains("ai_key_delete"));
         assert!(handler.contains("ai_exchange"));
         assert!(handler.contains("ai_cancel_in_flight"));
+        assert!(handler.contains("ai_arm_turn"));
         assert!(handler.contains("ai_probe_connection"));
         assert!(handler.contains("kernel_host_status"));
         assert!(handler.contains("kernel_interrupt"));

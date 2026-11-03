@@ -85,36 +85,55 @@ fn free_bytes_c() -> Result<u64, String> {
     found.ok_or_else(|| format!("respuesta de espacio libre ilegible: {text}"))
 }
 
-/// `target/debug` canónico y dentro del workspace. Un symlink que sale no se borra.
-fn canonical_debug_dir(workspace_root: &Path) -> Result<Option<PathBuf>, String> {
+/// Directorio `expected` canónico y dentro del workspace. Un symlink que sale no se borra.
+fn canonical_workspace_dir(
+    workspace_root: &Path,
+    relative: &[&str],
+    expected: &str,
+) -> Result<Option<PathBuf>, String> {
     let root = fs::canonicalize(workspace_root).map_err(|err| {
         format!(
             "no se pudo canonizar el workspace {}: {err}",
             workspace_root.display()
         )
     })?;
-    let debug = root.join("target").join("debug");
-    if !debug.exists() {
+    let mut dir = root.clone();
+    for part in relative {
+        dir.push(part);
+    }
+    if !dir.exists() {
         return Ok(None);
     }
-    let canonical = fs::canonicalize(&debug)
-        .map_err(|err| format!("no se pudo canonizar target/debug: {err}"))?;
+    let canonical =
+        fs::canonicalize(&dir).map_err(|err| format!("no se pudo canonizar {expected}: {err}"))?;
     if !canonical.starts_with(&root) {
         return Err(format!(
-            "target/debug sale del workspace ({})",
+            "{expected} sale del workspace ({})",
             canonical.display()
         ));
     }
     let rel = canonical
         .strip_prefix(&root)
-        .map_err(|_| "target/debug no es relativo al workspace".to_string())?;
+        .map_err(|_| format!("{expected} no es relativo al workspace"))?;
     let rel_s = rel.to_string_lossy().replace('\\', "/");
-    if rel_s != "target/debug" {
-        return Err(format!(
-            "target/debug no es el directorio esperado: {rel_s}"
-        ));
+    if rel_s != expected {
+        return Err(format!("{expected} no es el directorio esperado: {rel_s}"));
     }
     Ok(Some(canonical))
+}
+
+/// `target/debug` canónico y dentro del workspace. Un symlink que sale no se borra.
+fn canonical_debug_dir(workspace_root: &Path) -> Result<Option<PathBuf>, String> {
+    canonical_workspace_dir(workspace_root, &["target", "debug"], "target/debug")
+}
+
+/// `web/node_modules/.vite` con la misma jaula que `target/debug`.
+fn canonical_vite_dir(workspace_root: &Path) -> Result<Option<PathBuf>, String> {
+    canonical_workspace_dir(
+        workspace_root,
+        &["web", "node_modules", ".vite"],
+        "web/node_modules/.vite",
+    )
 }
 
 fn bytes_to_gb(bytes: u64) -> f64 {
@@ -208,13 +227,26 @@ pub fn clean_safe(workspace_root: &str, min_gb: f64) -> Result<DiskCleanReport, 
         }
     }
 
-    let vite = root.join("web").join("node_modules").join(".vite");
-    match remove_tree(&vite) {
-        Ok(n) if n > 0 => {
-            freed = freed.saturating_add(n);
-            notes.push(format!("web/node_modules/.vite ~{:.2} GB", bytes_to_gb(n)));
+    let vite = match canonical_vite_dir(&root) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            notes.push("sin web/node_modules/.vite".to_string());
+            PathBuf::new()
         }
-        _ => {}
+        Err(err) => {
+            notes.push(err);
+            PathBuf::new()
+        }
+    };
+    if !vite.as_os_str().is_empty() {
+        match remove_tree(&vite) {
+            Ok(n) if n > 0 => {
+                freed = freed.saturating_add(n);
+                notes.push(format!("web/node_modules/.vite ~{:.2} GB", bytes_to_gb(n)));
+            }
+            Err(err) => notes.push(err),
+            Ok(_) => {}
+        }
     }
 
     // Nunca tocar release/bundle — comprobación explícita.
@@ -319,6 +351,43 @@ mod tests {
         assert!(
             outside.join("keep.txt").exists(),
             "no se borra fuera del workspace: {}",
+            report.detail
+        );
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn a9_no_borra_si_vite_sale_por_symlink() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bara-vite-link-{nonce}"));
+        let outside = std::env::temp_dir().join(format!("bara-vite-out-{nonce}"));
+        fs::create_dir_all(root.join("web").join("node_modules")).expect("nm");
+        fs::create_dir_all(&outside).expect("out");
+        fs::write(outside.join("keep.txt"), b"keep").expect("keep");
+        let link = root.join("web").join("node_modules").join(".vite");
+        let linked = {
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_dir(&outside, &link)
+            }
+            #[cfg(not(windows))]
+            {
+                std::os::unix::fs::symlink(&outside, &link)
+            }
+        };
+        if linked.is_err() {
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(&outside);
+            return;
+        }
+        let report = clean_safe(root.to_str().expect("utf8"), 8.0).expect("clean");
+        assert!(
+            outside.join("keep.txt").exists(),
+            "no se borra .vite fuera del workspace: {}",
             report.detail
         );
         let _ = fs::remove_dir_all(&root);

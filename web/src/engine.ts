@@ -301,3 +301,11 @@ export function interruptKernel(): Promise<void> {
 export function cancelAiInFlight(): Promise<void> {
   return invoke<void>("ai_cancel_in_flight");
 }
+
+/**
+ * Nuevo turno del usuario. Limpia un Detener anterior sólo si no hay vuelo.
+ * `ai_exchange` no borra un cancel ya pedido.
+ */
+export function armAiTurn(): Promise<void> {
+  return invoke<void>("ai_arm_turn");
+}

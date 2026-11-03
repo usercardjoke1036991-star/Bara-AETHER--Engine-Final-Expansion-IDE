@@ -218,6 +218,17 @@ pub fn gate_change(root: &str, path: &str, next_source: &str) -> Result<ChangeGa
         if host_imports.contains(&raw) {
             continue;
         }
+        if let Some(target) = python_unresolved_edge(&path, &files, &raw) {
+            broken.push(BrokenImport {
+                path: path.clone(),
+                target,
+                detail: format!("import «{}» no resuelve a un archivo del mapa", raw.target),
+            });
+            continue;
+        }
+        if python_bare_is_external(&path, &files, &raw) {
+            continue;
+        }
         if !should_gate_as_project(&path, &raw) {
             continue;
         }
@@ -558,12 +569,28 @@ fn extract_rust_imports(source: &str, out: &mut Vec<RawImport>) {
             .unwrap_or("")
             .trim()
             .trim_end_matches("::");
-        if token.is_empty() || is_ignored_rust_glob(token) {
+        if token.is_empty() {
             continue;
         }
-        // `use crate::foo::*` → glob: no gatear como archivo.
-        let full_to_semi = rest.split(';').next().unwrap_or(rest);
+        let full_to_semi = rest.split(';').next().unwrap_or(rest).trim();
         if full_to_semi.contains("::*") || token.ends_with('*') {
+            let glob_path = full_to_semi
+                .split("::*")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches("::");
+            // `super::*` / `self::*` / `crate::*` no son un archivo.
+            // `use crate::ruta::*` sí: tiene que resolver.
+            if glob_path.starts_with("crate::") {
+                out.push(RawImport {
+                    target: glob_path.to_string(),
+                    kind,
+                });
+            }
+            continue;
+        }
+        if is_ignored_rust_glob(token) {
             continue;
         }
         out.push(RawImport {
@@ -667,12 +694,12 @@ fn extract_py_imports(source: &str, out: &mut Vec<RawImport>) {
                 });
             }
         } else if let Some(rest) = trimmed.strip_prefix("import ") {
-            let token = rest
-                .split(|c: char| c == ',' || c.is_whitespace())
-                .next()
-                .unwrap_or("")
-                .trim();
-            if !token.is_empty() {
+            let code = rest.split('#').next().unwrap_or(rest);
+            for part in code.split(',') {
+                let token = part.split_whitespace().next().unwrap_or("").trim();
+                if token.is_empty() {
+                    continue;
+                }
                 out.push(RawImport {
                     target: token.to_string(),
                     kind: ImportKind::PathRef,
@@ -680,6 +707,51 @@ fn extract_py_imports(source: &str, out: &mut Vec<RawImport>) {
             }
         }
     }
+}
+
+fn is_py_file(path: &str) -> bool {
+    path.rsplit('.')
+        .next()
+        .unwrap_or("")
+        .eq_ignore_ascii_case("py")
+}
+
+/// Bare de Python (no relativo, no stdlib). `None` si no aplica.
+fn python_bare_name(raw: &RawImport) -> Option<&str> {
+    let name = raw.target.as_str();
+    if name.is_empty() || name.starts_with('.') || name.contains('/') || is_python_stdlib(name) {
+        return None;
+    }
+    Some(name)
+}
+
+/// Bare que es arista (su raíz está en el mapa) y el target completo no resuelve.
+fn python_unresolved_edge(path: &str, files: &BTreeSet<String>, raw: &RawImport) -> Option<String> {
+    if !is_py_file(path) {
+        return None;
+    }
+    let name = python_bare_name(raw)?;
+    if resolve_import_target(files, name).is_some() {
+        return None;
+    }
+    let top = name.split('.').next().unwrap_or(name);
+    if resolve_import_target(files, top).is_some() {
+        Some(name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Bare ya resuelto, o paquete que no es arista del mapa: no entra al gate relativo.
+fn python_bare_is_external(path: &str, files: &BTreeSet<String>, raw: &RawImport) -> bool {
+    if !is_py_file(path) {
+        return false;
+    }
+    let Some(name) = python_bare_name(raw) else {
+        return false;
+    };
+    let top = name.split('.').next().unwrap_or(name);
+    resolve_import_target(files, name).is_some() || resolve_import_target(files, top).is_none()
 }
 
 /// ¿Debe el gate/avisos exigir resolución a archivo del mapa?
@@ -714,9 +786,8 @@ fn should_gate_as_project(path: &str, raw: &RawImport) -> bool {
             if is_python_stdlib(t) {
                 return false;
             }
-            // Relativo siempre. Bare: sólo si ya es ruta; el que coincide con
-            // un `.py` del mapa sale como arista en `resolve_import_target`
-            // (no se marca roto un `import` de paquete externo).
+            // Relativo siempre. El bare lo decide `python_unresolved_edge`:
+            // arista del mapa que no resuelve → bloqueo; paquete externo no.
             t.starts_with('.') || t.contains('/')
         }
         _ => t.starts_with('.') || t.starts_with('/') || t.starts_with("crate::"),
@@ -1165,6 +1236,73 @@ mod tests {
                 .any(|d| d.kind == "import" && d.to.ends_with("/os.py") || d.to == "os.py"),
             "stdlib no es arista: {:?}",
             snap.deps
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn python_import_lista_y_bare_arista_sin_resolver_bloquea() {
+        let root = scratch("pycomma");
+        fs::write(root.join("helper.py"), "def x():\n    return 1\n").expect("helper");
+        fs::write(root.join("sidekick.py"), "y = 1\n").expect("side");
+        fs::write(root.join("app.py"), "import helper, sidekick, os\n").expect("app");
+        let root_s = root.to_str().expect("utf8");
+        let snap = snapshot(root_s).expect("map");
+        assert!(
+            snap.deps.iter().any(|d| d.to.ends_with("helper.py")),
+            "helper: {:?}",
+            snap.deps
+        );
+        assert!(
+            snap.deps.iter().any(|d| d.to.ends_with("sidekick.py")),
+            "sidekick: {:?}",
+            snap.deps
+        );
+        assert!(
+            !snap
+                .deps
+                .iter()
+                .any(|d| d.to.ends_with("os.py") || d.to == "os.py"),
+            "stdlib: {:?}",
+            snap.deps
+        );
+        fs::write(root.join("app.py"), "x = 1\n").expect("host");
+        let blocked = gate_change(root_s, "app.py", "import helper.no_such, os\n").expect("gate");
+        assert!(
+            !blocked.ok,
+            "arista sin resolver debe bloquear: {:?}",
+            blocked
+        );
+        assert!(blocked.broken.iter().any(|b| b.target == "helper.no_such"));
+        let external = gate_change(root_s, "app.py", "import requests\n").expect("ext");
+        assert!(
+            external.ok,
+            "paquete externo no es arista: {:?}",
+            external.broken
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn use_crate_glob_bloquea_si_no_resuelve_y_super_no() {
+        let root = scratch("glob");
+        fs::write(root.join("src/lib.rs"), "fn a() {}\n").expect("lib");
+        fs::write(root.join("src/util.rs"), "pub fn x() {}\n").expect("util");
+        let root_s = root.to_str().expect("utf8");
+        let ok = gate_change(root_s, "src/lib.rs", "use crate::util::*;\nfn a() {}\n").expect("ok");
+        assert!(ok.ok, "crate::util::* existe: {:?}", ok.broken);
+        let bad =
+            gate_change(root_s, "src/lib.rs", "use crate::missing::*;\nfn a() {}\n").expect("bad");
+        assert!(!bad.ok, "crate::missing::* debe bloquear");
+        assert!(bad.broken.iter().any(|b| b.target == "crate::missing"));
+        let sup = gate_change(root_s, "src/lib.rs", "use super::*;\nfn a() {}\n").expect("super");
+        assert!(sup.ok, "super::* no se bloquea: {:?}", sup.broken);
+        let self_glob =
+            gate_change(root_s, "src/lib.rs", "use self::*;\nfn a() {}\n").expect("self");
+        assert!(
+            self_glob.ok,
+            "self::* no se bloquea: {:?}",
+            self_glob.broken
         );
         let _ = fs::remove_dir_all(root);
     }

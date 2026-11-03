@@ -228,6 +228,7 @@ const APP_COMMANDS: &[&str] = &[
     "ai_key_delete",
     "ai_exchange",
     "ai_cancel_in_flight",
+    "ai_arm_turn",
     "ai_probe_connection",
     "kernel_host_status",
     "kernel_interrupt",

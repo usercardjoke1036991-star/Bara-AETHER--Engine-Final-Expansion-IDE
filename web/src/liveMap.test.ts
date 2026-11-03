@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { filesFromUnifiedDiff, isExternalJsSpecifier, spliceHost } from "./liveMap";
+import { filesFromUnifiedDiff, isExternalJsSpecifier, mergeUnifiedDiff, spliceHost } from "./liveMap";
 
 describe("spliceHost", () => {
   it("inserta el parche en la línea pedida", () => {
@@ -35,6 +35,62 @@ describe("filesFromUnifiedDiff", () => {
     expect(files[0]?.source).toContain("fn a()");
     expect(files[1]?.path).toBe("src/b.py");
     expect(files[1]?.source).toContain("return 1");
+  });
+});
+
+describe("mergeUnifiedDiff", () => {
+  it("un hunk parcial conserva el resto del host y no escribe el recorte", () => {
+    const host = "keep-head\nalpha\nkeep-tail\n";
+    const diff = [
+      "diff --git a/src/a.rs b/src/a.rs",
+      "--- a/src/a.rs",
+      "+++ b/src/a.rs",
+      "@@ -2,1 +2,1 @@",
+      "-alpha",
+      "+beta",
+      "diff --git a/src/b.rs b/src/b.rs",
+      "--- a/src/b.rs",
+      "+++ b/src/b.rs",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+    const merged = mergeUnifiedDiff(diff, {
+      "src/a.rs": host,
+      "src/b.rs": "old\n",
+    });
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) {
+      return;
+    }
+    expect(merged.files[0]?.source).toBe("keep-head\nbeta\nkeep-tail\n");
+    expect(merged.files[0]?.source).not.toBe("beta\n");
+    expect(merged.files[1]?.source).toBe("new\n");
+  });
+
+  it("si el hunk no encaja, no devuelve el source truncado", () => {
+    const diff = [
+      "diff --git a/src/a.rs b/src/a.rs",
+      "--- a/src/a.rs",
+      "+++ b/src/a.rs",
+      "@@ -2,1 +2,1 @@",
+      "-alpha",
+      "+beta",
+      "diff --git a/src/b.rs b/src/b.rs",
+      "--- a/src/b.rs",
+      "+++ b/src/b.rs",
+      "+solo esto",
+    ].join("\n");
+    const merged = mergeUnifiedDiff(diff, {
+      "src/a.rs": "keep-head\notra\nkeep-tail\n",
+      "src/b.rs": "archivo entero que no debe perderse\n",
+    });
+    expect(merged.ok).toBe(false);
+    if (merged.ok) {
+      return;
+    }
+    expect(merged.reason).toMatch(/no se escribe/i);
+    expect(merged.reason).not.toContain("beta\n");
   });
 });
 

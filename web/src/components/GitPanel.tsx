@@ -65,15 +65,23 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
       setError("Escribe un mensaje de commit.");
       return;
     }
-    if (!commitArmed) {
-      setCommitArmed(true);
-      setError(null);
-      setNotice("Segunda confirmación: el commit hace git add -A. Pulsa otra vez.");
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
+      if (!commitArmed) {
+        try {
+          await gitCommit(text, false);
+        } catch (reason: unknown) {
+          const msg = describeError(reason);
+          if (!/segunda confirmación/i.test(msg)) {
+            setError(msg);
+            return;
+          }
+        }
+        setCommitArmed(true);
+        setNotice("Segunda confirmación: el commit hace git add -A. Pulsa otra vez.");
+        return;
+      }
       const report = await gitCommit(text, true);
       setNotice(report.summary);
       setMessage("");

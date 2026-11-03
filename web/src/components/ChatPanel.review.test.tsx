@@ -49,6 +49,7 @@ vi.mock("../engine", () => ({
   shoreshTranslate: vi.fn(async () => ({ text: "", synthesized: 0 })),
   cancelAiInFlight: vi.fn(async () => undefined),
   interruptKernel: vi.fn(async () => undefined),
+  armAiTurn: vi.fn(async () => undefined),
 }));
 
 vi.mock("../windows", () => ({
@@ -99,7 +100,9 @@ vi.mock("../baraVerify", () => ({
 }));
 
 import ChatPanel from "./ChatPanel";
-import { liveMapGate } from "../liveMap";
+import { cancelAiInFlight } from "../engine";
+import { liveMapApplyBatch, liveMapGate } from "../liveMap";
+import { localComplete } from "../offline";
 
 function reviewReport(): AutoApplyReport {
   return {
@@ -227,5 +230,128 @@ describe("ChatPanel Aceptar / Rechazar / Deshacer", () => {
       expect(screen.getByRole("alert").textContent ?? "").toMatch(/no se escribe/i);
     });
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("Auto-Apply no confirma si el mapa cae", async () => {
+    localStorage.setItem("bara.autoApply.v2", "1");
+    localStorage.setItem("bara.autoApply", "1");
+    const onConfirm = vi.fn();
+    vi.mocked(liveMapGate).mockRejectedValue(new Error("mapa caído"));
+    const onJudge = vi.fn(async () => ({
+      ...reviewReport(),
+      verified: true,
+      canApply: true,
+    }));
+
+    render(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource="ברא\n"
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        acceptRemotePatches
+        onJudge={onJudge}
+        onConfirm={onConfirm}
+        onUndo={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(listenHandler.current).not.toBeNull();
+    });
+    listenHandler.current?.({ payload: { patch: "ברא\n" } });
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent ?? "").toMatch(/no se escribe/i);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+    localStorage.removeItem("bara.autoApply");
+    localStorage.removeItem("bara.autoApply.v2");
+  });
+
+  it("diff parcial multiarchivo no aplica el recorte", async () => {
+    const apply = vi.mocked(liveMapApplyBatch);
+    const diff = [
+      "diff --git a/src/a.rs b/src/a.rs",
+      "--- a/src/a.rs",
+      "+++ b/src/a.rs",
+      "@@ -2,1 +2,1 @@",
+      "-alpha",
+      "+beta",
+      "diff --git a/src/b.rs b/src/b.rs",
+      "--- a/src/b.rs",
+      "+++ b/src/b.rs",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+    render(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource="ברא\n"
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        acceptRemotePatches
+        onJudge={vi.fn()}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(listenHandler.current).not.toBeNull();
+    });
+    listenHandler.current?.({ payload: { patch: diff } });
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent ?? "").toMatch(/no se escribe/i);
+    });
+    expect(apply).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent ?? "").not.toBe("beta\n");
+  });
+
+  it("si Detener falla el invoke, avisa que no se pudo detener", async () => {
+    vi.mocked(cancelAiInFlight).mockRejectedValueOnce(new Error("ipc denegado"));
+    vi.mocked(localComplete).mockImplementation(
+      (_text: string, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          const fail = () => reject(new DOMException("abortado", "AbortError"));
+          if (signal?.aborted) {
+            fail();
+            return;
+          }
+          signal?.addEventListener("abort", fail);
+        }),
+    );
+    render(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource=""
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        onJudge={vi.fn()}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Offline" }));
+    fireEvent.change(screen.getByPlaceholderText(/Pregunte/), { target: { value: "hola" } });
+    const sendButton = screen.getByRole("button", { name: "Enviar" });
+    const form = sendButton.closest("form");
+    if (!form) {
+      throw new Error("falta el formulario");
+    }
+    fireEvent.submit(form);
+    const cancelButtons = await screen.findAllByRole("button", { name: "Cancelar" });
+    const cancel = cancelButtons[0];
+    if (!cancel) {
+      throw new Error("falta Cancelar");
+    }
+    fireEvent.click(cancel);
+    expect(await screen.findByText(/No se pudo detener/i)).toBeTruthy();
+    expect(screen.queryByText("Consulta cancelada.")).toBeNull();
   });
 });

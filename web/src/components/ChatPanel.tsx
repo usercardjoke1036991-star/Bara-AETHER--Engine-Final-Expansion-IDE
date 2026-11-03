@@ -47,6 +47,7 @@ import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../edi
 import {
   filesFromUnifiedDiff,
   liveMapApplyBatch,
+  mergeUnifiedDiff,
   liveMapContext,
   liveMapGate,
   liveMapImpact,
@@ -61,6 +62,7 @@ import {
   shouldListenForPropose,
 } from "../patchFlow";
 import {
+  armAiTurn,
   cancelAiInFlight,
   interruptKernel,
   shoreshTranslate,
@@ -386,7 +388,36 @@ export default function ChatPanel({
         );
         const batchFiles = filesFromUnifiedDiff(early.code);
         if (batchFiles.length > 1) {
-          const batch: BatchChange[] = batchFiles.map((file) => ({
+          const hosts: Record<string, string> = {};
+          for (const file of batchFiles) {
+            try {
+              const doc = await readProjectFile(file.path);
+              hosts[file.path] = doc.source ?? "";
+            } catch {
+              hosts[file.path] = "";
+            }
+          }
+          const merged = mergeUnifiedDiff(early.code, hosts);
+          if (!merged.ok) {
+            setReview({
+              patch: early.code,
+              report: {
+                ...emptyReport(1),
+                glyph: "∅",
+                status: "neither",
+                path: merged.path,
+                previewDiff: early.code,
+                canApply: false,
+                verified: false,
+                blockReason: merged.reason,
+                judgmentId: "batch",
+              },
+              mapBlock: merged.reason,
+            });
+            publishNotice(merged.reason);
+            return;
+          }
+          const batch: BatchChange[] = merged.files.map((file) => ({
             path: file.path,
             source: file.source,
           }));
@@ -646,6 +677,7 @@ export default function ChatPanel({
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      await armAiTurn();
       if (offline) {
         const local = await localComplete(text, controller.signal);
         if (controller.signal.aborted) {

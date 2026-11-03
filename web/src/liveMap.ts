@@ -102,7 +102,11 @@ export interface DiffFile {
   source: string;
 }
 
-/** Reconstruye archivos desde un diff unificado (`+++ b/ruta`). Un solo archivo no es lote. */
+/**
+ * Lista rutas de un diff unificado (`+++ b/ruta`). Un solo archivo no es lote.
+ * El `source` de aquí es sólo el texto `+`/contexto: no se escribe. Para
+ * aplicar, usar `mergeUnifiedDiff` contra el host.
+ */
 export function filesFromUnifiedDiff(diff: string): DiffFile[] {
   const files: { path: string; lines: string[] }[] = [];
   let current: { path: string; lines: string[] } | null = null;
@@ -144,6 +148,173 @@ export function filesFromUnifiedDiff(diff: string): DiffFile[] {
       source: body.length > 0 && !body.endsWith("\n") ? `${body}\n` : body,
     };
   });
+}
+
+export type MergedDiff =
+  | { ok: true; files: DiffFile[] }
+  | { ok: false; path: string; reason: string };
+
+interface HunkLine {
+  kind: " " | "+" | "-";
+  text: string;
+}
+
+interface ParsedHunk {
+  oldStart: number;
+  lines: HunkLine[];
+}
+
+interface ParsedDiffFile {
+  path: string;
+  hunks: ParsedHunk[];
+  plusOnly: string[];
+  sawHunk: boolean;
+}
+
+function parseUnifiedFiles(diff: string): ParsedDiffFile[] {
+  const files: ParsedDiffFile[] = [];
+  let current: ParsedDiffFile | null = null;
+  let hunk: ParsedHunk | null = null;
+  const flushHunk = () => {
+    if (current && hunk) {
+      current.hunks.push(hunk);
+    }
+    hunk = null;
+  };
+  const flushFile = () => {
+    flushHunk();
+    if (current) {
+      files.push(current);
+    }
+    current = null;
+  };
+  for (const line of diff.replace(/\r\n/g, "\n").split("\n")) {
+    const plus = /^\+\+\+ (?:b\/)?(\S.*)$/.exec(line);
+    if (plus && plus[1] !== "/dev/null") {
+      flushFile();
+      current = {
+        path: plus[1].trim().replace(/\\/g, "/"),
+        hunks: [],
+        plusOnly: [],
+        sawHunk: false,
+      };
+      continue;
+    }
+    if (!current) {
+      continue;
+    }
+    if (line.startsWith("diff --git ") || line.startsWith("--- ")) {
+      flushHunk();
+      continue;
+    }
+    const header = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(line);
+    if (header) {
+      flushHunk();
+      current.sawHunk = true;
+      hunk = { oldStart: Number(header[1]), lines: [] };
+      continue;
+    }
+    if (line.startsWith("\\")) {
+      continue;
+    }
+    if (hunk && (line.startsWith("+") || line.startsWith("-") || line.startsWith(" "))) {
+      const kind = line[0];
+      if (kind === "+" || kind === "-" || kind === " ") {
+        hunk.lines.push({ kind, text: line.slice(1) });
+      }
+      continue;
+    }
+    if (!current.sawHunk && line.startsWith("+")) {
+      current.plusOnly.push(line.slice(1));
+    }
+  }
+  flushFile();
+  return files;
+}
+
+function hostLinesOf(host: string): string[] {
+  const normalized = host.replace(/\r\n/g, "\n");
+  if (normalized.length === 0) {
+    return [];
+  }
+  const lines = normalized.split("\n");
+  if (normalized.endsWith("\n")) {
+    lines.pop();
+  }
+  return lines;
+}
+
+/** Aplica hunks `@@` sobre el host. `null` si el contexto no encaja. */
+function applyHunks(host: string, hunks: ParsedHunk[]): string | null {
+  const lines = hostLinesOf(host);
+  const out: string[] = [];
+  let cursor = 0;
+  for (const hunk of hunks) {
+    const start = Math.max(0, hunk.oldStart - 1);
+    if (start < cursor || start > lines.length) {
+      return null;
+    }
+    out.push(...lines.slice(cursor, start));
+    cursor = start;
+    for (const line of hunk.lines) {
+      if (line.kind === "+") {
+        out.push(line.text);
+        continue;
+      }
+      if (cursor >= lines.length || lines[cursor] !== line.text) {
+        return null;
+      }
+      if (line.kind === " ") {
+        out.push(lines[cursor]);
+      }
+      cursor += 1;
+    }
+  }
+  out.push(...lines.slice(cursor));
+  if (out.length === 0) {
+    return "";
+  }
+  return `${out.join("\n")}\n`;
+}
+
+/**
+ * Fusiona un diff unificado con el contenido actual de cada archivo.
+ * Un hunk parcial conserva el resto del host. Si no encaja, no hay source.
+ */
+export function mergeUnifiedDiff(
+  diff: string,
+  hosts: Readonly<Record<string, string>>,
+): MergedDiff {
+  const parsed = parseUnifiedFiles(diff);
+  if (parsed.length === 0) {
+    return { ok: false, path: "", reason: "el diff no nombra archivos; no se escribe" };
+  }
+  const files: DiffFile[] = [];
+  for (const file of parsed) {
+    const host = hosts[file.path] ?? "";
+    let source: string | null;
+    if (file.sawHunk) {
+      source = applyHunks(host, file.hunks);
+      if (source === null) {
+        return {
+          ok: false,
+          path: file.path,
+          reason: `el parche parcial de «${file.path}» no encaja con el archivo; no se escribe`,
+        };
+      }
+    } else if (host.length === 0) {
+      const body = file.plusOnly.join("\n");
+      source = body.length > 0 && !body.endsWith("\n") ? `${body}\n` : body;
+    } else {
+      return {
+        ok: false,
+        path: file.path,
+        reason: `el parche de «${file.path}» no se puede fusionar con el archivo; no se escribe`,
+      };
+    }
+    files.push({ path: file.path, source });
+  }
+  return { ok: true, files };
 }
 
 export function liveMapContext(focus: string[], maxLines = 48): Promise<MapContext> {

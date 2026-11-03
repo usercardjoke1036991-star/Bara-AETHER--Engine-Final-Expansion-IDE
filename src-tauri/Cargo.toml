@@ -54,8 +54,7 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt", "
 keyring = { version = "3", default-features = false, features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 # HTTPS de los proveedores. La clave no sale del proceso.
-# rustls + almacén del SO (VPN/antivirus con CA en Windows) y webpki como reserva.
-ureq = { version = "2.12", default-features = false, features = ["tls"] }
+# HTTP/1.1 propio + rustls (almacén del SO; webpki como reserva). Sin ureq.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
 webpki-roots = "0.26"
