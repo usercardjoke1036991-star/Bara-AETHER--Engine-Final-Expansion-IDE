@@ -1,8 +1,8 @@
 # ══════════════════════════════════════════════════════════════════════════
 #  Bara IDE Desktop — backend Tauri v2 del IDE Bara (AETHER-Ω)
 #
-#  Crate miembro del workspace raíz (`../../Cargo.toml`): no declara
-#  `[workspace]` propio a propósito, para no romper la pertenencia.
+#  Este crate no declara `[workspace]`. CI lo comprueba con
+#  `--manifest-path`. El `../../Cargo.toml` es un contenedor local, no CI.
 #
 #  Capas (una sola dirección, cero duplicación de tipos):
 #      web/ (React+TS) --IPC--> src-tauri/ --> bara-kernel-host (sidecar)
