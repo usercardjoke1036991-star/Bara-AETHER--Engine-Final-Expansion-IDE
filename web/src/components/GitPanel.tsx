@@ -106,7 +106,7 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
   }
 
   return (
-    <div className="git-panel zone-scroll">
+    <div className="git-panel">
       <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
         <strong>
           {branches?.current ? `rama ${branches.current}` : "Git"}

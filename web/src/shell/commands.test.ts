@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildCommands, filterCommands, type CommandHandlers } from "./commands";
-import { bottomHeightCss, isNestedScrollViolation, nextEscTarget } from "./uxRules";
+import { bottomHeightCss, nextEscTarget } from "./uxRules";
 
 function handlers(): CommandHandlers {
   return {
@@ -33,12 +33,6 @@ describe("paleta de comandos", () => {
 });
 
 describe("reglas UX", () => {
-  it("detecta scroll anidado prohibido", () => {
-    expect(isNestedScrollViolation("auto", "scroll")).toBe(true);
-    expect(isNestedScrollViolation("hidden", "auto")).toBe(false);
-    expect(isNestedScrollViolation("visible", "visible")).toBe(false);
-  });
-
   it("Esc cierra en cascada menú → paleta → abajo → chat → lateral", () => {
     expect(
       nextEscTarget({

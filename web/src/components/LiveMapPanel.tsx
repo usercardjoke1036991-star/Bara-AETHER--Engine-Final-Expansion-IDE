@@ -64,7 +64,7 @@ export default function LiveMapPanel({ workspaceRoot, focusPath = "" }: LiveMapP
   );
 
   return (
-    <div className="live-map-panel zone-scroll">
+    <div className="live-map-panel">
       <div className="row live-map-toolbar">
         <input
           className="path"

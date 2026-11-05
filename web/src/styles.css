@@ -296,13 +296,18 @@ body,
   background: var(--bg);
 }
 
-.ide-side .workspace,
+.ide-side .workspace {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .ide-side .side-search,
 .ide-side .side-settings {
   flex: 1;
   min-height: 0;
   overflow-x: hidden;
-  overflow-y: auto; /* lateral: scroll si hace falta; hijos también scrollean */
+  overflow-y: auto;
 }
 
 .side-head {
@@ -819,12 +824,15 @@ body,
 
 .ws-projects {
   flex: 0 0 auto;
-  max-height: 42%;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: visible;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--line);
+}
+
+.ws-projects > details > summary {
+  cursor: pointer;
+  list-style: none;
 }
 
 .disk-warn {
@@ -838,12 +846,11 @@ body,
   font-size: 1rem;
 }
 
-.problems-panel,
 .problems-list,
 .git-panel,
 .live-map-panel {
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .live-map-panel h4 {

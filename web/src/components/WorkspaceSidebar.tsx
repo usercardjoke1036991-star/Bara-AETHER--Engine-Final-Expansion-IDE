@@ -123,19 +123,23 @@ export default function WorkspaceSidebar({
   return (
     <aside className="workspace" aria-label="Explorador del workspace">
       <section className="ws-section ws-projects" aria-label="Proyectos">
-        <div className="ws-section-head">
+        <details open>
+        <summary className="ws-section-head">
           <h2>PROYECTOS</h2>
           <button
             type="button"
             className="icon-button"
             disabled={loading || root.length === 0}
-            onClick={onRefresh}
+            onClick={(event) => {
+              event.preventDefault();
+              onRefresh();
+            }}
             title="Volver a enumerar la raíz activa"
             aria-label="Recargar el árbol del workspace"
           >
             ↻
           </button>
-        </div>
+        </summary>
 
         <div className="workspace-actions">
           <button type="button" disabled={loading} onClick={onPickFolder}>
@@ -191,6 +195,7 @@ export default function WorkspaceSidebar({
           <p className="muted ws-empty">Sin proyectos. Abre o clona una carpeta.</p>
         )}
         {shelfError ? <p className="error">{shelfError}</p> : null}
+        </details>
       </section>
 
       <section className="ws-section ws-files" aria-label="Archivos del proyecto activo">
