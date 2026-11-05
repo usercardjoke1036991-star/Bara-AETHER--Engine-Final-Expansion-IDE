@@ -949,20 +949,57 @@ fn relocate_to_trash(source: &Path, trash: &Path) -> std::io::Result<()> {
     fs::rename(source, trash)
 }
 
-/// Escribe bytes: `create_new` si el archivo no existe; truncado seguro si ya existe.
+#[cfg(test)]
+fn atomic_fail_init() -> bool {
+    std::hint::black_box(false)
+}
+
+#[cfg(test)]
+thread_local! {
+    static ATOMIC_FAIL: std::cell::Cell<bool> = std::cell::Cell::new(atomic_fail_init());
+}
+
+/// Escribe en un temporal de la misma carpeta, hace fsync y renombra.
+///
+/// En Windows 10, `std::fs::rename` usa `MoveFileEx` con reemplazo
+/// (`FileRenameInfoEx`) después de cerrar el temporal. Un fallo a mitad
+/// borra el temporal y deja el archivo destino como estaba.
 fn write_atomic(canonical: &Path, source: &str) -> Result<(), std::io::Error> {
-    use std::fs::OpenOptions;
     use std::io::Write;
-    if fs::symlink_metadata(canonical).is_ok() {
-        let mut file = fs::File::create(canonical)?;
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "sin carpeta"))?;
+    let name = canonical
+        .file_name()
+        .and_then(|part| part.to_str())
+        .unwrap_or("archivo");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let tmp = parent.join(format!(".{name}.{}.{nonce}.bara-tmp", std::process::id()));
+    let written = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        #[cfg(test)]
+        if ATOMIC_FAIL.get() {
+            return Err(std::io::Error::other("escritura simulada"));
+        }
         file.write_all(source.as_bytes())?;
-        return Ok(());
+        file.sync_all()?;
+        Ok(())
+    })();
+    if let Err(err) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(canonical)?;
-    file.write_all(source.as_bytes())
+    if let Err(err) = fs::rename(&tmp, canonical) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1621,6 +1658,26 @@ mod tests {
         fs::create_dir_all(root.join("src")).expect("src");
         fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("fuente");
         assert!(read_text(root_s, "src/main.rs").is_ok());
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
+    fn a5_un_fallo_a_mitad_no_deja_el_archivo_vacio() {
+        let root = scratch("a5-atomic");
+        let file = root.join("nota.rs");
+        fs::write(&file, "original\n").expect("semilla");
+        ATOMIC_FAIL.set(true);
+        let err = write_atomic(&file, "nuevo\n").expect_err("corte");
+        ATOMIC_FAIL.set(false);
+        assert!(err.to_string().contains("simulada"), "{err}");
+        assert_eq!(fs::read_to_string(&file).expect("disco"), "original\n");
+        write_atomic(&file, "nuevo\n").expect("reemplazo");
+        assert_eq!(fs::read_to_string(&file).expect("nuevo"), "nuevo\n");
+        let leftover = fs::read_dir(&root)
+            .expect("dir")
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().contains("bara-tmp"));
+        assert!(!leftover, "quedó un temporal");
         fs::remove_dir_all(&root).expect("limpiar");
     }
 }
