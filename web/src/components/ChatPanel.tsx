@@ -5,6 +5,7 @@
 // natural→Shoresh por IPC), así que este archivo no contiene un solo glifo de
 // Shoresh escrito a mano.
 
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -20,7 +21,9 @@ import {
   stripStoredSecret,
 } from "../ai/config";
 import {
+  DESK_ATTACHMENT_EVENT,
   MAX_ATTACHMENTS,
+  attachmentFromDesk,
   fileNotesForPrompt,
   filesFromDataTransfer,
   formatBytes,
@@ -662,6 +665,39 @@ export default function ChatPanel({
       unlisten?.();
     };
   }, [acceptRemotePatches, beginReview, documentName, onEnsureOpen, open, publishNotice]);
+
+  // Adjuntos desde Asistencia: sólo main, y el chat se abre si estaba cerrado.
+  useEffect(() => {
+    if (!acceptRemotePatches || !shouldListenForPropose(inDesktop(), open)) {
+      return undefined;
+    }
+    let cancel = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ name?: string; source?: string }>(DESK_ATTACHMENT_EVENT, (event) => {
+      if (cancel) {
+        return;
+      }
+      const name = typeof event.payload?.name === "string" ? event.payload.name : "";
+      const source = typeof event.payload?.source === "string" ? event.payload.source : "";
+      const item = attachmentFromDesk(name, source);
+      onEnsureOpen?.();
+      if (!item) {
+        return;
+      }
+      setAttachments((previous) => [...previous, item].slice(-MAX_ATTACHMENTS));
+    })
+      .then((stop) => {
+        unlisten = stop;
+        if (cancel) {
+          stop();
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancel = true;
+      unlisten?.();
+    };
+  }, [acceptRemotePatches, onEnsureOpen, open]);
 
   /** Adjunta archivos de cualquier tipo (arrastrados, pegados o elegidos). */
   const attach = useCallback(
@@ -1397,6 +1433,7 @@ export default function ChatPanel({
                     <button
                       type="button"
                       title="quitar"
+                      aria-label={`Quitar ${image.name}`}
                       onClick={() =>
                         setAttachments((previous) =>
                           previous.filter((item) => item.id !== image.id),

@@ -7,13 +7,28 @@ const listenHandler: { current: ((event: { payload: { patch?: string } }) => voi
   current: null,
 };
 
+const deskListen: {
+  current: ((event: { payload: { name?: string; source?: string } }) => void) | null;
+} = { current: null };
+
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_name: string, handler: (event: { payload: { patch?: string } }) => void) => {
-    listenHandler.current = handler;
-    return () => {
-      listenHandler.current = null;
-    };
-  }),
+  listen: vi.fn(
+    async (
+      name: string,
+      handler: (event: { payload: { patch?: string; name?: string; source?: string } }) => void,
+    ) => {
+      if (name === "ai-desk-attachment") {
+        deskListen.current = handler;
+        return () => {
+          deskListen.current = null;
+        };
+      }
+      listenHandler.current = handler;
+      return () => {
+        listenHandler.current = null;
+      };
+    },
+  ),
 }));
 
 vi.mock("../ai/keyring", () => ({
@@ -133,10 +148,12 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   listenHandler.current = null;
+  deskListen.current = null;
 });
 
 beforeEach(() => {
   listenHandler.current = null;
+  deskListen.current = null;
 });
 
 describe("ChatPanel Aceptar / Rechazar / Deshacer", () => {
@@ -405,5 +422,50 @@ describe("ChatPanel Aceptar / Rechazar / Deshacer", () => {
     fireEvent.click(cancel);
     expect(await screen.findByText(/No se pudo detener/i)).toBeTruthy();
     expect(screen.queryByText("Consulta cancelada.")).toBeNull();
+  });
+});
+
+describe("adjunto desde Asistencia", () => {
+  it("el evento en main muestra el adjunto, el tamaño y se puede quitar", async () => {
+    const onEnsureOpen = vi.fn();
+    const view = render(
+      <ChatPanel
+        open={false}
+        documentName="doc.bara"
+        documentSource=""
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        acceptRemotePatches
+        onEnsureOpen={onEnsureOpen}
+        onJudge={vi.fn()}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(deskListen.current).not.toBeNull();
+    });
+    deskListen.current?.({ payload: { name: "nota.rs", source: "fn a() {}\n" } });
+    expect(onEnsureOpen).toHaveBeenCalled();
+    view.rerender(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource=""
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        acceptRemotePatches
+        onEnsureOpen={onEnsureOpen}
+        onJudge={vi.fn()}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText("nota.rs")).toBeTruthy();
+    expect(screen.getByText(/10 B/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Quitar nota.rs" }));
+    expect(screen.queryByText("nota.rs")).toBeNull();
   });
 });

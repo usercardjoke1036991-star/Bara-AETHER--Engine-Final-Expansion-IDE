@@ -22,6 +22,29 @@ export const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 /** Máximo de imágenes por mensaje. */
 export const MAX_ATTACHMENTS = 6;
 
+/** Evento que Asistencia envía sólo a la ventana `main`. */
+export const DESK_ATTACHMENT_EVENT = "ai-desk-attachment";
+
+/** Adjunto de texto llegado desde Asistencia. `null` si el fragmento está vacío. */
+export function attachmentFromDesk(name: string, source: string): ImageAttachment | null {
+  const label = name.trim();
+  if (!label || !source.trim()) {
+    return null;
+  }
+  return {
+    id: `desk-${attachmentId(source.length)}`,
+    name: label,
+    mediaType: "text/plain",
+    base64: "",
+    dataUrl: "",
+    width: 0,
+    height: 0,
+    bytes: new TextEncoder().encode(source).length,
+    kind: "file",
+    textContent: source,
+  };
+}
+
 /** Identificador único para las claves de React. */
 export function attachmentId(index: number): string {
   return `adjunto-${Date.now().toString(36)}-${index}`;

@@ -1142,9 +1142,10 @@ fn propose_ai_desk_attachment(
     if text.len() > 256 * 1024 {
         return Err("el fragmento supera 256 KiB".to_string());
     }
-    app.emit(
+    app.emit_to(
+        "main",
         "ai-desk-attachment",
-        json!({ "name": label, "source": text }),
+        json!({ "name": label, "source": text, "bytes": text.len() }),
     )
     .map_err(|err| err.to_string())?;
     if let Some(main) = app.get_webview_window("main") {
