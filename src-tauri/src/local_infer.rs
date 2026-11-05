@@ -213,13 +213,14 @@ mod tests {
         assert!(reply.reply.contains("sin red"));
         assert!(!reply.reply.contains("https://"));
         let fenced = complete(&card(), "```rs\nfn nueva() {}\n```");
-        assert_eq!(fenced.glyph, "∅");
+        assert_eq!(fenced.glyph, "⊤");
         let broken = complete(&card(), "```rs\nfn nueva() {\n```");
         assert_eq!(broken.glyph, "⊤∧⊥");
     }
 
     #[test]
     fn el_modulo_no_abre_la_red() {
+        // Guarda estructural: complete ya afirma «sin red»; esto impide colar un cliente.
         let source = include_str!("local_infer.rs");
         let production = source.split("mod tests").next().unwrap_or(source);
         assert!(!production.contains("TcpStream"));

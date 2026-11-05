@@ -2,13 +2,18 @@
 //!
 //! El WebView guarda, pregunta si existe y borra. Nunca recibe el secreto.
 //! Windows usa Credential Manager, macOS el Keychain y Linux Secret Service.
-//! Este binario de escritorio no escribe el secreto en un archivo. Android
-//! queda para el Keystore del APK: aquí no hay un sustituto en disco.
 //!
-//! En Windows el target visible suele ser `{user}.{service}`. El target nuevo
-//! es `com.aetheromega.bara.ide.deepseek` (y `.anthropic`). La migración lee
-//! el viejo `openai.com.aetheromega.bara.ide`, escribe el nuevo, verifica y
-//! borra el viejo sin pasar la clave por el frontend ni por los logs.
+//! Slots **separados** por proveedor:
+//! - `com.aetheromega.bara.ide.openai`
+//! - `com.aetheromega.bara.ide.deepseek`
+//! - `com.aetheromega.bara.ide.anthropic`
+//!
+//! Migración (sin perder clave):
+//! 1. Target legacy `openai.com.aetheromega.bara.ide` → slot `openai`.
+//! 2. Slot compartido histórico `…ide.deepseek` (openai|deepseek juntos) →
+//!    se copia al slot del proveedor pedido la primera vez; el compartido
+//!    se borra sólo cuando **ambos** openai y deepseek ya tienen entrada
+//!    propia o tras migrar al acceder.
 
 #![forbid(unsafe_code)]
 
@@ -21,8 +26,10 @@ const LEGACY_SERVICE: &str = "com.aetheromega.bara.ide";
 /// Cuenta del Entry nuevo (queda a la izquierda del punto en el target).
 const NEW_USER: &str = "com.aetheromega.bara.ide";
 
-/// Migración legacy→nuevo: una vez por proceso.
-static MIGRATED: AtomicBool = AtomicBool::new(false);
+/// Migración legacy→nuevo: una vez por proceso y proveedor.
+static MIGRATED_OPENAI: AtomicBool = AtomicBool::new(false);
+static MIGRATED_DEEPSEEK: AtomicBool = AtomicBool::new(false);
+static MIGRATED_ANTHROPIC: AtomicBool = AtomicBool::new(false);
 
 /// Copia de la sesión. No se persiste y no se serializa.
 #[derive(Default)]
@@ -103,66 +110,87 @@ fn limpiar(error: impl ToString) -> String {
 }
 
 /// Proveedor lógico del front → (service, user) del Entry nuevo.
-///
-/// Target Windows esperado: `{user}.{service}` =
-/// `com.aetheromega.bara.ide.deepseek` / `.anthropic`.
 fn slot(provider: &str) -> Result<(&'static str, &'static str), String> {
     match provider.trim() {
-        "openai" | "deepseek" => Ok(("deepseek", NEW_USER)),
+        "openai" => Ok(("openai", NEW_USER)),
+        "deepseek" => Ok(("deepseek", NEW_USER)),
         "anthropic" => Ok(("anthropic", NEW_USER)),
         _ => Err("el proveedor no tiene llavero".to_string()),
     }
 }
 
-fn legacy_account(provider: &str) -> Option<&'static str> {
-    match provider.trim() {
-        "openai" | "deepseek" => Some("openai"),
-        "anthropic" => Some("anthropic"),
-        _ => None,
-    }
-}
-
 fn session_key(provider: &str) -> Result<&'static str, String> {
     match provider.trim() {
-        "openai" | "deepseek" => Ok("deepseek"),
+        "openai" => Ok("openai"),
+        "deepseek" => Ok("deepseek"),
         "anthropic" => Ok("anthropic"),
         _ => Err("el proveedor no tiene llavero".to_string()),
     }
 }
 
-/// Lee el target viejo, escribe el nuevo, verifica y borra el viejo.
+fn migrated_flag(provider: &str) -> Option<&'static AtomicBool> {
+    match provider.trim() {
+        "openai" => Some(&MIGRATED_OPENAI),
+        "deepseek" => Some(&MIGRATED_DEEPSEEK),
+        "anthropic" => Some(&MIGRATED_ANTHROPIC),
+        _ => None,
+    }
+}
+
+/// Lee legacy / slot compartido histórico y materializa el slot propio.
 fn migrate_legacy_once<O: OsSecrets>(os: &O, provider: &str) -> Result<(), String> {
-    if MIGRATED.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    let Some(old_account) = legacy_account(provider) else {
+    let Some(flag) = migrated_flag(provider) else {
         return Ok(());
     };
+    if flag.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     let (new_service, new_user) = slot(provider)?;
-    // ¿Ya hay clave en el target nuevo?
     if os.get(new_service, new_user)?.is_some() {
-        let _ = os.delete(LEGACY_SERVICE, old_account);
-        MIGRATED.store(true, Ordering::SeqCst);
+        flag.store(true, Ordering::SeqCst);
         return Ok(());
     }
-    let Some(secret) = os.get(LEGACY_SERVICE, old_account)? else {
-        MIGRATED.store(true, Ordering::SeqCst);
-        return Ok(());
-    };
-    if secret.trim().is_empty() {
-        let _ = os.delete(LEGACY_SERVICE, old_account);
-        MIGRATED.store(true, Ordering::SeqCst);
-        return Ok(());
+
+    // 1) Legacy openai.com.aetheromega.bara.ide (sólo openai / anthropic).
+    if provider == "openai" {
+        if let Some(secret) = os.get(LEGACY_SERVICE, "openai")? {
+            if !secret.trim().is_empty() {
+                os.set(new_service, new_user, secret.trim())?;
+                let _ = os.delete(LEGACY_SERVICE, "openai");
+                flag.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+            let _ = os.delete(LEGACY_SERVICE, "openai");
+        }
     }
-    os.set(new_service, new_user, secret.trim())?;
-    let verified = os
-        .get(new_service, new_user)?
-        .filter(|value| value == secret.trim());
-    if verified.is_none() {
-        return Err("la migración del llavero no verificó la clave nueva".to_string());
+    if provider == "anthropic" {
+        if let Some(secret) = os.get(LEGACY_SERVICE, "anthropic")? {
+            if !secret.trim().is_empty() {
+                os.set(new_service, new_user, secret.trim())?;
+                let _ = os.delete(LEGACY_SERVICE, "anthropic");
+                flag.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+            let _ = os.delete(LEGACY_SERVICE, "anthropic");
+        }
     }
-    os.delete(LEGACY_SERVICE, old_account)?;
-    MIGRATED.store(true, Ordering::SeqCst);
+
+    // 2) Slot compartido histórico `deepseek` (openai|deepseek pisaban la misma clave).
+    if provider == "openai" || provider == "deepseek" {
+        if let Some(secret) = os.get("deepseek", NEW_USER)? {
+            if !secret.trim().is_empty() {
+                // Si el slot pedido es deepseek, ya está; si es openai, copia
+                // sin borrar aún el compartido (deepseek sigue leyéndolo).
+                if provider == "openai" {
+                    os.set("openai", NEW_USER, secret.trim())?;
+                }
+                flag.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+        }
+    }
+
+    flag.store(true, Ordering::SeqCst);
     Ok(())
 }
 
@@ -182,17 +210,22 @@ pub fn save<O: OsSecrets>(
     if remember {
         let (service, user) = slot(provider)?;
         os.set(service, user, secret)?;
-        // Limpia el target viejo si aún existiera.
-        if let Some(old) = legacy_account(provider) {
-            let _ = os.delete(LEGACY_SERVICE, old);
+        if provider == "openai" {
+            let _ = os.delete(LEGACY_SERVICE, "openai");
+        }
+        if provider == "anthropic" {
+            let _ = os.delete(LEGACY_SERVICE, "anthropic");
         }
         session.keys.remove(key);
         return Ok(());
     }
     let (service, user) = slot(provider)?;
     let _ = os.delete(service, user);
-    if let Some(old) = legacy_account(provider) {
-        let _ = os.delete(LEGACY_SERVICE, old);
+    if provider == "openai" {
+        let _ = os.delete(LEGACY_SERVICE, "openai");
+    }
+    if provider == "anthropic" {
+        let _ = os.delete(LEGACY_SERVICE, "anthropic");
     }
     session.keys.insert(key.to_string(), secret.to_string());
     Ok(())
@@ -228,8 +261,11 @@ pub fn delete<O: OsSecrets>(session: &mut Session, os: &O, provider: &str) -> Re
     session.keys.remove(key);
     let (service, user) = slot(provider)?;
     os.delete(service, user)?;
-    if let Some(old) = legacy_account(provider) {
-        let _ = os.delete(LEGACY_SERVICE, old);
+    if provider == "openai" {
+        let _ = os.delete(LEGACY_SERVICE, "openai");
+    }
+    if provider == "anthropic" {
+        let _ = os.delete(LEGACY_SERVICE, "anthropic");
     }
     Ok(())
 }
@@ -280,7 +316,7 @@ mod tests {
 
     #[test]
     fn guardar_existe_y_borrar() {
-        MIGRATED.store(false, Ordering::SeqCst);
+        MIGRATED_ANTHROPIC.store(false, Ordering::SeqCst);
         let os = MemoryOs::new();
         let mut session = Session::default();
         save(&mut session, &os, "anthropic", "clave-de-prueba", false).expect("guardar");
@@ -295,24 +331,50 @@ mod tests {
     }
 
     #[test]
-    fn la_migracion_pasa_al_sistema_y_borra_la_sesion() {
-        MIGRATED.store(false, Ordering::SeqCst);
+    fn openai_y_deepseek_no_se_pisan() {
+        MIGRATED_OPENAI.store(false, Ordering::SeqCst);
+        MIGRATED_DEEPSEEK.store(false, Ordering::SeqCst);
         let os = MemoryOs::new();
         let mut session = Session::default();
-        save(&mut session, &os, "openai", "vieja", false).expect("sesión");
-        save(&mut session, &os, "openai", "nueva", true).expect("migrar");
-        assert!(session.keys.is_empty());
+        save(&mut session, &os, "openai", "sk-openai", true).expect("openai");
+        save(&mut session, &os, "deepseek", "sk-deepseek", true).expect("deepseek");
+        assert_eq!(lookup(&session, &os, "openai").expect("o"), "sk-openai");
+        assert_eq!(lookup(&session, &os, "deepseek").expect("d"), "sk-deepseek");
+        assert_eq!(
+            os.get("openai", NEW_USER).expect("os").as_deref(),
+            Some("sk-openai")
+        );
         assert_eq!(
             os.get("deepseek", NEW_USER).expect("os").as_deref(),
-            Some("nueva")
+            Some("sk-deepseek")
         );
-        assert!(exists(&session, &os, "openai").expect("sigue"));
-        assert_eq!(lookup(&session, &os, "openai").expect("leer"), "nueva");
+    }
+
+    #[test]
+    fn migra_compartido_historico_a_openai_sin_perder_deepseek() {
+        MIGRATED_OPENAI.store(false, Ordering::SeqCst);
+        MIGRATED_DEEPSEEK.store(false, Ordering::SeqCst);
+        let os = MemoryOs::new();
+        let session = Session::default();
+        os.set("deepseek", NEW_USER, "sk-compartida")
+            .expect("shared");
+        assert_eq!(
+            lookup(&session, &os, "openai").expect("migrar openai"),
+            "sk-compartida"
+        );
+        assert_eq!(
+            lookup(&session, &os, "deepseek").expect("deepseek intacto"),
+            "sk-compartida"
+        );
+        assert_eq!(
+            os.get("openai", NEW_USER).expect("os").as_deref(),
+            Some("sk-compartida")
+        );
     }
 
     #[test]
     fn migra_el_target_legacy_openai_punto_servicio() {
-        MIGRATED.store(false, Ordering::SeqCst);
+        MIGRATED_OPENAI.store(false, Ordering::SeqCst);
         let os = MemoryOs::new();
         let session = Session::default();
         os.set(LEGACY_SERVICE, "openai", "secreto-legacy")
@@ -323,14 +385,14 @@ mod tests {
         );
         assert!(os.get(LEGACY_SERVICE, "openai").expect("viejo").is_none());
         assert_eq!(
-            os.get("deepseek", NEW_USER).expect("nuevo").as_deref(),
+            os.get("openai", NEW_USER).expect("nuevo").as_deref(),
             Some("secreto-legacy")
         );
     }
 
     #[test]
     fn recordar_quita_la_copia_del_sistema_si_la_sesion_manda() {
-        MIGRATED.store(false, Ordering::SeqCst);
+        MIGRATED_ANTHROPIC.store(false, Ordering::SeqCst);
         let os = MemoryOs::new();
         let mut session = Session::default();
         save(&mut session, &os, "anthropic", "persistida", true).expect("sistema");
@@ -341,7 +403,6 @@ mod tests {
 
     #[test]
     fn un_proveedor_ajeno_no_entra() {
-        MIGRATED.store(false, Ordering::SeqCst);
         let os = MemoryOs::new();
         let mut session = Session::default();
         assert!(save(&mut session, &os, "otro", "x", true).is_err());
@@ -351,8 +412,10 @@ mod tests {
     #[test]
     fn el_prefijo_del_servicio_es_el_esperado() {
         let (service, user) = slot("openai").expect("slot");
-        assert_eq!(service, "deepseek");
+        assert_eq!(service, "openai");
         assert_eq!(user, "com.aetheromega.bara.ide");
+        let (ds, _) = slot("deepseek").expect("ds");
+        assert_eq!(ds, "deepseek");
         assert_eq!(LEGACY_SERVICE, "com.aetheromega.bara.ide");
     }
 }

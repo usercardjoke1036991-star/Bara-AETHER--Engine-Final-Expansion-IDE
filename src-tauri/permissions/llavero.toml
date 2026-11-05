@@ -7,4 +7,6 @@ permissions = [
   "allow-ai-key-delete",
   "allow-ai-exchange",
   "allow-ai-probe-connection",
+  "allow-ai-cancel-in-flight",
+  "allow-ai-arm-turn",
 ]

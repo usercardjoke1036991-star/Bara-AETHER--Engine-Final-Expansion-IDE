@@ -8,6 +8,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
+import { verifyBaraBlock, type BaraVerifyStatus } from "../baraVerify";
 import { writeClipboard } from "../clipboard";
 
 /** Fragmento de una respuesta: prosa o bloque cercado. */
@@ -64,6 +65,20 @@ export function codeBlocks(markdown: string): string[] {
     .filter((block) => block.kind === "code")
     .map((block) => block.content.trim())
     .filter((code) => code.length > 0);
+}
+
+/**
+ * B7 — primer fence etiquetado `bara` (no el primer fence de cualquier lenguaje).
+ * Sin etiqueta `bara` ⇒ null (Auto-Apply no inventa parches desde ```ts/```json).
+ */
+export function firstBaraCodeBlock(markdown: string): string | null {
+  const block = splitBlocks(markdown).find(
+    (item) =>
+      item.kind === "code" &&
+      item.language.toLowerCase() === "bara" &&
+      item.content.trim().length > 0,
+  );
+  return block ? block.content.trim() : null;
 }
 
 /** Convierte `código en línea` en elementos, sin interpretar nada más. */
@@ -124,16 +139,89 @@ function CopyButton({
   );
 }
 
-/** Bloque de código con acciones: copiar y enviar al editor Shoresh. */
+function verifyLabel(status: BaraVerifyStatus): string {
+  switch (status) {
+    case "verified":
+      return "verificado";
+    case "unverified":
+      return "no verificado";
+    case "pending":
+      return "comprobando…";
+    case "error":
+      return "no verificado";
+  }
+}
+
+function nonBaraBalanceLabel(code: string): "equilibrado" | "sin choque" {
+  const open = (code.match(/[{[(]/g) ?? []).length;
+  const close = (code.match(/[}\])]/g) ?? []).length;
+  return open === close ? "equilibrado" : "sin choque";
+}
+
+/** Bloque de código con acciones: copiar, insignia y enviar al editor. */
 function CodeBlock({ block, onUseCode }: { block: Block; onUseCode?: (code: string) => void }) {
+  const lang = block.language.toLowerCase();
+  const isBara = lang === "bara";
+  const [status, setStatus] = useState<BaraVerifyStatus>(isBara ? "pending" : "unverified");
+  const otherBadge = isBara ? null : nonBaraBalanceLabel(block.content);
+
+  useEffect(() => {
+    if (!isBara) {
+      return undefined;
+    }
+    let cancel = false;
+    setStatus("pending");
+    void verifyBaraBlock(block.content).then((next) => {
+      if (!cancel) {
+        setStatus(next);
+      }
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [block.content, isBara]);
+
   return (
     <div className="ai-code">
       <div className="ai-code-head">
         <span className="muted">{block.language || "texto"}</span>
+        {isBara ? (
+          <span
+            className={
+              status === "verified" ? "ai-badge ai-badge-ok" : "ai-badge ai-badge-warn"
+            }
+            title={
+              status === "verified"
+                ? "El kernel reconoce las raíces y la sintaxis"
+                : "propuesta no verificada"
+            }
+          >
+            {verifyLabel(status)}
+          </span>
+        ) : otherBadge ? (
+          <span
+            className={
+              otherBadge === "equilibrado" ? "ai-badge ai-badge-ok" : "ai-badge ai-badge-warn"
+            }
+            title="A4/M7: en no-.bara el badge es equilibrado/sin choque"
+          >
+            {otherBadge}
+          </span>
+        ) : null}
         <span className="grow" />
         <CopyButton className="ai-copy-code" label="Copiar" text={block.content} />
-        {onUseCode ? (
-          <button type="button" onClick={() => onUseCode(block.content)}>
+        {onUseCode && (!isBara || status !== "pending") ? (
+          <button
+            type="button"
+            title={
+              isBara
+                ? status === "verified"
+                  ? "Abrir diff en el editor"
+                  : "Abrir diff (no verificado: podrás Aceptar a mano)"
+                : "Abrir diff (equilibrado/sin choque; Aceptar con respaldo)"
+            }
+            onClick={() => onUseCode(block.content)}
+          >
             usar en el editor
           </button>
         ) : null}

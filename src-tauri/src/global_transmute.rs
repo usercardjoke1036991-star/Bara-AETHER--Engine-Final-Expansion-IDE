@@ -12,8 +12,11 @@ use bara::syntax;
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
 
+use crate::auto_apply;
 use crate::graph;
 use crate::workspace;
+
+const MAX_FILES: usize = 48;
 
 const MAX_NAME: usize = 64;
 
@@ -162,9 +165,6 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
     let mut network = BelnapValue::Neither;
     let mut seen = false;
     for node in graph.nodes.iter().filter(|node| node.kind == "file") {
-        if plans.len() == 48 {
-            break;
-        }
         let document = match workspace::read_text(root, &node.path) {
             Ok(document) => document,
             Err(_) => continue,
@@ -186,6 +186,12 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
     if !seen {
         return Ok(report(from, to, BelnapValue::False, false, Vec::new()));
     }
+    if plans.len() > MAX_FILES {
+        return Err(format!(
+            "la red tocaría {} archivos; el tope es {MAX_FILES}",
+            plans.len()
+        ));
+    }
     let files: Vec<GlobalFile> = plans
         .iter()
         .map(|plan| GlobalFile {
@@ -200,15 +206,45 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
     }
     let mut written: Vec<(String, String)> = Vec::new();
     for plan in &plans {
-        if let Err(err) = workspace::write_source(root, &plan.path, &plan.next) {
-            for (path, previous) in written.iter().rev() {
-                let _ = workspace::write_source(root, path, previous);
-            }
-            return Err(err);
+        if let Err(err) = auto_apply::write_backup(root, &plan.path, &plan.previous) {
+            return abort_with_restore(root, &written, err);
+        }
+        let expected = workspace::content_hash(&plan.previous);
+        if let Err(err) =
+            workspace::write_source_checked(root, &plan.path, &plan.next, Some(expected.as_str()))
+        {
+            return abort_with_restore(root, &written, err);
         }
         written.push((plan.path.clone(), plan.previous.clone()));
     }
     Ok(report(from, to, network, true, files))
+}
+
+/// Restaura lo ya escrito. Si alguna restauración falla, el error se devuelve
+/// (no se descarta): el llamador tiene que mostrarlo.
+fn restore_written(root: &str, written: &[(String, String)]) -> Result<(), String> {
+    let mut failed = Vec::new();
+    for (path, previous) in written.iter().rev() {
+        if let Err(err) = workspace::write_source(root, path, previous) {
+            failed.push(format!("{path}: {err}"));
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("\n"))
+    }
+}
+
+fn abort_with_restore(
+    root: &str,
+    written: &[(String, String)],
+    cause: String,
+) -> Result<GlobalReport, String> {
+    match restore_written(root, written) {
+        Ok(()) => Err(cause),
+        Err(detail) => Err(format!("{cause}\nno se pudo deshacer:\n{detail}")),
+    }
 }
 
 fn report(
@@ -234,6 +270,13 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct ClearWriteFail;
+    impl Drop for ClearWriteFail {
+        fn drop(&mut self) {
+            workspace::clear_write_fail();
+        }
+    }
 
     fn scratch() -> PathBuf {
         let nonce = SystemTime::now()
@@ -280,5 +323,55 @@ mod tests {
         let root = scratch();
         fs::write(root.join("src/a.rs"), "fn alpha() {}\n").expect("a");
         assert!(propagate(&root.display().to_string(), "../a.rs", "alpha", "beta").is_err());
+    }
+
+    #[test]
+    fn m4_un_fallo_a_medias_restaura_y_el_rollback_roto_se_muestra() {
+        let root = scratch();
+        let original = "fn alpha() {}\nfn main() { alpha(); }\n";
+        fs::write(root.join("src/a.rs"), original).expect("a");
+        let b = root.join("src/b.rs");
+        fs::write(&b, "fn otro() { alpha(); }\n").expect("b");
+        // En Linux `rename` sustituye un destino de solo lectura: el permiso
+        // se exige sobre el directorio. La segunda escritura se corta aquí.
+        workspace::fail_write_on_call(2);
+        let _clear = ClearWriteFail;
+        let root_text = root.display().to_string();
+        let err = propagate(&root_text, "src/a.rs", "alpha", "beta").expect_err("escritura");
+        assert!(
+            !err.contains("no se pudo deshacer"),
+            "el rollback de a.rs tenía que funcionar: {err}"
+        );
+        assert!(
+            err.contains("escritura simulada"),
+            "tenía que fallar la segunda escritura: {err}"
+        );
+        let restored = fs::read_to_string(root.join("src/a.rs")).expect("a2");
+        assert_eq!(restored, original);
+        let untouched = fs::read_to_string(&b).expect("b2");
+        assert!(untouched.contains("alpha"), "{untouched}");
+
+        let shown = restore_written(&root_text, &[("../fuera.rs".to_string(), "x".to_string())])
+            .expect_err("rollback");
+        assert!(shown.contains("../fuera.rs"), "{shown}");
+        let wrapped = abort_with_restore(
+            &root_text,
+            &[("../fuera.rs".to_string(), "x".to_string())],
+            "falló la escritura".to_string(),
+        )
+        .expect_err("aviso");
+        assert!(wrapped.contains("falló la escritura"), "{wrapped}");
+        assert!(wrapped.contains("no se pudo deshacer"), "{wrapped}");
+        assert!(wrapped.contains("../fuera.rs"), "{wrapped}");
+    }
+
+    #[test]
+    fn m4_topologia_no_tiene_el_permiso_de_propagar() {
+        let caps = include_str!("../capabilities/topology.json");
+        assert!(
+            !caps.contains("allow-transmute-global"),
+            "la propagación sólo vive en main"
+        );
+        assert!(caps.contains("allow-get-workspace-topology-graph"));
     }
 }

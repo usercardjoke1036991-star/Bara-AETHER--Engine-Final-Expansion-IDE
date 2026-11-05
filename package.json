@@ -3,17 +3,21 @@
   "private": true,
   "version": "0.5.0",
   "type": "module",
-  "description": "Interfaz grafica del IDE Bara (Tauri v2 + React + TypeScript)",
+  "description": "Interfaz gráfica del IDE Bara (Tauri v2 + React + TypeScript)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint web/src vite.config.ts",
+    "test": "vitest run",
     "test:ai": "node web/scripts/ai-check.mjs",
+    "test:unit": "vitest run",
     "stage:kernel-host": "python src-tauri/scripts/stage-kernel-host.py --profile release",
     "patch:resources": "python src-tauri/scripts/win-gnu-recursos.py --exe ../target/release/bara-ide-desktop.exe",
     "tauri": "tauri",
-    "dev:win": "node scripts/free-port-1420.mjs && tauri dev",
+    "dev:win": "node scripts/free-port-1420.mjs && tauri dev --features devtools",
+    "kernel:local": "node scripts/merge-cargo-local.mjs",
     "disk:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/disk-guard.ps1 -Analizar",
     "disk:clean": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/disk-guard.ps1 -Limpiar -MinGB 10",
     "predist:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/disk-guard.ps1 -Limpiar -MinGB 8",
@@ -31,12 +35,19 @@
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@tauri-apps/cli": "^2",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "jsdom": "^26.1.0",
     "typescript": "^5",
-    "vite": "^7"
+    "typescript-eslint": "^8.46.2",
+    "vite": "^7",
+    "vitest": "^3.2.7"
   }
 }

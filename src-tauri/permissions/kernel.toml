@@ -41,4 +41,5 @@ permissions = [
   "allow-local-complete",
   "allow-transmute-global",
   "allow-kernel-host-status",
+  "allow-kernel-interrupt",
 ]

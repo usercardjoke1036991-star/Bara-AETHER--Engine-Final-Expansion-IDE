@@ -29,10 +29,9 @@ serde = ["dep:serde"]
 
 [dependencies]
 
-# Kernel Bara enlazado por ruta: se usa su biblioteca tal cual (mismo lexer,
-# mismos tipos) en lugar de reimplementarla. `bara` es el paquete del repo
-# `BAR`, miembro del mismo workspace.
-bara = { path = "../BAR" }
+# Kernel Bara fijado por git (tip de `dev` tras #6). El IDE ya no depende de
+# un `../BAR` hermano suelto; ver README → «Kernel fijado por git».
+bara = { git = "https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git", rev = "fa3d308552f3cc69ccdab8f141d56399e35c2ff6" }
 
 # Opcional: sólo la activa el crate `bara-ide-desktop` (`src-tauri/`).
 serde = { version = "1", features = ["derive"], optional = true }

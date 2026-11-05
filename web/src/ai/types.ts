@@ -2,27 +2,31 @@
 // ni el IPC del kernel, ni la red, de modo que puede comprobarse en Node.
 
 /** Proveedores soportados por el cliente de chat. */
-export type ProviderId = "anthropic" | "openai";
+export type ProviderId = "anthropic" | "openai" | "deepseek" | "local";
 
 /** Rol de un mensaje dentro de la conversación. */
 export type ChatRole = "user" | "assistant";
 
-/** Imagen adjunta ya normalizada (data URL + carga útil base64). */
+/** Adjunto ya normalizado (imagen multimodal o archivo de texto embebido). */
 export interface ImageAttachment {
   /** Identificador local (clave de React y de la lista de adjuntos). */
   id: string;
   /** Nombre original del archivo o `pegado-<n>`. */
   name: string;
-  /** Tipo MIME real de la imagen (`image/png`, `image/jpeg`…). */
+  /** Tipo MIME real (`image/png`, `text/plain`, `application/octet-stream`…). */
   mediaType: string;
-  /** Carga útil base64 **sin** el prefijo `data:`. */
+  /** Carga útil base64 **sin** el prefijo `data:` (vacío en adjuntos de archivo). */
   base64: string;
-  /** Data URL completa, la forma que consume OpenAI. */
+  /** Data URL completa, la forma que consume OpenAI (vacío si no es imagen). */
   dataUrl: string;
   width: number;
   height: number;
   /** Peso aproximado de la carga útil en bytes. */
   bytes: number;
+  /** `image` (visión) o `file` (se inyecta como texto en el mensaje). */
+  kind?: "image" | "file";
+  /** Contenido de texto del archivo no-imagen (si cabe). */
+  textContent?: string;
 }
 
 /** Mensaje de la conversación tal como lo ve y lo pinta la interfaz. */
@@ -36,6 +40,8 @@ export interface ChatMessage {
   createdAt: number;
   /** Error del proveedor, si el turno falló. */
   error: string | null;
+  /** Rutas leídas con `leer_archivo` en este turno (si las hubo). */
+  toolsUsed?: string[];
 }
 
 /**
@@ -67,6 +73,13 @@ export interface ChatUsage {
   outputTokens: number;
 }
 
+/** Llamada a herramienta en una respuesta del modelo (OpenAI tool_calls). */
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 /** Respuesta normalizada de cualquiera de los dos proveedores. */
 export interface ChatResult {
   text: string;
@@ -74,6 +87,10 @@ export interface ChatResult {
   usage: ChatUsage | null;
   /** Nombre que el servidor aceptó, si no era el que estaba escrito en ajustes. */
   acceptedModel?: string;
+  /** Llamadas nativas; vacío si el turno ya es texto final. */
+  toolCalls?: ChatToolCall[];
+  /** Rutas leídas vía herramientas en el bucle (p. ej. leer_archivo). */
+  toolsUsed?: string[];
 }
 
 /** Modelo ofrecido por el proveedor (`GET /models`). */

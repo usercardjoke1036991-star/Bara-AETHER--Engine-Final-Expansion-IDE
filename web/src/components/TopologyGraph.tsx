@@ -230,7 +230,7 @@ export default function TopologyGraph() {
               continue;
             }
             let dx = a.x - b.x;
-            let dy = a.y - b.y;
+            const dy = a.y - b.y;
             let dist = Math.hypot(dx, dy);
             if (dist < 0.1) {
               dist = 0.1;

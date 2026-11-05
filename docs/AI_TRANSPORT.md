@@ -16,13 +16,15 @@ desde el frontend. El autodiagnóstico `test:ai` lo comprueba (cabecera
 
 ## TLS
 
-- Cliente: **ureq** + **rustls** (feature `tls`, sin `native-tls`/OpenSSL).
+- Cliente: HTTP/1.1 propio sobre `TcpStream` + **rustls** (sin `ureq`, sin `native-tls`/OpenSSL).
+- No se sigue `Location`: un 3xx es error (`redirect bloqueado`).
 - Anclajes: `rustls-native-certs` (almacén del SO). Si el almacén viene vacío,
   reserva `webpki-roots`.
 - Con Proton VPN u otro intermediario que inserte su CA en Windows, rustls
   confía en esa CA **sin apagar la VPN**. Si el handshake falla, el mensaje
   pide importar la CA en «Entidades de certificación raíz de confianza».
-- Proxy opcional: `HTTPS_PROXY` / `ALL_PROXY`.
+- Proxy de entorno (`HTTPS_PROXY` / `ALL_PROXY`) sólo si el host está en la
+  allowlist. `127.0.0.1` y `localhost` no salen por ese proxy.
 
 ## Consola del sidecar
 

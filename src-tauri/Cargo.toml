@@ -1,17 +1,18 @@
 # ══════════════════════════════════════════════════════════════════════════
 #  Bara IDE Desktop — backend Tauri v2 del IDE Bara (AETHER-Ω)
 #
-#  Crate miembro del workspace raíz (`../../Cargo.toml`): no declara
-#  `[workspace]` propio a propósito, para no romper la pertenencia.
+#  Este crate no declara `[workspace]`. CI lo comprueba con
+#  `--manifest-path`. El `../../Cargo.toml` es un contenedor local, no CI.
 #
 #  Capas (una sola dirección, cero duplicación de tipos):
-#      web/ (React+TS) --IPC--> src-tauri/ --> bara-ide (lib) --> bara (kernel)
+#      web/ (React+TS) --IPC--> src-tauri/ --> bara-kernel-host (sidecar)
+#                                           + bara-ide (lib) / pin bara@fa3d308
 # ══════════════════════════════════════════════════════════════════════════
 [package]
 name = "bara-ide-desktop"
 version = "0.5.0"
 edition = "2021"
-description = "Aplicacion de escritorio (Tauri v2) del IDE Bara"
+description = "IDE Bara escritorio Tauri v2 (sidecar kernel-host, pin fa3d308)"
 license = "MIT"
 publish = false
 
@@ -28,9 +29,16 @@ path = "src/main.rs"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = []
+# Inspector web: `tauri dev --features devtools` (o profile debug con la feature).
+# Release sin esta feature no enlaza DevTools (F12 queda inerte).
+devtools = ["tauri/devtools"]
+
 [dependencies]
 # Backend Tauri v2. El único plugin es el diálogo nativo de carpetas:
 # el WebView no recibe la ruta, la elige el usuario en el diálogo del sistema.
+# `devtools` del crate se activa sólo vía feature (no en release de dist).
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -38,23 +46,26 @@ tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# B8: select entre `ai_exchange` y cancelación cooperativa.
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "time"] }
+
 # Llavero del sistema (Credential Manager, Keychain, Secret Service).
 # Android no entra aquí: el Keystore llega con el APK.
 keyring = { version = "3", default-features = false, features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 # HTTPS de los proveedores. La clave no sale del proceso.
-# rustls + almacén del SO (VPN/antivirus con CA en Windows) y webpki como reserva.
-ureq = { version = "2.12", default-features = false, features = ["tls"] }
+# HTTP/1.1 propio + rustls (almacén del SO; webpki como reserva). Sin ureq.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
 webpki-roots = "0.26"
 
 # Motor del IDE: la biblioteca `bara-ide` con la feature `serde` activada
-# (modelo serializable a JSON) y, tras ella, el kernel `bara` por ruta.
+# (modelo serializable a JSON) y el kernel `bara` fijado por git (rev en
+# el `Cargo.toml` de la raíz).
 bara-ide = { path = "..", features = ["serde"] }
 
 # Proceso hijo del kernel. El escritorio lo supervisa; no ejecuta el núcleo.
 bara-kernel-host = { path = "../kernel-host" }
 
-# Enlace directo al kernel para clasificar las líneas de las recetas.
-bara = { path = "../../BAR" }
+# Mismo pin git que la raíz / kernel-host (no `../BAR` suelto).
+bara = { git = "https://github.com/usercardjoke1036991-star/Bara-AETHER--Engine-Final-Expansion.git", rev = "fa3d308552f3cc69ccdab8f141d56399e35c2ff6" }

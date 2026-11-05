@@ -30,7 +30,7 @@ const baraTheme = EditorView.theme({
     height: "100%",
     backgroundColor: "transparent",
     color: "#d7e3f0",
-    fontSize: "13px",
+    fontSize: "14px",
   },
   ".cm-scroller": {
     fontFamily: "Consolas, 'Segoe UI Mono', monospace",
@@ -173,8 +173,16 @@ function dismissGhost(view: EditorView): boolean {
 const completionKeys = Prec.highest(
   keymap.of([
     { key: "Tab", run: (view) => acceptGhost(view, "full") },
-    { key: "Enter", run: (view) => acceptGhost(view, "partial") },
-    { key: "Escape", run: dismissGhost },
+    {
+      key: "Escape",
+      run: (view) => {
+        if (dismissGhost(view)) {
+          return true;
+        }
+        view.contentDOM.blur();
+        return true;
+      },
+    },
   ]),
 );
 

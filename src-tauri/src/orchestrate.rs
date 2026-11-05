@@ -26,6 +26,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::win_cmd;
+use crate::workspace_trust::TrustStore;
 
 /// `npm run typecheck` no debería pasar de un minuto.
 const IDE_RECIPE_LIMIT: Duration = Duration::from_secs(60);
@@ -316,13 +317,16 @@ fn clip(text: &str) -> String {
 /// `active` es la carpeta abierta. El cwd es esa carpeta si contiene el
 /// ancla; no un padre. Sin carpeta, se prueba la ruta de compilación.
 /// `app` emite `recipe-output` en vivo (stdout/stderr + código de salida).
+/// M5: sin confianza en el cwd canónico no se spawnea nada.
 pub fn run(
     recipe: &str,
     active: Option<&Path>,
     app: Option<AppHandle>,
+    trust: &TrustStore,
 ) -> Result<RecipeReport, String> {
     let chosen = spec(recipe)?;
     let cwd = recipe_dir(chosen.ide, active)?;
+    trust.require(&cwd)?;
     let limit = if chosen.ide {
         IDE_RECIPE_LIMIT
     } else {
@@ -433,6 +437,7 @@ mod tests {
 
     #[test]
     fn el_modulo_no_abre_un_shell() {
+        // Guarda estructural: el resto del test sí ejecuta spec; estas líneas miran el fuente.
         let source = include_str!("orchestrate.rs");
         let production = source.split("mod tests").next().unwrap_or(source);
         assert!(!production.contains("sh -c"));
@@ -464,6 +469,54 @@ mod tests {
         assert!(recipe_dir(false, Some(&child)).is_err());
         let cargo_root = recipe_dir(false, Some(&root)).expect("raíz cargo");
         assert_eq!(cargo_root, std::fs::canonicalize(&root).expect("canon"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn m5_sin_confianza_no_spawnea() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("reloj")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bara-m5-deny-{nonce}"));
+        std::fs::create_dir_all(&root).expect("dir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"t\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("toml");
+        let trust = TrustStore::in_memory();
+        let err = run("check", Some(&root), None, &trust).expect_err("bloqueado");
+        assert!(
+            err.contains("no confiada") || err.contains("Confías"),
+            "mensaje claro: {err}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn m5_con_confianza_el_gate_pasa_y_revocar_bloquea() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("reloj")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bara-m5-ok-{nonce}"));
+        std::fs::create_dir_all(&root).expect("dir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"t\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )
+        .expect("toml");
+        let trust = TrustStore::in_memory();
+        let api = trust.trust(root.to_str().expect("utf8")).expect("confiar");
+        let cwd = recipe_dir(false, Some(&root)).expect("cwd");
+        trust.require(&cwd).expect("gate ok tras confiar");
+        trust.revoke(&api).expect("revocar");
+        let err = run("check", Some(&root), None, &trust).expect_err("tras revocar");
+        assert!(
+            err.contains("no confiada") || err.contains("Confías"),
+            "mensaje claro: {err}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

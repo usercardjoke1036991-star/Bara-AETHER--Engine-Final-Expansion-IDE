@@ -95,7 +95,14 @@ function claveFicticia(marca: string): string {
 
 /** Configuración lista para enviar (clave ficticia). */
 function readyConfig(): AiConfig {
-  return { ...DEFAULT_CONFIG, apiKey: claveFicticia("autocomprobacion"), hasKey: true };
+  return {
+    ...DEFAULT_CONFIG,
+    provider: "anthropic",
+    model: PROVIDER_MODEL_PRESETS.anthropic[0],
+    baseUrl: PROVIDER_ENDPOINTS.anthropic,
+    apiKey: claveFicticia("autocomprobacion"),
+    hasKey: true,
+  };
 }
 
 /** Adjunto de mentira con la forma real de una imagen normalizada. */
@@ -146,10 +153,15 @@ const CHECKS: Check[] = [
     run: () => {
       const problems = configProblems(readyConfig());
       expect(problems.length === 0, `la configuración base no es válida: ${problems.join(" ")}`);
-      expect(DEFAULT_CONFIG.provider === "anthropic", "el proveedor inicial debe ser Anthropic");
+      expect(DEFAULT_CONFIG.provider === "deepseek", "el proveedor inicial debe ser DeepSeek");
       expect(
-        configProblems(DEFAULT_CONFIG).length === 1,
-        "sin clave debe haber exactamente un problema (la clave)",
+        DEFAULT_CONFIG.baseUrl === "https://api.deepseek.com",
+        "la raíz de fábrica debe ser https://api.deepseek.com",
+      );
+      expect(DEFAULT_CONFIG.model === "", "el modelo de fábrica debe quedar vacío hasta listar");
+      expect(
+        configProblems(DEFAULT_CONFIG).length >= 2,
+        "sin clave ni modelo debe haber al menos dos problemas",
       );
       const blocked = chatSendGate(
         { ...readyConfig(), apiKey: "", hasKey: false },
@@ -193,14 +205,17 @@ const CHECKS: Check[] = [
       const cambiada = withProvider(readyConfig(), "openai");
       expect(cambiada.hasKey === false, "el otro proveedor heredó el indicio de clave");
       expect(cambiada.baseUrl === PROVIDER_ENDPOINTS.openai, "raíz de API incorrecta");
-      expect(cambiada.model === PROVIDER_MODEL_PRESETS.openai[0], "modelo por defecto incorrecto");
+      expect(cambiada.model === "", "al cambiar de proveedor el modelo queda vacío hasta listar");
       const store = memoryStore();
       const propia = "https://api.example/v1";
       expect(
         saveConfig({ ...readyConfig(), baseUrl: propia, rememberKey: false }, store),
         "no se guardó la raíz propia",
       );
-      expect(loadConfig(store).baseUrl === propia, "la raíz guardada volvió a la oficial");
+      expect(
+        loadConfig(store).baseUrl === PROVIDER_ENDPOINTS.anthropic,
+        "una raíz HTTPS arbitraria no debe persistir",
+      );
       const local = { ...readyConfig(), baseUrl: "http://127.0.0.1:11434/v1" };
       expect(
         !configProblems(local).some((problem) => problem.includes("raíz")),
@@ -376,7 +391,7 @@ const CHECKS: Check[] = [
             : assistantMessage(`respuesta ${index}`),
         );
       }
-      expect(wireMessages(larga).length === 12, "el historial debería recortarse a 12 turnos");
+      expect(wireMessages(larga).length === 6, "el historial debería recortarse a 6 turnos");
       const conFallo = wireMessages([
         userMessage("una"),
         assistantMessage("", "boom"),
@@ -424,10 +439,11 @@ const CHECKS: Check[] = [
       }
       expect(prompt.includes(rootTable(catalogue)), "la tabla de raíces no se inyectó");
       expect(prompt.includes(inventoryLine(analysis)), "el análisis del kernel no se inyectó");
-      expect(prompt.includes("inventario: ברא ×2"), "falta el inventario medido por el kernel");
+      expect(prompt.includes("ברא×2"), "falta el inventario medido por el kernel");
       expect(prompt.includes("genesis.bara"), "falta el nombre del documento abierto");
       expect(prompt.includes("ברא שמר"), "falta el documento de ejemplo del kernel");
       expect(prompt.includes("autopoiesis") && prompt.includes("Belnap"), "faltan los principios");
+      // Con userText vacío se asume contexto de código (needsCodeContext → true).
       const extracto = excerpt("x".repeat(MAX_DOCUMENT_CHARS + 50));
       expect(extracto.includes("extracto recortado"), "el extracto no se acota");
       expect([...extracto].length < MAX_DOCUMENT_CHARS + 200, "el extracto supera el límite");

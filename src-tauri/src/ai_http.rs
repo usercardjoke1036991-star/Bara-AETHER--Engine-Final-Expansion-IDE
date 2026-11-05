@@ -3,9 +3,10 @@
 //! La clave no viaja en el argumento que vuelve al WebView. El destino es una
 //! lista cerrada: los tres hosts oficiales, o HTTP sólo en la máquina local.
 //!
-//! Transporte: `ureq` + **rustls**. Los anclajes salen del almacén del sistema
-//! (`rustls-native-certs`); si viene vacío, se cae a `webpki-roots`. Así una
-//! VPN o antivirus que inserte su CA en Windows sigue siendo confiable.
+//! Transporte: HTTP/1.1 propio + **rustls** (sin seguir redirects). Los anclajes
+//! salen del almacén del sistema (`rustls-native-certs`); si viene vacío, se
+//! cae a `webpki-roots`. Así una VPN o antivirus que inserte su CA en Windows
+//! sigue siendo confiable. Detener cierra el socket del vuelo.
 
 #![forbid(unsafe_code)]
 
@@ -83,19 +84,26 @@ fn redactar(text: &str, secret: &str) -> String {
 }
 
 /// Cabeceras de autorización. El valor no se devuelve al WebView.
+///
+/// §9.5.12 `local` (Ollama/HTTP): sin Authorization ni x-api-key.
 fn cabeceras(provider: &str, secret: &str) -> Result<Vec<(&'static str, String)>, String> {
-    let secret = secret.trim();
-    if secret.is_empty() {
-        return Err("no hay clave para este proveedor".to_string());
-    }
     match provider.trim() {
-        "anthropic" => Ok(vec![
-            ("x-api-key", secret.to_string()),
-            ("anthropic-version", ANTHROPIC_VERSION.to_string()),
-        ]),
-        // OpenAI y compatibles (DeepSeek, Ollama local, …) usan Bearer.
-        "openai" => Ok(vec![("authorization", format!("Bearer {secret}"))]),
-        _ => Err("el proveedor no tiene transporte".to_string()),
+        "local" => Ok(Vec::new()),
+        other => {
+            let secret = secret.trim();
+            if secret.is_empty() {
+                return Err("no hay clave para este proveedor".to_string());
+            }
+            match other {
+                "anthropic" => Ok(vec![
+                    ("x-api-key", secret.to_string()),
+                    ("anthropic-version", ANTHROPIC_VERSION.to_string()),
+                ]),
+                // OpenAI y DeepSeek usan Bearer.
+                "openai" | "deepseek" => Ok(vec![("authorization", format!("Bearer {secret}"))]),
+                _ => Err("el proveedor no tiene transporte".to_string()),
+            }
+        }
     }
 }
 
@@ -122,33 +130,83 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
     Arc::new(config)
 }
 
-fn env_proxy() -> Option<ureq::Proxy> {
+/// ¿Este destino puede salir por el proxy de entorno?
+/// Loopback nunca: la clave y el tráfico local no pasan por `HTTPS_PROXY`.
+pub fn destino_usa_proxy(url: &str) -> bool {
+    destino_permitido(url) && !es_http_local(url)
+}
+
+fn proxy_http_de_entorno() -> Option<(String, u16)> {
     for key in ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] {
-        if let Ok(value) = std::env::var(key) {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                continue;
+        let Ok(value) = std::env::var(key) else {
+            continue;
+        };
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some(rest) = trimmed
+            .strip_prefix("http://")
+            .or_else(|| trimmed.strip_prefix("https://"))
+        else {
+            continue;
+        };
+        if rest.contains('@') {
+            continue;
+        }
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if authority.is_empty() {
+            continue;
+        }
+        if let Some((host, port)) = authority.rsplit_once(':') {
+            if let Ok(port) = port.parse::<u16>() {
+                if !host.is_empty() {
+                    return Some((host.to_string(), port));
+                }
             }
-            if let Ok(proxy) = ureq::Proxy::new(trimmed) {
-                return Some(proxy);
-            }
+        } else {
+            return Some((authority.to_string(), 8080));
         }
     }
     None
 }
 
-fn agent() -> ureq::Agent {
-    let mut builder = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(TIMEOUT_SECS))
-        .tls_config(tls_config());
-    if let Some(proxy) = env_proxy() {
-        builder = builder.proxy(proxy);
-    }
-    builder.build()
+/// Política de la clave frente al host de la URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoliticaClave {
+    /// `local` o loopback del proveedor local: no hay secreto.
+    SinSecreto,
+    /// Nube: la clave sólo sale si el host es el oficial de ese proveedor.
+    Exigir,
 }
 
-/// Traduce fallos de transporte de `ureq` a mensajes claros en español.
-fn error_de_transporte(error: &ureq::Error) -> String {
+pub fn politica_clave(provider: &str, url: &str) -> Result<PoliticaClave, String> {
+    if !destino_permitido(url) {
+        return Err("host no permitido: el destino no está en la lista del transporte".to_string());
+    }
+    let provider = provider.trim();
+    let loopback = es_http_local(url);
+    if provider == "local" {
+        return Ok(PoliticaClave::SinSecreto);
+    }
+    if loopback {
+        return Err("la clave de la nube no se envía a localhost".to_string());
+    }
+    let host = host_de_url(url).unwrap_or_default();
+    let oficial = match provider {
+        "anthropic" => "api.anthropic.com",
+        "openai" => "api.openai.com",
+        "deepseek" => "api.deepseek.com",
+        _ => return Err("el proveedor no tiene transporte".to_string()),
+    };
+    if host != oficial {
+        return Err("la clave sólo viaja al host oficial de este proveedor".to_string());
+    }
+    Ok(PoliticaClave::Exigir)
+}
+
+/// Traduce fallos de transporte a mensajes claros en español.
+fn error_de_transporte(error: &std::io::Error) -> String {
     let text = error.to_string();
     let lower = text.to_ascii_lowercase();
     if lower.contains("timed out") || lower.contains("timeout") {
@@ -163,7 +221,7 @@ fn error_de_transporte(error: &ureq::Error) -> String {
         return "sin red: no se pudo resolver el host del proveedor (DNS)".to_string();
     }
     if lower.contains("connection refused") || lower.contains("actively refused") {
-        return "sin red: conexión rechazada por el proveedor".to_string();
+        return "no hay servidor en localhost (¿Ollama u otro HTTP local en marcha?)".to_string();
     }
     if lower.contains("connection reset") || lower.contains("broken pipe") {
         return "sin red: el proveedor cortó la conexión".to_string();
@@ -220,6 +278,8 @@ pub fn mensaje_http(status: u16, body: &str) -> Option<String> {
 }
 
 /// Envía la petición. Un host fuera de la lista no sale de este proceso.
+///
+/// No se sigue `Location` (redirects cerrados). `flight` cierra el socket si Detener.
 pub fn exchange(
     provider: &str,
     url: &str,
@@ -227,45 +287,329 @@ pub fn exchange(
     body: &str,
     secret: &str,
 ) -> Result<Exchange, String> {
+    exchange_with(provider, url, method, body, secret, None)
+}
+
+pub fn exchange_with(
+    provider: &str,
+    url: &str,
+    method: &str,
+    body: &str,
+    secret: &str,
+    flight: Option<&crate::ai_flight::FlightHandle>,
+) -> Result<Exchange, String> {
     let method = method.trim().to_ascii_uppercase();
     if method != "GET" && method != "POST" {
         return Err("el método no está en el catálogo".to_string());
     }
-    if !destino_permitido(url) {
-        return Err("host no permitido: el destino no está en la lista del transporte".to_string());
-    }
     if body.len() > BODY_CAP {
         return Err("la petición supera el tope".to_string());
     }
-    let headers = cabeceras(provider, secret)?;
-    let agent = agent();
-    let mut request = agent.request(&method, url);
-    for (name, value) in &headers {
-        request = request.set(name, value);
+    let politica = politica_clave(provider, url)?;
+    let secret = match politica {
+        PoliticaClave::SinSecreto => String::new(),
+        PoliticaClave::Exigir => {
+            let secret = secret.trim();
+            if secret.is_empty() {
+                return Err("no hay clave para este proveedor".to_string());
+            }
+            secret.to_string()
+        }
+    };
+    let header_provider = if secret.is_empty() { "local" } else { provider };
+    let headers = cabeceras(header_provider, &secret)?;
+    if flight.is_some_and(|item| item.is_cancelled()) {
+        return Err("cancelado".to_string());
     }
-    let sent = if method == "GET" {
-        request.call()
-    } else {
-        request
-            .set("content-type", "application/json")
-            .send_string(body)
-    };
-    let (status, text) = match sent {
-        Ok(response) => {
-            let status = response.status();
-            let text = response.into_string().unwrap_or_default();
-            (status, text)
-        }
-        Err(ureq::Error::Status(status, response)) => {
-            let text = response.into_string().unwrap_or_default();
-            (status, text)
-        }
-        Err(error) => return Err(error_de_transporte(&error)),
-    };
+    let (status, text) = http_exchange(url, &method, body, &headers, flight)?;
+    if (300..400).contains(&status) {
+        return Err("redirect bloqueado: no se sigue Location".to_string());
+    }
     Ok(Exchange {
         status,
-        body: redactar(&text, secret.trim()),
+        body: redactar(&text, &secret),
     })
+}
+
+fn http_exchange(
+    url: &str,
+    method: &str,
+    body: &str,
+    headers: &[(&str, String)],
+    flight: Option<&crate::ai_flight::FlightHandle>,
+) -> Result<(u16, String), String> {
+    let host = host_de_url(url).ok_or_else(|| "no se pudo extraer el host".to_string())?;
+    let https = url.starts_with("https://");
+    let port = puerto_de_url(url, 443, 80);
+    let mut sock = conectar(&host, port, url, flight)?;
+    let path = ruta_de_url(url);
+    let host_header = if (https && port == 443) || (!https && port == 80) {
+        host.clone()
+    } else {
+        format!("{host}:{port}")
+    };
+    let mut req =
+        format!("{method} {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n");
+    for (name, value) in headers {
+        req.push_str(name);
+        req.push_str(": ");
+        req.push_str(value);
+        req.push_str("\r\n");
+    }
+    if method == "POST" {
+        req.push_str("content-type: application/json\r\n");
+        req.push_str(&format!("content-length: {}\r\n", body.len()));
+    }
+    req.push_str("\r\n");
+    if method == "POST" {
+        req.push_str(body);
+    }
+    let raw = if https {
+        let name = ServerName::try_from(host.clone())
+            .map_err(|_| format!("nombre SNI inválido: {host}"))?;
+        let mut conn = rustls::ClientConnection::new(tls_config(), name)
+            .map_err(|error| format!("cliente TLS: {error}"))?;
+        escribir(&mut sock, Some(&mut conn), req.as_bytes(), flight)?;
+        leer(&mut sock, Some(&mut conn), flight)?
+    } else {
+        escribir(&mut sock, None, req.as_bytes(), flight)?;
+        leer(&mut sock, None, flight)?
+    };
+    partir_respuesta(&raw)
+}
+
+fn conectar(
+    host: &str,
+    port: u16,
+    url: &str,
+    flight: Option<&crate::ai_flight::FlightHandle>,
+) -> Result<TcpStream, String> {
+    if flight.is_some_and(|item| item.is_cancelled()) {
+        return Err("cancelado".to_string());
+    }
+    let (dial_host, dial_port, via_proxy) = if destino_usa_proxy(url) {
+        if let Some((proxy_host, proxy_port)) = proxy_http_de_entorno() {
+            (proxy_host, proxy_port, true)
+        } else {
+            (host.to_string(), port, false)
+        }
+    } else {
+        (host.to_string(), port, false)
+    };
+    let addr = primer_addr(&dial_host, dial_port)?;
+    let mut sock = TcpStream::connect_timeout(&addr, Duration::from_secs(15)).map_err(|error| {
+        if flight.is_some_and(|item| item.is_cancelled()) {
+            "cancelado".to_string()
+        } else {
+            error_de_transporte(&error)
+        }
+    })?;
+    if let Some(flight) = flight {
+        flight.track_socket(&sock);
+    }
+    let _ = sock.set_nodelay(true);
+    let _ = sock.set_read_timeout(Some(Duration::from_millis(250)));
+    let _ = sock.set_write_timeout(Some(Duration::from_secs(30)));
+    if via_proxy {
+        let connect = format!(
+            "CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\nProxy-Connection: keep-alive\r\n\r\n"
+        );
+        sock.write_all(connect.as_bytes())
+            .map_err(|error| error_de_transporte(&error))?;
+        let raw = read_until_http(&mut sock, flight, true)?;
+        let (status, _) = partir_respuesta(&raw)?;
+        if status != 200 {
+            return Err(format!("el proxy rechazó CONNECT (HTTP {status})"));
+        }
+    }
+    Ok(sock)
+}
+
+fn escribir(
+    sock: &mut TcpStream,
+    tls: Option<&mut rustls::ClientConnection>,
+    bytes: &[u8],
+    flight: Option<&crate::ai_flight::FlightHandle>,
+) -> Result<(), String> {
+    let resultado = if let Some(conn) = tls {
+        let mut stream = rustls::Stream::new(conn, sock);
+        stream.write_all(bytes).and_then(|()| stream.flush())
+    } else {
+        sock.write_all(bytes).and_then(|()| sock.flush())
+    };
+    resultado.map_err(|error| {
+        if flight.is_some_and(|item| item.is_cancelled()) {
+            "cancelado".to_string()
+        } else {
+            error_de_transporte(&error)
+        }
+    })
+}
+
+fn leer(
+    sock: &mut TcpStream,
+    tls: Option<&mut rustls::ClientConnection>,
+    flight: Option<&crate::ai_flight::FlightHandle>,
+) -> Result<Vec<u8>, String> {
+    if let Some(conn) = tls {
+        let mut stream = rustls::Stream::new(conn, sock);
+        read_until_http(&mut stream, flight, false)
+    } else {
+        read_until_http(sock, flight, false)
+    }
+}
+
+fn read_until_http(
+    read: &mut dyn Read,
+    flight: Option<&crate::ai_flight::FlightHandle>,
+    only_headers: bool,
+) -> Result<Vec<u8>, String> {
+    let start = std::time::Instant::now();
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        if flight.is_some_and(|item| item.is_cancelled()) {
+            return Err("cancelado".to_string());
+        }
+        if start.elapsed() > Duration::from_secs(TIMEOUT_SECS) {
+            return Err("tiempo de espera agotado al hablar con el proveedor".to_string());
+        }
+        match read.read(&mut buf) {
+            Ok(0) => {
+                if flight.is_some_and(|item| item.is_cancelled()) {
+                    return Err("cancelado".to_string());
+                }
+                break;
+            }
+            Ok(n) => {
+                raw.extend_from_slice(&buf[..n]);
+                if raw.len() > BODY_CAP.saturating_add(65_536) {
+                    return Err("la respuesta supera el tope".to_string());
+                }
+                if only_headers && raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+                if !only_headers && respuesta_completa(&raw) {
+                    break;
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::TimedOut
+                    || error.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                continue;
+            }
+            Err(error) => {
+                if flight.is_some_and(|item| item.is_cancelled()) {
+                    return Err("cancelado".to_string());
+                }
+                if !raw.is_empty() && respuesta_completa(&raw) {
+                    break;
+                }
+                return Err(error_de_transporte(&error));
+            }
+        }
+    }
+    if flight.is_some_and(|item| item.is_cancelled()) {
+        return Err("cancelado".to_string());
+    }
+    if raw.is_empty() {
+        return Err("sin respuesta del servidor".to_string());
+    }
+    Ok(raw)
+}
+
+fn respuesta_completa(raw: &[u8]) -> bool {
+    let Some(idx) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&raw[..idx]);
+    let body = &raw[idx + 4..];
+    if let Some(n) = content_length(&head) {
+        return body.len() >= n;
+    }
+    if es_chunked(&head) {
+        return chunked_completo(body);
+    }
+    false
+}
+
+fn content_length(head: &str) -> Option<usize> {
+    for line in head.lines() {
+        let lower = line.to_ascii_lowercase();
+        if let Some(value) = lower.strip_prefix("content-length:") {
+            return value.trim().parse::<usize>().ok();
+        }
+    }
+    None
+}
+
+fn es_chunked(head: &str) -> bool {
+    let lower = head.to_ascii_lowercase();
+    lower.contains("transfer-encoding:") && lower.contains("chunked")
+}
+
+fn chunked_completo(body: &[u8]) -> bool {
+    body.windows(5).any(|w| w == b"0\r\n\r\n")
+}
+
+fn partir_respuesta(raw: &[u8]) -> Result<(u16, String), String> {
+    let idx = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| "respuesta HTTP incompleta".to_string())?;
+    let head =
+        std::str::from_utf8(&raw[..idx]).map_err(|_| "cabeceras HTTP no utf-8".to_string())?;
+    let status = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .ok_or_else(|| "status HTTP ilegible".to_string())?;
+    let body_bytes = &raw[idx + 4..];
+    let body = if es_chunked(head) {
+        decode_chunked(body_bytes)?
+    } else if let Some(n) = content_length(head) {
+        let n = n.min(body_bytes.len());
+        String::from_utf8_lossy(&body_bytes[..n]).into_owned()
+    } else {
+        String::from_utf8_lossy(body_bytes).into_owned()
+    };
+    Ok((status, body))
+}
+
+fn decode_chunked(body: &[u8]) -> Result<String, String> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(line_end) = rest.windows(2).position(|w| w == b"\r\n") {
+        let line = std::str::from_utf8(&rest[..line_end]).unwrap_or("");
+        let size = usize::from_str_radix(line.trim().split(';').next().unwrap_or("0"), 16)
+            .map_err(|_| "chunk HTTP ilegible".to_string())?;
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            break;
+        }
+        if rest.len() < size {
+            return Err("chunk HTTP incompleto".to_string());
+        }
+        out.extend_from_slice(&rest[..size]);
+        rest = &rest[size..];
+        if rest.starts_with(b"\r\n") {
+            rest = &rest[2..];
+        }
+    }
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+fn ruta_de_url(url: &str) -> String {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    match rest.find('/') {
+        Some(index) => rest[index..].to_string(),
+        None => "/".to_string(),
+    }
 }
 
 fn host_de_url(url: &str) -> Option<String> {
@@ -277,6 +621,28 @@ fn host_de_url(url: &str) -> Option<String> {
         None
     } else {
         Some(host.to_string())
+    }
+}
+
+fn es_http_local(url: &str) -> bool {
+    url.starts_with("http://localhost") || url.starts_with("http://127.0.0.1")
+}
+
+fn puerto_de_url(url: &str, default_https: u16, default_http: u16) -> u16 {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or("");
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if let Some((_, port)) = authority.rsplit_once(':') {
+        if let Ok(n) = port.parse::<u16>() {
+            return n;
+        }
+    }
+    if url.starts_with("http://") {
+        default_http
+    } else {
+        default_https
     }
 }
 
@@ -343,11 +709,23 @@ fn handshake_tls(host: &str, addr: SocketAddr) -> Result<String, String> {
     ))
 }
 
-/// Sonda DNS → TCP → TLS → HTTP GET /models (con clave).
+/// Sonda DNS → TCP → (TLS si https) → HTTP GET /models.
+/// §9.5.12: HTTP local omite TLS y no exige clave.
 pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeReport {
     let mut steps = Vec::new();
     let mut models = Vec::new();
-    let url = models_url(base_url);
+    // Ollama OpenAI-compatible: raíz sin /v1 → …/v1/models.
+    let probe_base = if es_http_local(base_url) {
+        let trimmed = base_url.trim().trim_end_matches('/');
+        if trimmed.ends_with("/v1") || trimmed.contains("/v1/") {
+            trimmed.to_string()
+        } else {
+            format!("{trimmed}/v1")
+        }
+    } else {
+        base_url.trim().to_string()
+    };
+    let url = models_url(&probe_base);
     if !destino_permitido(&url) {
         steps.push(ProbeStep {
             name: "ACL".to_string(),
@@ -373,7 +751,9 @@ pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeRe
         };
     };
 
-    let addr = match primer_addr(&host, 443) {
+    let local_http = es_http_local(&url);
+    let port = puerto_de_url(&url, 443, 80);
+    let addr = match primer_addr(&host, port) {
         Ok(addr) => {
             steps.push(ProbeStep {
                 name: "DNS".to_string(),
@@ -406,10 +786,15 @@ pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeRe
             });
         }
         Err(error) => {
+            let detail = if local_http {
+                format!("no hay servidor en {host}:{port} (¿Ollama u otro HTTP local?): {error}")
+            } else {
+                format!("rechazado o inalcanzable: {error}")
+            };
             steps.push(ProbeStep {
                 name: "TCP".to_string(),
                 ok: false,
-                detail: format!("rechazado o inalcanzable: {error}"),
+                detail,
             });
             return ProbeReport {
                 ok: false,
@@ -419,27 +804,35 @@ pub fn probe_connection(provider: &str, base_url: &str, secret: &str) -> ProbeRe
         }
     }
 
-    match handshake_tls(&host, addr) {
-        Ok(detail) => steps.push(ProbeStep {
+    if !local_http {
+        match handshake_tls(&host, addr) {
+            Ok(detail) => steps.push(ProbeStep {
+                name: "TLS".to_string(),
+                ok: true,
+                detail,
+            }),
+            Err(detail) => {
+                steps.push(ProbeStep {
+                    name: "TLS".to_string(),
+                    ok: false,
+                    detail: format!(
+                        "{detail} · si hay VPN/antivirus, importa su CA al almacén de Windows \
+(no hace falta apagar la VPN)"
+                    ),
+                });
+                return ProbeReport {
+                    ok: false,
+                    steps,
+                    models,
+                };
+            }
+        }
+    } else {
+        steps.push(ProbeStep {
             name: "TLS".to_string(),
             ok: true,
-            detail,
-        }),
-        Err(detail) => {
-            steps.push(ProbeStep {
-                name: "TLS".to_string(),
-                ok: false,
-                detail: format!(
-                    "{detail} · si hay VPN/antivirus, importa su CA al almacén de Windows \
-(no hace falta apagar la VPN)"
-                ),
-            });
-            return ProbeReport {
-                ok: false,
-                steps,
-                models,
-            };
-        }
+            detail: "omitido (HTTP local)".to_string(),
+        });
     }
 
     match exchange(provider, &url, "GET", "", secret) {
@@ -558,10 +951,65 @@ mod tests {
             "invalid ••••"
         );
         assert!(cabeceras("otro", "x").is_err());
+        let local_headers = cabeceras("local", "").expect("local sin clave");
+        assert!(local_headers.is_empty(), "local no envía Authorization");
+        assert!(cabeceras("local", "ignorada").expect("local").is_empty());
         let blocked = exchange("anthropic", "https://api.example/v1", "POST", "{}", "x");
         assert!(blocked
             .expect_err("host ajeno")
             .contains("host no permitido"));
+    }
+
+    #[test]
+    fn el_mock_local_sin_auth_no_lleva_bearer() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<String>();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                match stream.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        raw.extend_from_slice(&buf[..n]);
+                        if raw.windows(4).any(|w| w == b"\r\n\r\n") || raw.len() > 8192 {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let request = String::from_utf8_lossy(&raw).to_string();
+            let _ = ready_tx.send(request);
+            let body = r#"{"object":"list","data":[{"id":"llama3.2"}]}"#;
+            let response = format!(
+                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            let _ = stream.shutdown(Shutdown::Write);
+        });
+        let url = format!("http://127.0.0.1:{port}/v1/models");
+        let result = exchange("local", &url, "GET", "", "").expect("exchange local");
+        assert_eq!(result.status, 200);
+        let seen = ready_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("headers");
+        assert!(
+            !seen.to_ascii_lowercase().contains("authorization"),
+            "no debe viajar Bearer: {seen}"
+        );
+        assert!(
+            !seen.to_ascii_lowercase().contains("x-api-key"),
+            "no debe viajar x-api-key: {seen}"
+        );
+        assert!(result.body.contains("llama3.2"));
     }
 
     #[test]
@@ -595,7 +1043,7 @@ mod tests {
         assert!(detail.contains("handshake rustls OK"), "{detail}");
         // Sin clave válida: el transporte debe superar TLS y recibir HTTP 401.
         let err = exchange(
-            "openai",
+            "deepseek",
             "https://api.deepseek.com/models",
             "GET",
             "",
@@ -668,9 +1116,134 @@ mod tests {
         });
         ready_rx.recv().expect("servidor listo");
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
-        let result = exchange("openai", &url, "POST", "{}", "clave-secreta-xyz").expect("exchange");
-        assert_eq!(result.status, 401);
-        assert!(!result.body.contains("clave-secreta-xyz"));
-        assert!(result.body.contains("••••"));
+        let err = exchange("openai", &url, "POST", "{}", "clave-secreta-xyz")
+            .expect_err("nube + localhost");
+        assert!(
+            err.contains("localhost"),
+            "debe bloquear la clave de la nube: {err}"
+        );
+        assert!(
+            !err.contains("clave-secreta-xyz"),
+            "el error no filtra la clave: {err}"
+        );
+    }
+
+    #[test]
+    fn politica_nube_solo_en_su_host_y_local_sin_secreto() {
+        assert!(matches!(
+            politica_clave("local", "http://127.0.0.1:11434/v1/chat/completions"),
+            Ok(PoliticaClave::SinSecreto)
+        ));
+        assert!(matches!(
+            politica_clave("openai", "https://api.openai.com/v1/chat/completions"),
+            Ok(PoliticaClave::Exigir)
+        ));
+        assert!(politica_clave("openai", "http://127.0.0.1:11434/v1").is_err());
+        assert!(politica_clave("openai", "https://api.deepseek.com/v1").is_err());
+        assert!(!destino_usa_proxy("http://127.0.0.1:11434/v1"));
+        assert!(!destino_usa_proxy("http://localhost/v1"));
+        assert!(destino_usa_proxy("https://api.openai.com/v1"));
+    }
+
+    #[test]
+    fn redirect_local_no_se_sigue() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let body = "no-seguir";
+            let response = format!(
+                "HTTP/1.0 302 Found\r\nLocation: https://evil.example/robo\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        let url = format!("http://127.0.0.1:{port}/v1/chat");
+        let err = exchange("local", &url, "GET", "", "").expect_err("redirect");
+        assert!(err.contains("redirect bloqueado"), "{err}");
+        assert!(!err.contains("evil.example") || err.contains("bloqueado"));
+    }
+
+    #[test]
+    fn detener_cierra_el_socket_en_vuelo() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf);
+            thread::sleep(Duration::from_secs(30));
+        });
+        let flight = crate::ai_flight::AiFlight::new();
+        let handle = flight.handle();
+        handle.begin();
+        let cancel = handle.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            cancel.request_cancel();
+        });
+        let url = format!("http://127.0.0.1:{port}/v1/chat");
+        let started = std::time::Instant::now();
+        let err = exchange_with("local", &url, "GET", "", "", Some(&handle)).expect_err("cancel");
+        assert!(err.contains("cancelado"), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "el corte debe ser pronto, no el timeout de 90s"
+        );
+    }
+
+    #[test]
+    fn el_parser_aguanta_chunked_content_length_y_cortes() {
+        let exact = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+        assert!(respuesta_completa(exact));
+        let (status, body) = partir_respuesta(exact).expect("completo");
+        assert_eq!(status, 200);
+        assert_eq!(body, "hello");
+
+        let corto = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhel";
+        assert!(!respuesta_completa(corto));
+        let (_, parcial) = partir_respuesta(corto).expect("parcial");
+        assert_eq!(parcial, "hel");
+
+        let chunked =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        assert!(respuesta_completa(chunked));
+        assert_eq!(partir_respuesta(chunked).expect("chunk").1, "hello");
+
+        let cortado = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel";
+        assert!(!respuesta_completa(cortado));
+        assert!(partir_respuesta(cortado).is_err());
+
+        let mut state = 0xC0FFEE_u64;
+        for _ in 0..128 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let n = (state as usize) % 48;
+            let mut raw = b"HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n".to_vec();
+            raw.extend(std::iter::repeat_n(b'a', n));
+            if n < 40 {
+                assert!(!respuesta_completa(&raw));
+            } else {
+                assert!(respuesta_completa(&raw));
+            }
+            let parsed = partir_respuesta(&raw).expect("length");
+            assert!(parsed.1.len() <= 40);
+
+            let mut piece = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+            let size = n % 15;
+            piece.extend(format!("{size:x}\r\n").into_bytes());
+            piece.extend(std::iter::repeat_n(b'b', size.saturating_sub(1)));
+            if size > 0 {
+                assert!(!respuesta_completa(&piece));
+                assert!(partir_respuesta(&piece).is_err());
+            }
+        }
     }
 }

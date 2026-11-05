@@ -75,8 +75,8 @@ export default function VisualBuilder({
   /** Visibilidad del panel (lo gobierna el encabezado del IDE). */
   open: boolean;
   /**
-   * Lleva al editor sólo el programa que `visual_emit` acaba de firmar.
-   * El texto cacheado del panel no basta: el kernel vuelve a verificar el sello.
+   * Entrega el programa que `visual_emit` acaba de firmar para abrir el diff.
+   * No pega el texto en el editor. El kernel vuelve a verificar el sello.
    */
   onUseCode: (code: string) => void;
 }) {

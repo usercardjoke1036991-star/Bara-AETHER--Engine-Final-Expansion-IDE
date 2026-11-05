@@ -48,6 +48,19 @@ export interface WorkspaceDocument {
   name: string;
   /** Contenido UTF-8 persistido. */
   source: string;
+  /** Huella FNV-1a del contenido en disco (escritura optimista). */
+  contentHash: string;
+}
+
+/** Misma huella que `workspace::content_hash` (FNV-1a 64). */
+export function contentHashOf(source: string): string {
+  let hash = 0xcbf29ce484222325n;
+  const bytes = new TextEncoder().encode(source);
+  for (const byte of bytes) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x00000100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
 }
 
 /** Directorio de lanzamiento. No cambia la jaula activa. */
@@ -115,10 +128,40 @@ export function workspaceCloseRoot(id: string): Promise<WorkspaceShelf> {
   return invoke<WorkspaceShelf>("workspace_close_root", { id });
 }
 
-/** Guarda un `.bara` relativo a la raíz activa y devuelve lo persistido. */
+/** Readmite un path reciente (absoluto, existente) y lo vuelve activo. */
+export function workspaceReopen(path: string): Promise<WorkspaceShelf> {
+  return invoke<WorkspaceShelf>("workspace_reopen", { path });
+}
+
+/** Guarda un documento editable relativo a la raíz activa y devuelve lo persistido. */
 export function workspaceWriteDocument(
   path: string,
   source: string,
+  expectedHash?: string,
 ): Promise<WorkspaceDocument> {
-  return invoke<WorkspaceDocument>("workspace_write_document", { path, source });
+  return invoke<WorkspaceDocument>("workspace_write_document", {
+    path,
+    source,
+    expectedHash: expectedHash ?? null,
+  });
+}
+
+/** Crea archivo (`file`) o carpeta (`dir`) relativo a la raíz activa. */
+export function workspaceCreateEntry(
+  path: string,
+  kind: "file" | "dir",
+): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_create_entry", { path, kind });
+}
+
+/** Renombra o mueve dentro de la jaula. */
+export function workspaceRenameEntry(from: string, to: string): Promise<void> {
+  return invoke<void>("workspace_rename_entry", { from, to });
+}
+
+/**
+ * Borra tras confirmación del UI. Devuelve ruta en `.bara-trash/` si hubo papelera.
+ */
+export function workspaceDeleteEntry(path: string): Promise<string> {
+  return invoke<string>("workspace_delete_entry", { path });
 }

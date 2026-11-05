@@ -1,11 +1,19 @@
 // Árbol recursivo del workspace.
 //
-// El nodo no decide qué archivos se pueden abrir: el backend ya marcó con
-// `bara` los documentos editables y el padre (`WorkspaceSidebar`) entrega la
-// entrada completa al editor. Esta pieza sólo pliega/despliega y pinta.
+// El padre entrega la entrada al editor. Aquí se pliega/despliega y se habilitan
+// las extensiones editables del lote (A4), no sólo `.bara`.
 
 import { useState } from "react";
 
+import { isEditorPath } from "../editorFiles";
+import { pathKey, pathsEqual } from "../paths";
+import {
+  ICON_FILE,
+  ICON_FILE_BARA,
+  ICON_FOLDER,
+  ICON_FOLDER_OPEN,
+  WorkspaceIcon,
+} from "../shell/WorkspaceIcons";
 import type { WorkspaceEntry } from "../workspace";
 
 interface FileTreeProps {
@@ -13,7 +21,7 @@ interface FileTreeProps {
   entries: WorkspaceEntry[];
   /** Ruta activa en el editor (para resaltarla). */
   activePath: string | null;
-  /** Se invoca al pulsar un archivo `.bara`. */
+  /** Se invoca al pulsar un archivo editable. */
   onOpen: (entry: WorkspaceEntry) => void;
   /** Nivel de anidamiento (0 = raíz). */
   depth?: number;
@@ -34,7 +42,7 @@ export default function FileTree({
     <ul className="file-tree" role="tree" aria-label="Archivos del workspace">
       {entries.map((entry) => (
         <FileTreeNode
-          key={entry.path}
+          key={pathKey(entry.path)}
           entry={entry}
           activePath={activePath}
           onOpen={onOpen}
@@ -52,9 +60,8 @@ interface FileTreeNodeProps {
   depth: number;
 }
 
-/** Un nodo: carpeta plegable o archivo (sólo `.bara` es accionable). */
+/** Un nodo: carpeta plegable o archivo editable del lote. */
 function FileTreeNode({ entry, activePath, onOpen, depth }: FileTreeNodeProps) {
-  // Las carpetas de primer nivel arrancan abiertas; las profundas, plegadas.
   const [open, setOpen] = useState(depth === 0);
 
   if (entry.kind === "dir") {
@@ -66,11 +73,11 @@ function FileTreeNode({ entry, activePath, onOpen, depth }: FileTreeNodeProps) {
           onClick={() => setOpen((current) => !current)}
           title={entry.path}
         >
-          <span className="tree-glyph" aria-hidden="true">
-            {open ? "▾" : "▸"}
-          </span>
+          <WorkspaceIcon
+            src={open ? ICON_FOLDER_OPEN : ICON_FOLDER}
+            label={open ? "Carpeta abierta" : "Carpeta"}
+          />
           <span className="tree-name">{entry.name}</span>
-          <span className="tree-count">{entry.children.length}</span>
         </button>
         {open ? (
           <FileTree
@@ -84,23 +91,25 @@ function FileTreeNode({ entry, activePath, onOpen, depth }: FileTreeNodeProps) {
     );
   }
 
-  const active = activePath === entry.path;
+  const editable = entry.bara || isEditorPath(entry.path);
+  const active = pathsEqual(activePath, entry.path);
   return (
     <li role="treeitem" aria-selected={active}>
       <button
         type="button"
         className={`tree-row tree-file${active ? " active" : ""}`}
-        disabled={!entry.bara}
+        disabled={!editable}
         onClick={() => onOpen(entry)}
         title={
-          entry.bara
+          editable
             ? entry.path
-            : `${entry.path} (sólo los documentos .bara se editan)`
+            : `${entry.path} (extensión no editable en el IDE)`
         }
       >
-        <span className="tree-glyph" aria-hidden="true">
-          {entry.bara ? "◈" : "·"}
-        </span>
+        <WorkspaceIcon
+          src={entry.bara ? ICON_FILE_BARA : ICON_FILE}
+          label={entry.bara ? "Documento .bara" : "Archivo"}
+        />
         <span className="tree-name">{entry.name}</span>
       </button>
     </li>

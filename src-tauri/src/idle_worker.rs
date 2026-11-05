@@ -7,6 +7,7 @@ use bara::idle_audit;
 use bara::transmute_engine::language_of_extension;
 use serde::Serialize;
 
+use crate::auto_apply;
 use crate::graph;
 use crate::workspace;
 
@@ -53,8 +54,18 @@ pub fn apply(root: &str, notice: &IdleNotice) -> Result<bool, String> {
     if proposal.name != notice.name {
         return Ok(false);
     }
-    workspace::write_source(root, &notice.path, &proposal.revised)?;
+    write_backup(root, &notice.path, &document.source)?;
+    workspace::write_source_checked(
+        root,
+        &notice.path,
+        &proposal.revised,
+        Some(document.content_hash.as_str()),
+    )?;
     Ok(true)
+}
+
+fn write_backup(root: &str, relative: &str, contents: &str) -> Result<(), String> {
+    auto_apply::write_backup(root, relative, contents).map(|_| ())
 }
 
 #[cfg(test)]
@@ -91,6 +102,7 @@ mod tests {
 
     #[test]
     fn el_modulo_no_escribe_desde_el_hilo_de_arranque() {
+        // Guarda estructural: el hilo de arranque no expone una escritura que invocar.
         let source = include_str!("idle_worker.rs");
         let production = source.split("mod tests").next().unwrap_or(source);
         let thread_half = production.split("pub fn seek").next().unwrap_or(production);

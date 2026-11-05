@@ -14,12 +14,64 @@
 //! del sistema de archivos.
 
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
+/// Quita el prefijo Win32 extendido (`\\?\` / `\\?\UNC\`) y unifica `/`.
+///
+/// `fs::canonicalize` en Windows suele devolver `\\?\C:\…`; sin esto la UI y
+/// `root_id` duplican la misma carpeta. Equivale a lo que haría `dunce` sin
+/// añadir dependencia.
+pub fn simplify_path(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    PathBuf::from(strip_verbatim_prefix(&raw))
+}
+
+/// Forma estable para IPC/UI: sin `\\?\`, barras `/`.
+pub fn path_to_api(path: &Path) -> String {
+    simplify_path(path).to_string_lossy().replace('\\', "/")
+}
+
+fn strip_verbatim_prefix(raw: &str) -> String {
+    let trimmed = raw.trim();
+    // `\\?\UNC\server\share\…` → `\\server\share\…`
+    if let Some(rest) = trimmed.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = trimmed.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    // Tras normalizar a `/`: `//?/C:/…` o `//?/UNC/…`
+    let forward = trimmed.replace('\\', "/");
+    if let Some(rest) = forward.strip_prefix("//?/UNC/") {
+        return format!("//{rest}");
+    }
+    if let Some(rest) = forward.strip_prefix("//?/") {
+        return rest.to_string();
+    }
+    trimmed.to_string()
+}
+
+/// Clave de identidad de raíz (case-fold en Windows).
+pub fn normalize_root_key(path: &str) -> String {
+    let simplified = strip_verbatim_prefix(path).replace('\\', "/");
+    let mut out = simplified.trim_end_matches('/').to_string();
+    if cfg!(windows) {
+        out = out.to_ascii_lowercase();
+    }
+    out
+}
+
 /// Directorios que nunca se enumeran (artefactos y metadatos del repositorio).
-const EXCLUDED_DIRS: [&str; 3] = ["target", "node_modules", ".git"];
+const EXCLUDED_DIRS: [&str; 5] = [
+    "target",
+    "node_modules",
+    ".git",
+    ".bara-backup",
+    ".bara-trash",
+];
 
 /// Cota de profundidad del árbol (evita ciclos patológicos de junctions).
 const MAX_DEPTH: usize = 24;
@@ -32,6 +84,9 @@ const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Cota del árbol y de la herramienta «leer archivo» del asistente.
 const MAX_TREE_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Cota de lectura del asistente (herramienta «leer archivo»).
+const MAX_ASSISTANT_BYTES: u64 = 256 * 1024;
 
 /// Tipo de entrada del árbol tal como lo consume React.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -85,6 +140,29 @@ pub struct WorkspaceDocument {
     pub name: String,
     /// Contenido UTF-8 del documento.
     pub source: String,
+    /// Huella FNV-1a del contenido (escritura optimista / A3).
+    pub content_hash: String,
+}
+
+/// Huella determinista del texto (misma familia que [`root_id`]).
+pub fn content_hash(source: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in source.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn document_of(root: String, path: String, name: String, source: String) -> WorkspaceDocument {
+    let content_hash = content_hash(&source);
+    WorkspaceDocument {
+        root,
+        path,
+        name,
+        source,
+        content_hash,
+    }
 }
 
 /// Raíz por defecto del IDE: el workspace del repositorio, no `src-tauri/`.
@@ -128,9 +206,11 @@ pub fn resolve_root(root: &str) -> Result<PathBuf, String> {
     if !canonical.is_dir() {
         return Err(format!(
             "«{}» no es un directorio de workspace",
-            canonical.display()
+            path_to_api(&canonical)
         ));
     }
+    // Se conserva el PathBuf canónico del SO (con `\\?\` en Windows) para
+    // `starts_with` al validar miembros; la UI recibe `path_to_api`.
     Ok(canonical)
 }
 
@@ -139,18 +219,47 @@ pub fn tree(root: &str) -> Result<WorkspaceTree, String> {
     let canonical = resolve_root(root)?;
     let mut budget = MAX_ENTRIES;
     let mut files = 0usize;
-    let (entries, truncated) = collect(&canonical, &canonical, "", 0, &mut budget, &mut files)?;
+    let (mut entries, truncated) = collect(&canonical, &canonical, "", 0, &mut budget, &mut files)?;
+    // Windows: el mismo archivo no puede existir con dos capitalizaciones; si el
+    // índice o un enumerator las duplica, el UI no debe mostrar dos nodos.
+    dedupe_entries_case_insensitive(&mut entries);
+    let files = count_bara(&entries);
 
     Ok(WorkspaceTree {
-        root: canonical.display().to_string(),
+        root: path_to_api(&canonical),
         name: canonical
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| canonical.display().to_string()),
+            .unwrap_or_else(|| path_to_api(&canonical)),
         entries,
         files,
         truncated,
     })
+}
+
+fn count_bara(entries: &[WorkspaceEntry]) -> usize {
+    let mut n = 0usize;
+    for entry in entries {
+        if entry.bara {
+            n += 1;
+        }
+        n += count_bara(&entry.children);
+    }
+    n
+}
+
+/// Conserva la primera aparición por path en minúsculas (ASCII).
+fn dedupe_entries_case_insensitive(entries: &mut Vec<WorkspaceEntry>) {
+    let mut seen = HashSet::new();
+    entries.retain(|entry| {
+        let key = entry.path.to_ascii_lowercase();
+        seen.insert(key)
+    });
+    for entry in entries.iter_mut() {
+        if !entry.children.is_empty() {
+            dedupe_entries_case_insensitive(&mut entry.children);
+        }
+    }
 }
 
 /// Tope de carpetas abiertas a la vez. Cada una conserva su propia jaula.
@@ -203,10 +312,11 @@ pub struct ActiveWorkspace {
     shelf: Mutex<Shelf>,
 }
 
-/// Identificador determinista de una ruta canónica.
+/// Identificador determinista de una ruta canónica (sin `\\?\`, case-fold Win).
 pub fn root_id(path: &str) -> String {
+    let key = normalize_root_key(path);
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in path.as_bytes() {
+    for byte in key.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
@@ -214,10 +324,11 @@ pub fn root_id(path: &str) -> String {
 }
 
 fn folder_name(path: &str) -> String {
-    Path::new(path)
+    let simplified = strip_verbatim_prefix(path);
+    Path::new(&simplified)
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string())
+        .unwrap_or_else(|| simplified)
 }
 
 impl ActiveWorkspace {
@@ -231,7 +342,7 @@ impl ActiveWorkspace {
         if let Some(path) = default_root()
             .ok()
             .and_then(|raw| resolve_root(&raw).ok())
-            .map(|path| path.display().to_string())
+            .map(|path| path_to_api(&path))
         {
             shelf.admit(path);
         }
@@ -349,11 +460,21 @@ impl Shelf {
 
     /// `Some` es la ruta canónica expulsada por LRU. `None` si nadie salió.
     fn admit(&mut self, path: String) -> Option<String> {
-        if let Some(index) = self.slots.iter().position(|slot| slot.path == path) {
+        let path = path_to_api(Path::new(&path));
+        let key = normalize_root_key(&path);
+        if let Some(index) = self
+            .slots
+            .iter()
+            .position(|slot| normalize_root_key(&slot.path) == key)
+        {
             self.active = index;
             let used = self.tick();
             if let Some(slot) = self.slots.get_mut(index) {
                 slot.used = used;
+                // Canoniza la forma guardada (sin `\\?\`) si venía distinta.
+                slot.path = path;
+                slot.name = folder_name(&slot.path);
+                slot.id = root_id(&slot.path);
             }
             return None;
         }
@@ -430,17 +551,14 @@ pub fn open_document(root: &str, path: &str) -> Result<WorkspaceDocument, String
     }
 }
 
-/// Extensiones que el grafo y el salto al editor pueden leer. La escritura sigue
-/// siendo sólo `.bara`.
-const SOURCE_EXTENSIONS: [&str; 14] = [
-    "bara", "rs", "py", "go", "sol", "c", "h", "cpp", "cc", "hpp", "js", "jsx", "ts", "tsx",
-];
-
-/// Extensiones de texto que el asistente puede leer (solo lectura).
-const ASSISTANT_EXTENSIONS: [&str; 22] = [
+/// Extensiones editables en el IDE (lectura/escritura en jaula + diff/backup).
+const SOURCE_EXTENSIONS: [&str; 22] = [
     "bara", "rs", "py", "go", "sol", "c", "h", "cpp", "cc", "hpp", "js", "jsx", "ts", "tsx", "md",
     "txt", "json", "toml", "yaml", "yml", "css", "html",
 ];
+
+/// Extensiones de texto que el asistente puede leer (solo lectura).
+const ASSISTANT_EXTENSIONS: [&str; 22] = SOURCE_EXTENSIONS;
 
 /// ¿El archivo es una fuente del proyecto, dentro de la jaula de lectura?
 pub(crate) fn is_project_source(path: &Path) -> bool {
@@ -453,11 +571,14 @@ pub(crate) fn is_project_source(path: &Path) -> bool {
         })
 }
 
-/// Lee una fuente del proyecto (`.bara` o un lenguaje del grafo).
+/// Lee una fuente del proyecto (`.bara` o un lenguaje del lote editable).
 ///
 /// Misma jaula que [`read`]: ruta relativa, sin `..`, y la forma canónica tiene
-/// que seguir dentro de la raíz. No escribe.
+/// que seguir dentro de la raíz. No escribe. Bloquea rutas sensibles (M6).
 pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
     let canonical_root = resolve_root(root)?;
     let canonical = resolve_member(&canonical_root, relative)?;
     if !is_project_source(&canonical) {
@@ -466,17 +587,95 @@ pub fn read_text(root: &str, relative: &str) -> Result<WorkspaceDocument, String
     ensure_file_size(&canonical)?;
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(relative),
+        file_name(&canonical),
         source,
-    })
+    ))
 }
 
-/// Lectura de solo lectura para el asistente (cota 1 MiB, sin salir de la jaula).
-pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
+fn assistant_path_denied(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    if normalized
+        .split('/')
+        .any(|segment| segment.eq_ignore_ascii_case(".bara-trash"))
+    {
+        return true;
+    }
+    let name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    let lower = name.to_ascii_lowercase();
+    let rel_lower = normalized.to_ascii_lowercase();
+    if lower == ".env" || rel_lower.ends_with("/.env") || lower.starts_with(".env.") {
+        return true;
+    }
+    if lower.ends_with(".key") || lower.ends_with(".pem") {
+        return true;
+    }
+    if lower.starts_with("id_rsa") || lower.starts_with("id_ed25519") {
+        return true;
+    }
+    const SECRET_SUFFIXES: &[&str] = &[".pfx", ".p12", ".keystore", ".jks"];
+    if SECRET_SUFFIXES.iter().any(|suffix| lower.ends_with(suffix)) {
+        return true;
+    }
+    if matches!(
+        lower.as_str(),
+        ".npmrc" | ".pypirc" | ".git-credentials" | "keystore.properties" | ".netrc"
+    ) {
+        return true;
+    }
+    lower.contains("secret") || lower.contains("credential")
+}
+
+/// Lectura del host de un lote. `Ok(None)` es un archivo nuevo de verdad.
+/// Si existe y no se puede leer, es `Err` (nunca se trata como nuevo).
+pub fn read_host_for_batch(root: &str, relative: &str) -> Result<Option<String>, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
     let canonical_root = resolve_root(root)?;
+    let member = safe_relative(relative)?;
+    let candidate = canonical_root.join(&member);
+    match fs::symlink_metadata(&candidate) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if !is_project_source(Path::new(relative)) {
+                return Err(format!("«{relative}» no es una fuente del proyecto"));
+            }
+            return Ok(None);
+        }
+        Err(err) => return Err(format!("no se pudo inspeccionar «{relative}»: {err}")),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!("«{relative}» es un enlace; no se lee para el lote"));
+        }
+        Ok(meta) if meta.len() > MAX_ASSISTANT_BYTES => {
+            return Err(format!(
+                "«{relative}» supera 256 KiB y no se pudo leer para el lote"
+            ));
+        }
+        Ok(_) => {}
+    }
+    let doc = read_assistant(root, relative)?;
+    Ok(Some(doc.source))
+}
+
+/// Lectura de solo lectura para el asistente (cota 256 KiB, sin salir de la jaula).
+pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» no es legible por el asistente"));
+    }
+    let canonical_root = resolve_root(root)?;
+    let member = safe_relative(relative)?;
+    let candidate = canonical_root.join(&member);
+    match fs::symlink_metadata(&candidate) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("no existe: «{relative}»"));
+        }
+        Err(err) => {
+            return Err(format!("no se pudo inspeccionar «{relative}»: {err}"));
+        }
+        Ok(_) => {}
+    }
     let canonical = resolve_member(&canonical_root, relative)?;
     let allowed = canonical
         .extension()
@@ -491,19 +690,19 @@ pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, S
     }
     let metadata = fs::metadata(&canonical)
         .map_err(|err| format!("no se pudo inspeccionar «{relative}»: {err}"))?;
-    if metadata.len() > MAX_TREE_FILE_BYTES {
+    if metadata.len() > MAX_ASSISTANT_BYTES {
         return Err(format!(
-            "«{relative}» supera 1 MiB y el asistente no lo lee"
+            "«{relative}» supera 256 KiB y el asistente no lo lee"
         ));
     }
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(relative),
+        file_name(&canonical),
         source,
-    })
+    ))
 }
 
 /// Lee un `.bara` del workspace, validando que la ruta pertenezca a la raíz.
@@ -516,16 +715,43 @@ pub fn read(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
     let source = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer «{relative}»: {err}"))?;
 
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(relative),
+        file_name(&canonical),
         source,
-    })
+    ))
+}
+
+fn ensure_expected_hash(
+    canonical: &Path,
+    relative: &str,
+    expected_hash: Option<&str>,
+) -> Result<(), String> {
+    let Some(expected) = expected_hash.map(str::trim).filter(|h| !h.is_empty()) else {
+        return Ok(());
+    };
+    if !canonical.exists() {
+        return Ok(());
+    }
+    let on_disk = fs::read_to_string(canonical)
+        .map_err(|err| format!("no se pudo leer «{relative}» antes de guardar: {err}"))?;
+    let actual = content_hash(&on_disk);
+    if actual != expected {
+        return Err(format!(
+            "«{relative}» cambió en disco (hash distinto); recarga antes de guardar"
+        ));
+    }
+    Ok(())
 }
 
 /// Guarda un `.bara` dentro del workspace (guardado en caliente del editor).
-pub fn write(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocument, String> {
+pub fn write(
+    root: &str,
+    relative: &str,
+    source: &str,
+    expected_hash: Option<&str>,
+) -> Result<WorkspaceDocument, String> {
     let canonical_root = resolve_root(root)?;
     ensure_bara(Path::new(relative))?;
     if source.len() as u64 > MAX_FILE_BYTES {
@@ -536,15 +762,16 @@ pub fn write(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocume
     }
 
     let canonical = resolve_for_write(&canonical_root, relative)?;
-    fs::write(&canonical, source)
+    ensure_expected_hash(&canonical, relative, expected_hash)?;
+    write_atomic(&canonical, source)
         .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
 
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
-        source: source.to_string(),
-    })
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(relative),
+        file_name(&canonical),
+        source.to_string(),
+    ))
 }
 
 /// Guarda una fuente del proyecto (`.bara` o una extensión del lote).
@@ -552,6 +779,19 @@ pub fn write(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocume
 /// La usa el modo autónomo después de un veredicto `∅`. La jaula es la misma
 /// que [`write`]: ruta relativa, sin `..`, y la forma canónica dentro de la raíz.
 pub fn write_source(root: &str, relative: &str, source: &str) -> Result<WorkspaceDocument, String> {
+    write_source_checked(root, relative, source, None)
+}
+
+/// Como [`write_source`], con huella esperada del contenido previo en disco.
+pub fn write_source_checked(
+    root: &str,
+    relative: &str,
+    source: &str,
+    expected_hash: Option<&str>,
+) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
     let canonical_root = resolve_root(root)?;
     if !is_project_source(Path::new(relative)) {
         return Err(format!("«{relative}» no es una fuente del proyecto"));
@@ -566,14 +806,250 @@ pub fn write_source(root: &str, relative: &str, source: &str) -> Result<Workspac
     if !is_project_source(&canonical) {
         return Err(format!("«{relative}» no es una fuente del proyecto"));
     }
-    fs::write(&canonical, source)
+    ensure_expected_hash(&canonical, relative, expected_hash)?;
+    write_atomic(&canonical, source)
         .map_err(|err| format!("no se pudo guardar «{relative}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(relative),
-        name: file_name(&canonical),
-        source: source.to_string(),
-    })
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(relative),
+        file_name(&canonical),
+        source.to_string(),
+    ))
+}
+
+/// Crea un archivo de texto vacío (o carpeta) dentro de la jaula.
+pub fn create_entry(root: &str, relative: &str, kind: &str) -> Result<WorkspaceDocument, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
+    let canonical_root = resolve_root(root)?;
+    let kind = kind.trim().to_ascii_lowercase();
+    if kind == "dir" || kind == "directory" {
+        let canonical = resolve_for_write(&canonical_root, relative)?;
+        if canonical.exists() {
+            return Err(format!("«{relative}» ya existe"));
+        }
+        fs::create_dir_all(&canonical)
+            .map_err(|err| format!("no se pudo crear la carpeta «{relative}»: {err}"))?;
+        return Ok(document_of(
+            path_to_api(&canonical_root),
+            normalize_relative(relative),
+            file_name(&canonical),
+            String::new(),
+        ));
+    }
+    if kind != "file" {
+        return Err("el tipo debe ser file o dir".to_string());
+    }
+    if !is_project_source(Path::new(relative)) {
+        return Err(format!(
+            "«{relative}» no es una extensión editable del proyecto"
+        ));
+    }
+    let canonical = resolve_for_write(&canonical_root, relative)?;
+    if canonical.exists() {
+        return Err(format!("«{relative}» ya existe"));
+    }
+    write_atomic(&canonical, "").map_err(|err| format!("no se pudo crear «{relative}»: {err}"))?;
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(relative),
+        file_name(&canonical),
+        String::new(),
+    ))
+}
+
+/// Renombra o mueve una entrada dentro de la jaula (sin cruzar symlinks).
+pub fn rename_entry(root: &str, from: &str, to: &str) -> Result<(), String> {
+    if assistant_path_denied(from) || assistant_path_denied(to) {
+        return Err("ruta sensible: operación bloqueada".to_string());
+    }
+    let canonical_root = resolve_root(root)?;
+    let source = resolve_member(&canonical_root, from)?;
+    match fs::symlink_metadata(&source) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!("«{from}» es un enlace simbólico; no se renombra"));
+        }
+        Ok(_) => {}
+        Err(err) => return Err(format!("no se pudo inspeccionar «{from}»: {err}")),
+    }
+    let destination = resolve_for_write(&canonical_root, to)?;
+    if destination.exists() {
+        return Err(format!("«{to}» ya existe"));
+    }
+    if let Some(parent) = destination.parent() {
+        if !parent.exists() {
+            return Err(format!("el directorio destino de «{to}» no existe"));
+        }
+    }
+    fs::rename(&source, &destination)
+        .map_err(|err| format!("no se pudo renombrar «{from}» → «{to}»: {err}"))?;
+    Ok(())
+}
+
+/// Mueve a `.bara-trash/`. Si el traslado falla, no borra: el archivo sigue en su sitio.
+pub fn delete_entry(root: &str, relative: &str) -> Result<String, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
+    let normalized = normalize_relative(relative);
+    if normalized.is_empty() || normalized == "." {
+        return Err("no se puede borrar la raíz del workspace".to_string());
+    }
+    let canonical_root = resolve_root(root)?;
+    let source = resolve_member(&canonical_root, relative)?;
+    match fs::symlink_metadata(&source) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!("«{relative}» es un enlace simbólico; no se borra"));
+        }
+        Ok(_) => {}
+        Err(err) => return Err(format!("no se pudo inspeccionar «{relative}»: {err}")),
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let safe = normalized.replace('/', "__");
+    let trash_dir = canonical_root.join(".bara-trash");
+    fs::create_dir_all(&trash_dir)
+        .map_err(|err| format!("no se pudo preparar la papelera: {err}"))?;
+    let trash_name = format!("{stamp}_{safe}");
+    let trash_path = trash_dir.join(&trash_name);
+    if !trash_path.starts_with(&canonical_root) {
+        return Err("la papelera quedó fuera de la jaula".to_string());
+    }
+    let trash_rel = format!(".bara-trash/{trash_name}");
+    match relocate_to_trash(&source, &trash_path) {
+        Ok(()) => Ok(normalize_relative(&trash_rel)),
+        Err(err) => Err(format!(
+            "archivo en uso, ciérralo e inténtalo de nuevo ({err})"
+        )),
+    }
+}
+
+#[cfg(test)]
+fn trash_fail_init() -> bool {
+    // `black_box` no es const. En windows-gnu clippy marca un falso positivo
+    // (`missing_const_for_thread_local`) aunque el inicializador ya sea
+    // `const { ... }`; en Ubuntu, un inicializador que sí puede ser const
+    // dispara el mismo lint. Así queda en silencio en los dos.
+    std::hint::black_box(false)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TRASH_FAIL: std::cell::Cell<bool> = std::cell::Cell::new(trash_fail_init());
+}
+
+fn relocate_to_trash(source: &Path, trash: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if TRASH_FAIL.get() {
+        return Err(std::io::Error::other("rename simulado"));
+    }
+    fs::rename(source, trash)
+}
+
+#[cfg(test)]
+fn atomic_fail_init() -> bool {
+    std::hint::black_box(false)
+}
+
+#[cfg(test)]
+thread_local! {
+    static ATOMIC_FAIL: std::cell::Cell<bool> = std::cell::Cell::new(atomic_fail_init());
+}
+
+#[cfg(test)]
+fn write_counter_init() -> u32 {
+    std::hint::black_box(0)
+}
+
+// `fail_on == 0` no inyecta nada. `fail_on == 2` deja pasar la primera,
+// falla la segunda y las siguientes (el rollback) vuelven a pasar.
+#[cfg(test)]
+thread_local! {
+    static WRITE_CALLS: std::cell::Cell<u32> = std::cell::Cell::new(write_counter_init());
+    static WRITE_FAIL_ON: std::cell::Cell<u32> = std::cell::Cell::new(write_counter_init());
+}
+
+#[cfg(test)]
+pub(crate) fn fail_write_on_call(n: u32) {
+    WRITE_CALLS.set(0);
+    WRITE_FAIL_ON.set(n);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_write_fail() {
+    WRITE_CALLS.set(0);
+    WRITE_FAIL_ON.set(0);
+}
+
+#[cfg(test)]
+fn planned_write_failure() -> Result<(), std::io::Error> {
+    let fail_on = WRITE_FAIL_ON.get();
+    if fail_on == 0 {
+        return Ok(());
+    }
+    let n = WRITE_CALLS.get().saturating_add(1);
+    WRITE_CALLS.set(n);
+    if n == fail_on {
+        Err(std::io::Error::other("escritura simulada"))
+    } else {
+        Ok(())
+    }
+}
+
+/// Escribe en un temporal de la misma carpeta, hace fsync y renombra.
+///
+/// En Windows 10, `std::fs::rename` usa `MoveFileEx` con reemplazo
+/// (`FileRenameInfoEx`) después de cerrar el temporal. Un fallo a mitad
+/// borra el temporal y deja el archivo destino como estaba.
+fn write_atomic(canonical: &Path, source: &str) -> Result<(), std::io::Error> {
+    use std::io::Write;
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "sin carpeta"))?;
+    let name = canonical
+        .file_name()
+        .and_then(|part| part.to_str())
+        .unwrap_or("archivo");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let tmp = parent.join(format!(".{name}.{}.{nonce}.bara-tmp", std::process::id()));
+    #[cfg(test)]
+    planned_write_failure()?;
+    let written = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        #[cfg(test)]
+        if ATOMIC_FAIL.get() {
+            return Err(std::io::Error::other("escritura simulada"));
+        }
+        file.write_all(source.as_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    })();
+    if let Err(err) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    if let Err(err) = fs::rename(&tmp, canonical) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    #[cfg(unix)]
+    {
+        // El rename ya sustituyó la entrada. fsync del directorio fija ese
+        // nombre en disco si el proceso muere justo después.
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -713,12 +1189,12 @@ fn open_absolute(root: &str, path: &str) -> Result<WorkspaceDocument, String> {
         .map_err(|_| format!("«{path}» queda fuera del workspace"))?;
     let source =
         fs::read_to_string(&canonical).map_err(|err| format!("no se pudo leer «{path}»: {err}"))?;
-    Ok(WorkspaceDocument {
-        root: canonical_root.display().to_string(),
-        path: normalize_relative(&relative.to_string_lossy()),
-        name: file_name(&canonical),
+    Ok(document_of(
+        path_to_api(&canonical_root),
+        normalize_relative(&relative.to_string_lossy()),
+        file_name(&canonical),
         source,
-    })
+    ))
 }
 
 /// `..` no se normaliza: se rechaza antes de tocar el disco.
@@ -744,36 +1220,50 @@ fn resolve_member(root: &Path, relative: &str) -> Result<PathBuf, String> {
 /// ya exista, pero nunca salir de la raíz canónica.
 fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let member = safe_relative(relative)?;
-    let candidate = root.join(member);
+    let candidate = root.join(&member);
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|err| format!("no se pudo abrir la raíz del workspace: {err}"))?;
 
-    if candidate.exists() {
-        let canonical = fs::canonicalize(&candidate)
-            .map_err(|err| format!("no se pudo abrir «{relative}»: {err}"))?;
-        if !canonical.starts_with(root) {
-            return Err(format!("«{relative}» queda fuera del workspace"));
+    match fs::symlink_metadata(&candidate) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "«{relative}» es un enlace simbólico; no se escribe"
+        )),
+        Ok(_) => {
+            let canonical = fs::canonicalize(&candidate)
+                .map_err(|err| format!("no se pudo abrir «{relative}»: {err}"))?;
+            if !canonical.starts_with(&canonical_root) {
+                return Err(format!("«{relative}» queda fuera del workspace"));
+            }
+            Ok(canonical)
         }
-        return Ok(canonical);
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let parent = candidate
+                .parent()
+                .ok_or_else(|| format!("«{relative}» no tiene un directorio padre válido"))?;
+            let canonical_parent = fs::canonicalize(parent)
+                .map_err(|err| format!("no se pudo abrir el directorio de «{relative}»: {err}"))?;
+            if !canonical_parent.starts_with(&canonical_root) {
+                return Err(format!("«{relative}» queda fuera del workspace"));
+            }
+            if fs::symlink_metadata(&candidate).is_ok() {
+                return Err(format!(
+                    "«{relative}» es un enlace simbólico colgante; no se crea"
+                ));
+            }
+            let name = candidate
+                .file_name()
+                .ok_or_else(|| format!("«{relative}» no tiene nombre de archivo"))?;
+            Ok(canonical_parent.join(name))
+        }
+        Err(err) => Err(format!("no se pudo inspeccionar «{relative}»: {err}")),
     }
-
-    let parent = candidate
-        .parent()
-        .ok_or_else(|| format!("«{relative}» no tiene un directorio padre válido"))?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|err| format!("no se pudo abrir el directorio de «{relative}»: {err}"))?;
-    if !canonical_parent.starts_with(root) {
-        return Err(format!("«{relative}» queda fuera del workspace"));
-    }
-    let name = candidate
-        .file_name()
-        .ok_or_else(|| format!("«{relative}» no tiene nombre de archivo"))?;
-    Ok(canonical_parent.join(name))
 }
 
 /// Sólo componentes normales: sin raíz, prefijo, `..` ni `.` explícitos.
-fn safe_relative(relative: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_relative(relative: &str) -> Result<PathBuf, String> {
     let path = Path::new(relative);
     if relative.trim().is_empty() || path.is_absolute() {
-        return Err("la ruta del documento debe ser relativa al workspace".to_string());
+        return Err("la ruta debe ser relativa al workspace".to_string());
     }
     if path
         .components()
@@ -869,6 +1359,22 @@ mod tests {
     }
 
     #[test]
+    fn n8_si_la_papelera_falla_el_archivo_sigue() {
+        let root = scratch("trash");
+        fs::write(root.join("src.rs"), "fn a() {}\n").expect("src");
+        let root_s = root.to_str().expect("utf8");
+        TRASH_FAIL.set(true);
+        let err = delete_entry(root_s, "src.rs").expect_err("rename");
+        TRASH_FAIL.set(false);
+        assert!(err.contains("archivo en uso"), "{err}");
+        assert_eq!(
+            fs::read_to_string(root.join("src.rs")).expect("sigue"),
+            "fn a() {}\n"
+        );
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
     fn leer_y_guardar_un_bara_dentro_del_workspace() {
         let root = scratch("io");
         fs::create_dir_all(root.join("samples")).expect("samples");
@@ -877,12 +1383,28 @@ mod tests {
         let document = read(root.to_str().expect("utf-8"), "samples/uno.bara").expect("leer");
         assert_eq!(document.source, "ברא");
 
-        let saved =
-            write(root.to_str().expect("utf-8"), "samples/uno.bara", "ברא חדש").expect("guardar");
+        let saved = write(
+            root.to_str().expect("utf-8"),
+            "samples/uno.bara",
+            "ברא חדש",
+            Some(document.content_hash.as_str()),
+        )
+        .expect("guardar");
         assert_eq!(saved.path, "samples/uno.bara");
         assert_eq!(
             fs::read_to_string(root.join("samples/uno.bara")).expect("releer"),
             "ברא חדש"
+        );
+
+        let stale = write(
+            root.to_str().expect("utf-8"),
+            "samples/uno.bara",
+            "otro",
+            Some(document.content_hash.as_str()),
+        );
+        assert!(
+            stale.is_err(),
+            "un hash esperado obsoleto debe rechazar el guardado"
         );
 
         fs::remove_dir_all(&root).expect("limpiar");
@@ -896,8 +1418,8 @@ mod tests {
 
         assert!(read(root.to_str().expect("utf-8"), "../secreto.bara").is_err());
         assert!(read(root.to_str().expect("utf-8"), "src/uno.txt").is_err());
-        assert!(write(root.to_str().expect("utf-8"), "../fuera.bara", "x").is_err());
-        assert!(write(root.to_str().expect("utf-8"), "src/nuevo.txt", "x").is_err());
+        assert!(write(root.to_str().expect("utf-8"), "../fuera.bara", "x", None).is_err());
+        assert!(write(root.to_str().expect("utf-8"), "src/nuevo.txt", "x", None).is_err());
 
         fs::remove_dir_all(&root).expect("limpiar");
     }
@@ -953,23 +1475,36 @@ mod tests {
         let second = scratch("estante-b");
         fs::write(first.join("a.bara"), "uno").expect("a");
         fs::write(second.join("b.bara"), "dos").expect("b");
-        let first_s = first.to_str().expect("utf-8").to_string();
-        let second_s = second.to_str().expect("utf-8").to_string();
+        // Misma forma canónica que guarda `admit` (sin `\\?\`, barras `/`).
+        let first_s = path_to_api(&first);
+        let second_s = path_to_api(&second);
 
         let active = ActiveWorkspace::bootstrap();
         let _ = active.set(first_s.clone());
         let _ = active.set(second_s.clone());
-        assert_eq!(active.get().expect("activa"), second_s);
+        assert_eq!(
+            normalize_root_key(&active.get().expect("activa")),
+            normalize_root_key(&second_s)
+        );
         assert_eq!(active.read_path("b.bara").expect("b").source, "dos");
         assert!(active.read_path("a.bara").is_err());
 
         let shelf = active.list().expect("estante");
-        assert!(shelf.roots.iter().any(|slot| slot.path == first_s));
-        assert!(shelf.roots.iter().any(|slot| slot.path == second_s));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&first_s)));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&second_s)));
         let first_id = root_id(&first_s);
         assert_ne!(first_id, root_id(&second_s));
         active.activate(&first_id).expect("volver");
-        assert_eq!(active.get().expect("primera"), first_s);
+        assert_eq!(
+            normalize_root_key(&active.get().expect("primera")),
+            normalize_root_key(&first_s)
+        );
         assert_eq!(active.read_path("a.bara").expect("a").source, "uno");
         assert!(active.read_path("b.bara").is_err());
 
@@ -997,34 +1532,202 @@ mod tests {
     }
 
     #[test]
+    fn dedupe_elimina_pares_solo_por_mayusculas() {
+        let mut entries = vec![
+            WorkspaceEntry {
+                name: "Hello.bara".into(),
+                path: "Hello.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+            WorkspaceEntry {
+                name: "hELLO.bara".into(),
+                path: "hELLO.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+            WorkspaceEntry {
+                name: "other.bara".into(),
+                path: "other.bara".into(),
+                kind: EntryKind::File,
+                bara: true,
+                children: Vec::new(),
+            },
+        ];
+        dedupe_entries_case_insensitive(&mut entries);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "Hello.bara");
+        assert_eq!(entries[1].path, "other.bara");
+    }
+
+    #[test]
+    fn la_escritura_rechaza_enlaces_simbolicos() {
+        let root = scratch("symlink");
+        fs::write(root.join("ok.bara"), "ברא").expect("dentro");
+        let root_s = root.to_str().expect("utf-8");
+        let link = root.join("link.bara");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("ok.bara"), &link).expect("symlink");
+            assert!(write(root_s, "link.bara", "x", None).is_err());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            let linked = symlink_file(root.join("ok.bara"), &link)
+                .or_else(|_| symlink_file(root.join("missing.bara"), &link));
+            if linked.is_err() {
+                eprintln!("Windows sin privilegio de symlink: prueba omitida");
+            } else {
+                assert!(write(root_s, "link.bara", "x", None).is_err());
+            }
+        }
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
     fn la_expulsion_del_estante_es_lru() {
         let active = ActiveWorkspace::empty();
         let mut paths = Vec::new();
         for index in 0..ROOT_CAP {
             let dir = scratch(&format!("lru-{index}"));
-            let path = resolve_root(dir.to_str().expect("utf-8"))
-                .expect("canon")
-                .display()
-                .to_string();
+            let path = path_to_api(&resolve_root(dir.to_str().expect("utf-8")).expect("canon"));
             assert!(active.set(path.clone()).is_none());
             paths.push((dir, path));
         }
         assert!(active.set(paths[0].1.clone()).is_none());
         let extra_dir = scratch("lru-extra");
-        let extra = resolve_root(extra_dir.to_str().expect("utf-8"))
-            .expect("canon")
-            .display()
-            .to_string();
+        let extra = path_to_api(&resolve_root(extra_dir.to_str().expect("utf-8")).expect("canon"));
         let evicted = active.set(extra.clone()).expect("la novena expulsa");
-        assert_eq!(evicted, paths[1].1);
+        assert_eq!(
+            normalize_root_key(&evicted),
+            normalize_root_key(&paths[1].1)
+        );
         let shelf = active.list().expect("estante");
-        assert!(shelf.roots.iter().all(|slot| slot.path != paths[1].1));
-        assert!(shelf.roots.iter().any(|slot| slot.path == paths[0].1));
-        assert!(shelf.roots.iter().any(|slot| slot.path == extra));
+        assert!(shelf
+            .roots
+            .iter()
+            .all(|slot| normalize_root_key(&slot.path) != normalize_root_key(&paths[1].1)));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&paths[0].1)));
+        assert!(shelf
+            .roots
+            .iter()
+            .any(|slot| normalize_root_key(&slot.path) == normalize_root_key(&extra)));
 
         for (dir, _) in paths {
             fs::remove_dir_all(dir).expect("limpiar");
         }
         fs::remove_dir_all(extra_dir).expect("limpiar extra");
+    }
+
+    #[test]
+    fn strip_verbatim_win32_y_root_id_estable() {
+        let a = normalize_root_key(r"\\?\C:\Users\Vexor\Downloads\BAR");
+        let b = normalize_root_key(r"C:\Users\Vexor\Downloads\BAR");
+        let c = normalize_root_key("C:/Users/Vexor/Downloads/BAR");
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(
+            root_id(r"\\?\C:\Users\Vexor\Downloads\BAR"),
+            root_id("C:/Users/Vexor/Downloads/BAR")
+        );
+        assert!(!path_to_api(Path::new(r"\\?\C:\foo\bar")).contains(r"\\?\"));
+    }
+
+    #[test]
+    fn a4_lee_y_escribe_rs_en_jaula() {
+        let root = scratch("a4-rs");
+        fs::create_dir_all(root.join("src")).expect("src");
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("semilla");
+        let root_s = root.to_str().expect("utf-8");
+        let doc = read_text(root_s, "src/main.rs").expect("leer rs");
+        assert!(doc.source.contains("fn main"));
+        let saved = write_source_checked(root_s, "src/main.rs", "fn main() { /* ok */ }\n", None)
+            .expect("escribir rs");
+        assert!(saved.source.contains("ok"));
+        assert!(write_source_checked(root_s, ".env", "X=1\n", None).is_err());
+        assert!(read_text(root_s, "secrets.json").is_err());
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
+    fn a5_crear_renombrar_y_papelera() {
+        let root = scratch("a5-ops");
+        fs::create_dir_all(root.join("src")).expect("src");
+        let root_s = root.to_str().expect("utf-8");
+        create_entry(root_s, "src/nota.md", "file").expect("crear");
+        assert!(root.join("src/nota.md").is_file());
+        rename_entry(root_s, "src/nota.md", "src/leeme.md").expect("renombrar");
+        assert!(root.join("src/leeme.md").is_file());
+        let trash = delete_entry(root_s, "src/leeme.md").expect("borrar");
+        assert!(!root.join("src/leeme.md").exists());
+        assert!(
+            trash.starts_with(".bara-trash/") || trash.is_empty(),
+            "papelera o borrado directo: {trash}"
+        );
+        assert!(delete_entry(root_s, ".env").is_err());
+        fs::write(root.join(".bara-trash").join("nota.md"), "secreto\n").expect("trash");
+        assert!(
+            read_assistant(root_s, ".bara-trash/nota.md").is_err(),
+            "el asistente no lee la papelera"
+        );
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
+    fn m6_cada_patron_sensible_esta_bloqueado() {
+        let root = scratch("m6-deny");
+        let root_s = root.to_str().expect("utf-8");
+        let blocked = [
+            "id_rsa",
+            "id_rsa.pub",
+            "keys/id_ed25519",
+            "keys/id_ed25519.pub",
+            "certs/server.pfx",
+            "certs/server.p12",
+            "app.keystore",
+            "app.jks",
+            ".npmrc",
+            "tools/.pypirc",
+            ".git-credentials",
+            "keystore.properties",
+            ".netrc",
+        ];
+        for pattern in blocked {
+            let err = read_text(root_s, pattern).expect_err(pattern);
+            assert!(
+                err.contains("bloqueado"),
+                "{pattern} tenía que estar bloqueado: {err}"
+            );
+        }
+        fs::create_dir_all(root.join("src")).expect("src");
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("fuente");
+        assert!(read_text(root_s, "src/main.rs").is_ok());
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
+    fn a5_un_fallo_a_mitad_no_deja_el_archivo_vacio() {
+        let root = scratch("a5-atomic");
+        let file = root.join("nota.rs");
+        fs::write(&file, "original\n").expect("semilla");
+        ATOMIC_FAIL.set(true);
+        let err = write_atomic(&file, "nuevo\n").expect_err("corte");
+        ATOMIC_FAIL.set(false);
+        assert!(err.to_string().contains("simulada"), "{err}");
+        assert_eq!(fs::read_to_string(&file).expect("disco"), "original\n");
+        write_atomic(&file, "nuevo\n").expect("reemplazo");
+        assert_eq!(fs::read_to_string(&file).expect("nuevo"), "nuevo\n");
+        let leftover = fs::read_dir(&root)
+            .expect("dir")
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().contains("bara-tmp"));
+        assert!(!leftover, "quedó un temporal");
+        fs::remove_dir_all(&root).expect("limpiar");
     }
 }

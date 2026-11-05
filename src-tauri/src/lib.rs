@@ -1,9 +1,10 @@
-//! # Bara IDE Desktop — backend Tauri v2 del IDE Bara (AETHER‑Ω)
+//! # Bara IDE Desktop — backend Tauri v2 del IDE Bara (AETHER‑Ω) v0.5.0
 //!
 //! **Puente** entre la interfaz React (`web/`) y el motor de análisis
-//! `bara-ide`, que a su vez envuelve el kernel congelado `bara` (etiqueta
-//! `v0.1.0-kernel`). Aquí **no hay lógica lingüística**: sólo comandos
-//! `#[tauri::command]` que proyectan el modelo de `bara-ide` a JSON.
+//! `bara-ide`. El kernel `bara` corre en el sidecar `bara-kernel-host`
+//! (pin git `fa3d308552f3cc69ccdab8f141d56399e35c2ff6`); este proceso no
+//! ejecuta el núcleo. Aquí **no hay lógica lingüística**: sólo comandos
+//! `#[tauri::command]` que proyectan el modelo a JSON vía el supervisor.
 //!
 //! ## Comandos expuestos al front-end
 //! * `analyze_source(source)` — analiza el texto del editor (siempre `Ok`:
@@ -45,8 +46,11 @@
 //! * `run_workspace_recipe(recipe)` — `check`, `test` o `typecheck`. El
 //!   proceso y los argumentos son literales; no hay shell. `typecheck`
 //!   (npm) se corta a los 60 s; `check` y `test` (cargo), a los 120 s.
-//! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque.
-//!   Sólo un `∅` se escribe, en la ruta relativa de la raíz activa.
+//! * `judge_auto_patch(path, line, host, patch)` — el núcleo juzga el bloque
+//!   **sin escribir**. `can_apply` (Auto-Apply) exige `⊤` verificado; `∅` /
+//!   no verificado aún muestran diff para `confirm_auto_patch` a mano.
+//! * `confirm_auto_patch` / `undo_auto_patch` — escriben o restauran tras
+//!   aceptación explícita del usuario (respaldo en `.bara-backup/`).
 //! * `load_local_weights()` — diálogo del sistema para un `.gguf`. No recibe ruta.
 //! * `local_complete(prompt)` — responde con el núcleo y los pesos ya cargados.
 //! * `transmute_global(path, from, to)` — propaga un identificador por la red.
@@ -134,8 +138,23 @@ mod secrets;
 // Transporte de los proveedores. El destino es una lista cerrada.
 mod ai_http;
 
+// Cancelación cooperativa de `ai_exchange` (B8: Detener).
+mod ai_flight;
+
+// M5 — Workspace Trust (confianza por carpeta canónica).
+mod workspace_trust;
+
 // Segunda capa de permisos: etiqueta de la ventana frente a lista fija.
 mod window_guard;
+
+// Saneado de fugas DSML / tool_call en texto del asistente.
+mod tool_leak;
+
+// A6 — status/diff/commit/ramas sobre la jaula (sin push).
+mod git_workspace;
+
+// A9 — espacio libre C: y limpieza segura de target\debug.
+mod disk_guard;
 
 /// Pide una operación al proceso del kernel y devuelve el JSON ya firmado.
 fn kernel_call(kernel: &KernelHost, op: &str, args: Value) -> Result<Value, String> {
@@ -233,13 +252,101 @@ fn get_workspace_topology_graph(
     kernel_call(&kernel, "topology", json!({ "root": state.get()? }))
 }
 
+/// §9.4 — instantánea del mapa vivo (archivo→archivo + avisos).
+#[tauri::command]
+fn live_map_snapshot(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "live_map_snapshot",
+        json!({ "root": state.get()? }),
+    )
+}
+
+/// §9.4 — impacto estimado («afecta a N archivos y M tests»).
+#[tauri::command]
+fn live_map_impact(
+    focus: Vec<String>,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "live_map_impact",
+        json!({ "root": state.get()?, "focus": focus }),
+    )
+}
+
+/// §9.4 — puerta pre-apply: rotura de imports antes de escribir.
+#[tauri::command]
+fn live_map_gate(
+    path: String,
+    source: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "live_map_gate",
+        json!({ "root": state.get()?, "path": path, "source": source }),
+    )
+}
+
+/// §9.4 — lote multiarchivo atómico (todo o nada + backup/rollback).
+#[tauri::command]
+fn live_map_apply_batch(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    changes: Value,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    let report = kernel_call(
+        &kernel,
+        "live_map_apply_batch",
+        json!({ "root": state.get()?, "changes": changes }),
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(paths) = report.get("paths").and_then(Value::as_array) {
+            for path in paths.iter().filter_map(Value::as_str) {
+                emit_workspace_file_changed(&app, path);
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// §9.4 — subgrafo textual acotado para el prompt de la IA.
+#[tauri::command]
+fn live_map_context(
+    focus: Vec<String>,
+    max_lines: Option<u32>,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    kernel_call(
+        &kernel,
+        "live_map_context",
+        json!({
+            "root": state.get()?,
+            "focus": focus,
+            "maxLines": max_lines.unwrap_or(48),
+        }),
+    )
+}
+
 /// Compila, prueba o revisa tipos. El nombre es un catálogo cerrado.
+/// M5: el gate de confianza vive dentro de `orchestrate::run` (sin bypass).
 #[tauri::command]
 async fn run_workspace_recipe(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     recipe: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
 ) -> Result<orchestrate::RecipeReport, String> {
     window_guard::require(&window, window_guard::MAIN)?;
     let name = recipe.trim().to_string();
@@ -247,12 +354,57 @@ async fn run_workspace_recipe(
         return Err("la receta no está en el catálogo cerrado".to_string());
     }
     let root = state.get().ok();
+    let trust_store = trust.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let active = root.as_deref().map(std::path::Path::new);
-        orchestrate::run(&name, active, Some(app))
+        orchestrate::run(&name, active, Some(app), &trust_store)
     })
     .await
     .map_err(|_| "la receta se interrumpió".to_string())?
+}
+
+/// M5 — lista de carpetas canónicas confiadas.
+#[tauri::command]
+fn workspace_trust_list(
+    window: tauri::WebviewWindow,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<Vec<String>, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    Ok(trust.list())
+}
+
+/// M5 — ¿esta ruta está confiada?
+#[tauri::command]
+fn workspace_trust_is_trusted(
+    window: tauri::WebviewWindow,
+    path: String,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<bool, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    let canonical = workspace::resolve_root(path.trim())?;
+    Ok(trust.is_trusted(&canonical))
+}
+
+/// M5 — Confiar en una carpeta canónica.
+#[tauri::command]
+fn workspace_trust_grant(
+    window: tauri::WebviewWindow,
+    path: String,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<String, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    trust.trust(&path)
+}
+
+/// M5 — Revocar confianza.
+#[tauri::command]
+fn workspace_trust_revoke(
+    window: tauri::WebviewWindow,
+    path: String,
+    trust: tauri::State<'_, workspace_trust::TrustStore>,
+) -> Result<(), String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    trust.revoke(&path)
 }
 
 /// Publica el documento activo de `main` para las ventanas de asistencia.
@@ -287,7 +439,23 @@ fn workspace_read_project_file(
     workspace::read_assistant(&state.get()?, &path)
 }
 
-/// Juzga un bloque del asistente. La carpeta es la activa; `path` no la cambia.
+fn auto_patch_args(
+    state: &workspace::ActiveWorkspace,
+    path: String,
+    line: u32,
+    host: String,
+    patch: String,
+) -> Result<Value, String> {
+    Ok(json!({
+        "root": state.get()?,
+        "path": path,
+        "line": line,
+        "host": host,
+        "patch": patch,
+    }))
+}
+
+/// Juzga un bloque del asistente **sin escribir**. La carpeta es la activa.
 #[tauri::command]
 fn judge_auto_patch(
     window: tauri::WebviewWindow,
@@ -302,14 +470,97 @@ fn judge_auto_patch(
     kernel_call(
         &kernel,
         "judge_patch",
+        auto_patch_args(&state, path, line, host, patch)?,
+    )
+}
+
+/// Escribe un bloque tras aceptación explícita; crea respaldo en `.bara-backup/`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // IPC Tauri: window/app/state/kernel + payload del juicio.
+fn confirm_auto_patch(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    path: String,
+    line: u32,
+    host: String,
+    patch: String,
+    judgment_id: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    let root = state.get()?;
+    // Misma puerta que el lote: IPC directo no escribe si el mapa bloquea o cae.
+    bara_kernel_host::gate_confirm_preview(&root, &path, &host, &patch, line)?;
+    let report = kernel_call(
+        &kernel,
+        "confirm_patch",
         json!({
             "root": state.get()?,
             "path": path,
             "line": line,
             "host": host,
             "patch": patch,
+            "judgment_id": judgment_id,
         }),
-    )
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(relative) = report.get("path").and_then(Value::as_str) {
+            emit_workspace_file_changed(&app, relative);
+        }
+    }
+    Ok(report)
+}
+
+/// Restaura un archivo desde un respaldo relativo bajo `.bara-backup/`.
+#[tauri::command]
+async fn undo_auto_patch(
+    window: tauri::WebviewWindow,
+    path: String,
+    backup_path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<Value, String> {
+    window_guard::require(&window, window_guard::MAIN)?;
+    let root = state.get()?;
+    let args = json!({
+        "root": root,
+        "path": path,
+        "backup_path": backup_path,
+    });
+    match kernel_call(&kernel, "undo_patch", args.clone()) {
+        Ok(value) => Ok(value),
+        Err(error) if error.contains("conflicto:") => {
+            let diff = error
+                .split_once("conflicto:")
+                .map(|(_, rest)| rest.trim())
+                .unwrap_or(error.as_str());
+            let body = format!(
+                "El archivo cambió después de aceptar. El disco no se ha tocado.\n\n{diff}\n\n¿Restaurar igualmente?"
+            );
+            let accepted = tauri::async_runtime::spawn_blocking(move || {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+                window
+                    .dialog()
+                    .message(body)
+                    .title("Conflicto al deshacer")
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::YesNo)
+                    .blocking_show()
+            })
+            .await
+            .map_err(|_| "el diálogo de conflicto se interrumpió".to_string())?;
+            if !accepted {
+                return Err("cancelado".to_string());
+            }
+            let mut forced = args;
+            if let Some(map) = forced.as_object_mut() {
+                map.insert("force".to_string(), Value::Bool(true));
+            }
+            kernel_call(&kernel, "undo_patch", forced)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Elige un `.gguf` en el diálogo del sistema y guarda sólo su cabecera.
@@ -356,17 +607,32 @@ fn local_complete(prompt: String, kernel: tauri::State<'_, KernelHost>) -> Resul
 /// Propaga un identificador por el grafo de la carpeta activa.
 #[tauri::command]
 fn transmute_global(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     path: String,
     from: String,
     to: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
-    kernel_call(
+    window_guard::require(&window, window_guard::MAIN)?;
+    let report = kernel_call(
         &kernel,
         "transmute_global",
         json!({ "root": state.get()?, "path": path, "from": from, "to": to }),
-    )
+    )?;
+    if report.get("applied").and_then(Value::as_bool) == Some(true) {
+        if let Some(files) = report.get("files").and_then(Value::as_array) {
+            for file in files {
+                if file.get("changed").and_then(Value::as_bool) == Some(true) {
+                    if let Some(relative) = file.get("path").and_then(Value::as_str) {
+                        emit_workspace_file_changed(&app, relative);
+                    }
+                }
+            }
+        }
+    }
+    Ok(report)
 }
 
 /// Aviso del hilo de reposo. Vacío si no hay una optimización limpia.
@@ -382,6 +648,7 @@ fn idle_proposal(slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>) -> Result
 #[tauri::command]
 fn idle_apply(
     window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     slot: tauri::State<'_, Mutex<idle_loop::IdleBridge>>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
@@ -394,16 +661,24 @@ fn idle_apply(
     let Some(notice) = notice else {
         return Ok(Value::Bool(false));
     };
+    let relative = notice
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let wrote = kernel_call(
         &kernel,
         "idle_apply",
         json!({
             "root": state.get()?,
-            "path": notice.get("path").and_then(Value::as_str).unwrap_or(""),
+            "path": relative,
             "name": notice.get("name").and_then(Value::as_str).unwrap_or(""),
             "message": notice.get("message").and_then(Value::as_str).unwrap_or(""),
         }),
     )?;
+    if wrote.as_bool() == Some(true) && !relative.is_empty() {
+        emit_workspace_file_changed(&app, &relative);
+    }
     if let Ok(mut guard) = slot.lock() {
         guard.clear();
     }
@@ -445,19 +720,77 @@ fn workspace_read_document(
     path: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
-    workspace::read(&state.get()?, &path)
+    // A4: cualquier extensión editable del lote (no sólo `.bara`).
+    workspace::read_text(&state.get()?, &path)
 }
 
-/// Guarda un `.bara` relativo a la raíz activa y devuelve el documento persistido.
+/// Guarda un documento editable relativo a la raíz activa (`.bara` u otros del lote).
 #[tauri::command]
 fn workspace_write_document(
     window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
     path: String,
     source: String,
+    expected_hash: Option<String>,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceDocument, String> {
     window_guard::require(&window, window_guard::WRITE)?;
-    workspace::write(&state.get()?, &path, &source)
+    let document =
+        workspace::write_source_checked(&state.get()?, &path, &source, expected_hash.as_deref())?;
+    emit_workspace_file_changed(&app, &document.path);
+    Ok(document)
+}
+
+/// Crea un archivo o carpeta relativo dentro de la jaula activa.
+#[tauri::command]
+fn workspace_create_entry(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    path: String,
+    kind: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<workspace::WorkspaceDocument, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    let document = workspace::create_entry(&state.get()?, &path, &kind)?;
+    emit_workspace_file_changed(&app, &document.path);
+    Ok(document)
+}
+
+/// Renombra o mueve una entrada relativa dentro de la jaula activa.
+#[tauri::command]
+fn workspace_rename_entry(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    from: String,
+    to: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<(), String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    workspace::rename_entry(&state.get()?, &from, &to)?;
+    emit_workspace_file_changed(&app, &to);
+    Ok(())
+}
+
+/// Borra (papelera `.bara-trash/`) tras confirmación en el front.
+#[tauri::command]
+fn workspace_delete_entry(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<String, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    let trash = workspace::delete_entry(&state.get()?, &path)?;
+    emit_workspace_file_changed(&app, &path);
+    Ok(trash)
+}
+
+/// Avisa a todas las ventanas de que un archivo del workspace cambió en disco.
+fn emit_workspace_file_changed(app: &tauri::AppHandle, path: &str) {
+    let _ = app.emit(
+        "workspace-file-changed",
+        json!({ "path": path.replace('\\', "/") }),
+    );
 }
 
 /// Suelta la malla y el oráculo de una carpeta en el proceso del kernel.
@@ -467,6 +800,7 @@ fn release_folder(kernel: &KernelHost, path: &str) {
 
 /// Instala una raíz ya validada por el diálogo o por el clon y purga la expulsada.
 fn adopt_root(state: &workspace::ActiveWorkspace, kernel: &KernelHost, root: String) {
+    let _ = git_workspace::ensure_bara_exclude(&root);
     if let Some(evicted) = state.set(root) {
         release_folder(kernel, &evicted);
     }
@@ -773,6 +1107,68 @@ async fn open_desk_window(app: tauri::AppHandle, vista: String) -> Result<(), St
         .map_err(|err| err.to_string())
 }
 
+/// La ventana de asistencia pide un diff en `main` (sin escribir).
+#[tauri::command]
+fn propose_editor_patch(app: tauri::AppHandle, patch: String) -> Result<(), String> {
+    let text = patch.trim();
+    if text.is_empty() {
+        return Err("el parche está vacío".to_string());
+    }
+    if text.len() > 32 * 1024 {
+        return Err("el parche supera 32 KiB".to_string());
+    }
+    app.emit("assistant-propose-patch", json!({ "patch": text }))
+        .map_err(|err| err.to_string())?;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_focus();
+    }
+    Ok(())
+}
+
+/// La ventana de asistencia envía un fragmento de contexto a `main` (solo memoria).
+#[tauri::command]
+fn propose_ai_desk_attachment(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    name: String,
+    source: String,
+) -> Result<(), String> {
+    window_guard::require(&window, window_guard::CHAT)?;
+    let label = name.trim();
+    let text = source.trim();
+    if label.is_empty() || text.is_empty() {
+        return Err("el fragmento está vacío".to_string());
+    }
+    if text.len() > 256 * 1024 {
+        return Err("el fragmento supera 256 KiB".to_string());
+    }
+    app.emit_to(
+        "main",
+        "ai-desk-attachment",
+        json!({ "name": label, "source": text, "bytes": text.len() }),
+    )
+    .map_err(|err| err.to_string())?;
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_focus();
+    }
+    Ok(())
+}
+
+/// Abre el inspector web. Requiere `--features devtools` (p. ej. `tauri dev`).
+#[tauri::command]
+fn open_devtools_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(feature = "devtools")]
+    {
+        window.open_devtools();
+        Ok(())
+    }
+    #[cfg(not(feature = "devtools"))]
+    {
+        let _ = window;
+        Err("DevTools desactivadas en este binario (release o sin feature)".to_string())
+    }
+}
+
 /// Estante de carpetas abiertas. Cada una es una jaula distinta.
 #[tauri::command]
 fn workspace_roots(
@@ -784,22 +1180,59 @@ fn workspace_roots(
 /// Activa una carpeta por el identificador que emitió el backend.
 #[tauri::command]
 fn workspace_activate(
+    app: tauri::AppHandle,
     id: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<workspace::WorkspaceShelf, String> {
-    state.activate(id.trim())
+    let shelf = state.activate(id.trim())?;
+    if let Ok(root) = state.get() {
+        let _ = git_workspace::ensure_bara_exclude(&root);
+        let _ = app.emit(
+            "workspace-root-changed",
+            json!({ "root": root, "reason": "activate" }),
+        );
+    }
+    Ok(shelf)
 }
 
 /// Cierra una carpeta del estante. La última permanece.
 #[tauri::command]
 fn workspace_close_root(
+    app: tauri::AppHandle,
     id: String,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceShelf, String> {
     let (path, shelf) = state.release(id.trim())?;
     release_folder(&kernel, &path);
+    if let Ok(root) = state.get() {
+        let _ = app.emit(
+            "workspace-root-changed",
+            json!({ "root": root, "reason": "close" }),
+        );
+    }
     Ok(shelf)
+}
+
+/// Readmite una carpeta reciente ya conocida (ruta absoluta existente).
+///
+/// Sirve para restaurar ≥2 proyectos tras reiniciar: el front sólo envía
+/// paths que guardó en locales; aquí se canonizan como en el diálogo.
+#[tauri::command]
+fn workspace_reopen(
+    app: tauri::AppHandle,
+    path: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+    kernel: tauri::State<'_, KernelHost>,
+) -> Result<workspace::WorkspaceShelf, String> {
+    let canonical = workspace::resolve_root(path.trim())?;
+    let root = workspace::path_to_api(&canonical);
+    adopt_root(&state, &kernel, root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": root, "reason": "reopen" }),
+    );
+    state.list()
 }
 
 /// Transmuta el árbol de la carpeta activa. La ruta no la elige el WebView.
@@ -854,8 +1287,12 @@ async fn workspace_open_dialog(
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<workspace::WorkspaceTree, String> {
     let folder = pick_folder(&app, "Abrir carpeta del workspace")?;
-    let tree = workspace::tree(&folder.display().to_string())?;
+    let tree = workspace::tree(&workspace::path_to_api(&folder))?;
     adopt_root(&state, &kernel, tree.root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": tree.root.clone(), "reason": "open" }),
+    );
     Ok(tree)
 }
 
@@ -882,8 +1319,12 @@ async fn github_clone(
     })
     .await
     .map_err(|_| "el clon se interrumpió".to_string())??;
-    let tree = workspace::tree(&cloned.display().to_string())?;
+    let tree = workspace::tree(&workspace::path_to_api(&cloned))?;
     adopt_root(&state, &kernel, tree.root.clone());
+    let _ = app.emit(
+        "workspace-root-changed",
+        json!({ "root": tree.root.clone(), "reason": "clone" }),
+    );
     Ok(tree)
 }
 
@@ -932,28 +1373,151 @@ fn ai_key_delete(
 }
 
 /// Llama al proveedor. La clave la pone este proceso; la respuesta ya viene limpia.
+/// B8: `ai_cancel_in_flight` cierra el socket del vuelo y este comando responde `cancelado`.
 #[tauri::command]
 async fn ai_exchange(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, Mutex<secrets::Session>>,
+    flight: tauri::State<'_, ai_flight::AiFlight>,
     provider: String,
     url: String,
     method: String,
     body: Option<String>,
 ) -> Result<ai_http::Exchange, String> {
     window_guard::require(&window, window_guard::CHAT)?;
-    let secret = {
-        let session = state
-            .lock()
-            .map_err(|_| "el llavero está ocupado".to_string())?;
-        secrets::lookup(&session, &secrets::System, &provider)?
+    // Clave atada al host: local/loopback sin secreto; nube sólo a su host oficial.
+    let secret = match ai_http::politica_clave(&provider, &url)? {
+        ai_http::PoliticaClave::SinSecreto => String::new(),
+        ai_http::PoliticaClave::Exigir => {
+            let session = state
+                .lock()
+                .map_err(|_| "el llavero está ocupado".to_string())?;
+            secrets::lookup(&session, &secrets::System, &provider)?
+        }
     };
     let payload = body.unwrap_or_default();
-    tauri::async_runtime::spawn_blocking(move || {
-        ai_http::exchange(&provider, &url, &method, &payload, &secret)
+    let _stay = flight.enter();
+    if flight.is_cancelled() {
+        return Err("cancelado".to_string());
+    }
+    let handle = flight.handle();
+    let mut work = tauri::async_runtime::spawn_blocking(move || {
+        ai_http::exchange_with(&provider, &url, &method, &payload, &secret, Some(&handle))
+    });
+    loop {
+        tokio::select! {
+            result = &mut work => {
+                return result.map_err(|_| "la llamada al proveedor se interrumpió".to_string())?;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(40)) => {
+                if flight.is_cancelled() {
+                    return Err("cancelado".to_string());
+                }
+            }
+        }
+    }
+}
+
+/// B8 — Detener: cancela la espera de `ai_exchange` en el proceso Rust.
+#[tauri::command]
+fn ai_cancel_in_flight(flight: tauri::State<'_, ai_flight::AiFlight>) {
+    flight.request_cancel();
+}
+
+/// Nuevo turno. No borra un Detener si `ai_exchange` sigue dentro de `enter`.
+#[tauri::command]
+fn ai_arm_turn(flight: tauri::State<'_, ai_flight::AiFlight>) {
+    flight.arm_turn();
+}
+
+/// A6 — estado porcelain del repo en la raíz activa.
+#[tauri::command]
+fn git_status(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitStatusReport, String> {
+    git_workspace::status(&state.get()?)
+}
+
+#[tauri::command]
+fn git_diff(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitDiffReport, String> {
+    git_workspace::diff(&state.get()?)
+}
+
+#[tauri::command]
+fn git_branches(
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitBranchReport, String> {
+    git_workspace::branches(&state.get()?)
+}
+
+/// El bool del WebView no existe: la lista sale en un diálogo nativo Sí/No.
+#[tauri::command]
+async fn git_commit(
+    window: tauri::WebviewWindow,
+    message: String,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitCommitReport, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    let root = state.get()?;
+    let preview = git_workspace::stage_for_commit(&root)?;
+    if preview.files.is_empty() {
+        return Err("no hay cambios para confirmar".to_string());
+    }
+    let body = git_workspace::commit_dialog_text(&preview);
+    let kind = if preview.secrets.is_empty() {
+        tauri_plugin_dialog::MessageDialogKind::Warning
+    } else {
+        tauri_plugin_dialog::MessageDialogKind::Error
+    };
+    let accepted = tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        window
+            .dialog()
+            .message(body)
+            .title("Confirmar commit")
+            .kind(kind)
+            .buttons(MessageDialogButtons::YesNo)
+            .blocking_show()
     })
     .await
-    .map_err(|_| "la llamada al proveedor se interrumpió".to_string())?
+    .map_err(|_| "el diálogo de commit se interrumpió".to_string())?;
+    git_workspace::finish_commit(&root, &message, accepted)
+}
+
+#[tauri::command]
+fn git_checkout(
+    window: tauri::WebviewWindow,
+    name: String,
+    create: bool,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<git_workspace::GitBranchReport, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    git_workspace::checkout(&state.get()?, &name, create)
+}
+
+/// A9 — GB libres en C: (o proxy en CI).
+#[tauri::command]
+fn disk_free_check(min_gb: Option<f64>) -> Result<disk_guard::DiskFreeReport, String> {
+    disk_guard::free_check(min_gb.unwrap_or(8.0))
+}
+
+/// A9 — limpia target\debug (+ vite cache) del workspace activo.
+#[tauri::command]
+fn disk_clean_safe(
+    window: tauri::WebviewWindow,
+    min_gb: Option<f64>,
+    state: tauri::State<'_, workspace::ActiveWorkspace>,
+) -> Result<disk_guard::DiskCleanReport, String> {
+    window_guard::require(&window, window_guard::WRITE)?;
+    disk_guard::clean_safe(&state.get()?, min_gb.unwrap_or(8.0))
+}
+
+/// B8 — Detener: mata el sidecar del kernel (p. ej. `local_complete` en vuelo).
+#[tauri::command]
+fn kernel_interrupt(kernel: tauri::State<'_, KernelHost>) {
+    kernel.interrupt();
 }
 
 /// Sonda DNS→TCP→TLS→HTTP→modelos. La clave no vuelve al WebView.
@@ -965,11 +1529,14 @@ async fn ai_probe_connection(
     base_url: String,
 ) -> Result<ai_http::ProbeReport, String> {
     window_guard::require(&window, window_guard::CHAT)?;
-    let secret = {
-        let session = state
-            .lock()
-            .map_err(|_| "el llavero está ocupado".to_string())?;
-        secrets::lookup(&session, &secrets::System, &provider)?
+    let secret = match ai_http::politica_clave(&provider, &base_url)? {
+        ai_http::PoliticaClave::SinSecreto => String::new(),
+        ai_http::PoliticaClave::Exigir => {
+            let session = state
+                .lock()
+                .map_err(|_| "el llavero está ocupado".to_string())?;
+            secrets::lookup(&session, &secrets::System, &provider)?
+        }
     };
     tauri::async_runtime::spawn_blocking(move || {
         Ok(ai_http::probe_connection(&provider, &base_url, &secret))
@@ -1010,8 +1577,10 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(kernel)
         .manage(workspace::ActiveWorkspace::bootstrap())
+        .manage(workspace_trust::TrustStore::load_default())
         .manage(Mutex::new(idle_loop::IdleBridge::new()))
         .manage(Mutex::new(secrets::Session::default()))
+        .manage(ai_flight::AiFlight::new())
         .manage(editor_bridge::EditorBridge::new())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -1022,6 +1591,8 @@ pub fn run() {
                 .handle()
                 .emit("kernel-host", app.state::<KernelHost>().status().label());
             idle_loop::start(app.handle().clone());
+            // DevTools: en debug (o `--features devtools`) el front puede abrirlas
+            // con F12 / Ctrl+Shift+I. Release sin la feature no enlaza el inspector.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1034,11 +1605,18 @@ pub fn run() {
             workspace_tree,
             workspace_read_document,
             workspace_write_document,
+            workspace_create_entry,
+            workspace_rename_entry,
+            workspace_delete_entry,
             workspace_open_dialog,
             workspace_roots,
             workspace_activate,
             workspace_close_root,
+            workspace_reopen,
             open_desk_window,
+            propose_editor_patch,
+            propose_ai_desk_attachment,
+            open_devtools_window,
             transmute_workspace,
             inspect_media_dialog,
             github_clone,
@@ -1072,12 +1650,23 @@ pub fn run() {
             transmute_input,
             get_local_completions,
             get_workspace_topology_graph,
+            live_map_snapshot,
+            live_map_impact,
+            live_map_gate,
+            live_map_apply_batch,
+            live_map_context,
             workspace_source_text,
             workspace_read_project_file,
             editor_context_publish,
             editor_context_get,
             run_workspace_recipe,
+            workspace_trust_list,
+            workspace_trust_is_trusted,
+            workspace_trust_grant,
+            workspace_trust_revoke,
             judge_auto_patch,
+            confirm_auto_patch,
+            undo_auto_patch,
             load_local_weights,
             local_complete,
             transmute_global,
@@ -1088,8 +1677,18 @@ pub fn run() {
             ai_key_exists,
             ai_key_delete,
             ai_exchange,
+            ai_cancel_in_flight,
+            ai_arm_turn,
             ai_probe_connection,
-            kernel_host_status
+            kernel_host_status,
+            kernel_interrupt,
+            git_status,
+            git_diff,
+            git_branches,
+            git_commit,
+            git_checkout,
+            disk_free_check,
+            disk_clean_safe,
         ])
         .run(tauri::generate_context!())
     {
@@ -1102,6 +1701,7 @@ pub fn run() {
 mod ipc_boundary {
     #[test]
     fn la_cli_y_la_pty_no_entran_en_el_handler() {
+        // Guarda estructural: el handler es una macro; no hay comportamiento que invocar.
         let src = include_str!("lib.rs");
         let handler = src
             .split_once("generate_handler!")
@@ -1112,17 +1712,38 @@ mod ipc_boundary {
             .0;
         assert!(handler.contains("oracle_converse"));
         assert!(handler.contains("open_desk_window"));
+        assert!(handler.contains("propose_editor_patch"));
+        assert!(handler.contains("open_devtools_window"));
         assert!(handler.contains("workspace_activate"));
+        assert!(handler.contains("workspace_create_entry"));
+        assert!(handler.contains("workspace_rename_entry"));
+        assert!(handler.contains("workspace_delete_entry"));
+        assert!(
+            include_str!("lib.rs").contains("\"workspace-root-changed\""),
+            "activar/reabrir debe emitir workspace-root-changed"
+        );
+        assert!(handler.contains("workspace_reopen"));
         assert!(handler.contains("transmute_workspace"));
         assert!(handler.contains("inspect_media_dialog"));
         assert!(handler.contains("get_local_completions"));
         assert!(handler.contains("get_workspace_topology_graph"));
+        assert!(handler.contains("live_map_snapshot"));
+        assert!(handler.contains("live_map_impact"));
+        assert!(handler.contains("live_map_gate"));
+        assert!(handler.contains("live_map_apply_batch"));
+        assert!(handler.contains("live_map_context"));
         assert!(handler.contains("workspace_source_text"));
         assert!(handler.contains("workspace_read_project_file"));
         assert!(handler.contains("editor_context_publish"));
         assert!(handler.contains("editor_context_get"));
         assert!(handler.contains("run_workspace_recipe"));
+        assert!(handler.contains("workspace_trust_list"));
+        assert!(handler.contains("workspace_trust_is_trusted"));
+        assert!(handler.contains("workspace_trust_grant"));
+        assert!(handler.contains("workspace_trust_revoke"));
         assert!(handler.contains("judge_auto_patch"));
+        assert!(handler.contains("confirm_auto_patch"));
+        assert!(handler.contains("undo_auto_patch"));
         assert!(handler.contains("load_local_weights"));
         assert!(handler.contains("local_complete"));
         assert!(handler.contains("transmute_global"));
@@ -1133,8 +1754,11 @@ mod ipc_boundary {
         assert!(handler.contains("ai_key_exists"));
         assert!(handler.contains("ai_key_delete"));
         assert!(handler.contains("ai_exchange"));
+        assert!(handler.contains("ai_cancel_in_flight"));
+        assert!(handler.contains("ai_arm_turn"));
         assert!(handler.contains("ai_probe_connection"));
         assert!(handler.contains("kernel_host_status"));
+        assert!(handler.contains("kernel_interrupt"));
         assert!(!handler.contains("read_source"));
         assert!(super::desk_spec("topology").is_some());
         assert!(super::desk_spec("ai-workspace").is_some());
@@ -1147,13 +1771,21 @@ mod ipc_boundary {
 
     #[test]
     fn el_webview_no_puede_imponer_una_raiz() {
+        // Guarda estructural: las firmas no aceptan una raíz que el test pueda llamar.
         let src = include_str!("lib.rs");
         for name in [
             "fn workspace_tree(",
             "fn workspace_read_document(",
             "fn workspace_write_document(",
+            "fn workspace_create_entry(",
+            "fn workspace_rename_entry(",
+            "fn workspace_delete_entry(",
             "fn get_local_completions(",
             "fn get_workspace_topology_graph(",
+            "fn live_map_snapshot(",
+            "fn live_map_impact(",
+            "fn live_map_gate(",
+            "fn live_map_context(",
             "fn workspace_source_text(",
             "fn workspace_read_project_file(",
             "fn editor_context_publish(",
@@ -1229,16 +1861,31 @@ mod ipc_boundary {
                 assert!(!has_write, "{label} no escribe el workspace");
             }
             if label == "ai-workspace" {
-                assert!(has_llavero, "la asistencia necesita el llavero");
+                assert!(
+                    !has_llavero,
+                    "la asistencia no toca el llavero ni llama al modelo"
+                );
                 assert!(!has_receta, "la asistencia no lanza recetas");
                 assert!(!has_github, "la asistencia no clona");
-                // A3: Ctrl+S / edición en el escritorio de asistencia.
-                assert!(has_write, "la asistencia debe poder guardar el workspace");
+                // A2: Asistencia no escribe a disco; solo adjuntos al chat principal.
+                assert!(!has_write, "la asistencia no guarda el workspace");
             }
             if label == "main" {
                 assert!(has_llavero && has_receta && has_github && has_write);
             }
         }
+        let llavero = include_str!("../permissions/llavero.toml");
+        let kernel_perms = include_str!("../permissions/kernel.toml");
+        assert!(
+            llavero.contains("allow-ai-cancel-in-flight"),
+            "Detener necesita cancelar el HTTP en el set llavero"
+        );
+        assert!(
+            kernel_perms.contains("allow-kernel-interrupt"),
+            "Detener necesita interrumpir el kernel"
+        );
+        let main = std::fs::read_to_string(dir.join("main.json")).expect("main");
+        assert!(main.contains("\"llavero\"") && main.contains("\"kernel\""));
         for expected in [
             "main",
             "topology",
@@ -1276,6 +1923,26 @@ mod ipc_boundary {
             );
         }
         assert!(!production.contains("https:"));
+        // B12: producción sin loopback Vite; `http://ipc.localhost` (IPC) sí vale.
+        let prod_connect = connect_src(production);
+        assert!(
+            !prod_connect.split_whitespace().any(|token| {
+                token.starts_with("http://localhost")
+                    || token.starts_with("http://127.0.0.1")
+                    || token.starts_with("ws://localhost")
+                    || token.starts_with("ws://127.0.0.1")
+            }),
+            "csp de producción no debe abrir loopback Vite: {prod_connect}"
+        );
+        assert!(
+            prod_connect.contains("http://ipc.localhost") || prod_connect.contains("ipc:"),
+            "csp de producción debe conservar el canal IPC"
+        );
+        let dev_connect = connect_src(csp_value(conf, "devCsp"));
+        assert!(
+            dev_connect.contains("http://localhost") || dev_connect.contains("127.0.0.1"),
+            "devCsp debe permitir Vite en localhost"
+        );
         assert!(!origen_https_concreto("https:"));
         assert!(!origen_https_concreto("https://"));
         assert!(!origen_https_concreto("https://*"));

@@ -9,6 +9,7 @@
 
 # Sidecar del kernel: lo genera scripts/stage-kernel-host.py antes de empaquetar.
 /src-tauri/binaries/
+/kernel-host/target/
 
 # Contenedor Android (Gradle): se versiona el proyecto, no sus artefactos.
 /src-tauri/gen/android/.gradle
@@ -23,6 +24,9 @@
 .env.local
 .env.*.local
 !.env.example
+
+# Patch local del kernel (path ../BAR). Ver Cargo.toml.local.example.
+/Cargo.toml.local
 
 **/__pycache__/
 

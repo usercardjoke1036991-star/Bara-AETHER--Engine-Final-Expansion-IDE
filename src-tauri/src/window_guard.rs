@@ -3,11 +3,13 @@
 
 #![forbid(unsafe_code)]
 
-/// Ventanas que alojan el chat y pueden tocar el llavero o `ai_exchange`.
-pub const CHAT: &[&str] = &["main", "ai-workspace"];
+/// Sólo la ventana principal toca el llavero o `ai_exchange`.
+/// Asistencia no llama al modelo ni lee la clave.
+pub const CHAT: &[&str] = &["main"];
 
-/// Escritura de documentos `.bara` del workspace (principal y asistencia).
-pub const WRITE: &[&str] = &["main", "ai-workspace"];
+/// Escritura de documentos `.bara` del workspace: sólo la ventana principal.
+/// Asistencia envía adjuntos al chat; no guarda a disco.
+pub const WRITE: &[&str] = &["main"];
 
 /// Sólo la ventana principal clona, lanza recetas o abre escritorios.
 pub const MAIN: &[&str] = &["main"];
@@ -29,18 +31,18 @@ pub fn require(window: &tauri::WebviewWindow, allowed: &[&str]) -> Result<(), St
 #[cfg(test)]
 mod tests {
     #[test]
-    fn el_chat_cubre_main_y_asistencia() {
-        assert!(super::CHAT.contains(&"main"));
-        assert!(super::CHAT.contains(&"ai-workspace"));
+    fn el_chat_y_el_llavero_quedan_en_main() {
+        assert_eq!(super::CHAT, &["main"]);
+        assert!(!super::CHAT.contains(&"ai-workspace"));
         assert!(!super::CHAT.contains(&"topology"));
         assert!(!super::CHAT.contains(&"telemetry"));
         assert!(!super::CHAT.contains(&"autopoiesis"));
     }
 
     #[test]
-    fn la_escritura_cubre_main_y_asistencia() {
-        assert!(super::WRITE.contains(&"main"));
-        assert!(super::WRITE.contains(&"ai-workspace"));
+    fn la_escritura_queda_en_main() {
+        assert_eq!(super::WRITE, &["main"]);
+        assert!(!super::WRITE.contains(&"ai-workspace"));
         assert!(!super::WRITE.contains(&"topology"));
     }
 

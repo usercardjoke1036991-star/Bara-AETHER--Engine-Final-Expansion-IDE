@@ -869,6 +869,7 @@ mod tests {
 
     #[test]
     fn el_modulo_no_abre_la_red() {
+        // Guarda estructural: la ausencia de red no tiene un efecto observable en rank.
         let src = include_str!("completion.rs");
         let production = src.split("mod tests").next().unwrap_or(src);
         let lower = production.to_ascii_lowercase();
