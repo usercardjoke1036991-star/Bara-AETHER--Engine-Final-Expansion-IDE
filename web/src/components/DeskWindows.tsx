@@ -96,6 +96,10 @@ function TelemetryDesk() {
         setSource(snap.source);
       }
     }).then((unlisten) => {
+      if (!alive) {
+        unlisten();
+        return;
+      }
       stop = unlisten;
     });
     return () => {
@@ -169,6 +173,10 @@ function AutopoiesisDesk() {
         project(snap.source);
       }
     }).then((unlisten) => {
+      if (!alive) {
+        unlisten();
+        return;
+      }
       stop = unlisten;
     });
     return () => {
@@ -398,6 +406,10 @@ function AiDesk() {
         applySnapshot(snap);
       }
     }).then((unlisten) => {
+      if (!alive) {
+        unlisten();
+        return;
+      }
       stop = unlisten;
     });
     return () => {
