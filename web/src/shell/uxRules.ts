@@ -1,18 +1,5 @@
 // Reglas de usabilidad comprobables sin Tauri.
-
-/** Selectores que no deben anidar overflow:auto/scroll entre sí en el workbench. */
-export const FORBIDDEN_NESTED_SCROLL_PAIR = [
-  [".ide-shell", ".ide-workbench"],
-  [".title-bar", ".ide-center"],
-] as const;
-
-export function isNestedScrollViolation(
-  parentOverflow: string,
-  childOverflow: string,
-): boolean {
-  const scrollish = (value: string) => value === "auto" || value === "scroll";
-  return scrollish(parentOverflow) && scrollish(childOverflow);
-}
+// El anidado de scroll lo cubre el montaje en scrollShell.test.tsx.
 
 /**
  * Esc dentro del editor, un textarea o un input no cierra paneles.

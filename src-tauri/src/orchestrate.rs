@@ -437,6 +437,7 @@ mod tests {
 
     #[test]
     fn el_modulo_no_abre_un_shell() {
+        // Guarda estructural: el resto del test sí ejecuta spec; estas líneas miran el fuente.
         let source = include_str!("orchestrate.rs");
         let production = source.split("mod tests").next().unwrap_or(source);
         assert!(!production.contains("sh -c"));

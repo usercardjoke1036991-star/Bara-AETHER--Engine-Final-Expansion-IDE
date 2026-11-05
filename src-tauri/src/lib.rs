@@ -1701,6 +1701,7 @@ pub fn run() {
 mod ipc_boundary {
     #[test]
     fn la_cli_y_la_pty_no_entran_en_el_handler() {
+        // Guarda estructural: el handler es una macro; no hay comportamiento que invocar.
         let src = include_str!("lib.rs");
         let handler = src
             .split_once("generate_handler!")
@@ -1770,6 +1771,7 @@ mod ipc_boundary {
 
     #[test]
     fn el_webview_no_puede_imponer_una_raiz() {
+        // Guarda estructural: las firmas no aceptan una raíz que el test pueda llamar.
         let src = include_str!("lib.rs");
         for name in [
             "fn workspace_tree(",

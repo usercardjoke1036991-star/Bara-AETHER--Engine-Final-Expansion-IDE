@@ -315,6 +315,7 @@ mod tests {
 
     #[test]
     fn a9_no_finge_16_gib() {
+        // Guarda estructural: el espacio libre sale del sistema; 16 GiB fijos no son un caso.
         let src = include_str!("disk_guard.rs");
         let fake = format!("{} * {} * {} * {}", 16, 1024, 1024, 1024);
         assert!(!src.contains(&fake), "el espacio libre no se inventa");

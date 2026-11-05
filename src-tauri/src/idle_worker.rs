@@ -102,6 +102,7 @@ mod tests {
 
     #[test]
     fn el_modulo_no_escribe_desde_el_hilo_de_arranque() {
+        // Guarda estructural: el hilo de arranque no expone una escritura que invocar.
         let source = include_str!("idle_worker.rs");
         let production = source.split("mod tests").next().unwrap_or(source);
         let thread_half = production.split("pub fn seek").next().unwrap_or(production);
