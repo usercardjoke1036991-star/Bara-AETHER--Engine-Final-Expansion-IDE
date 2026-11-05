@@ -874,7 +874,7 @@ pub fn rename_entry(root: &str, from: &str, to: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Mueve a `.bara-trash/` (papelera local) o borra si no se puede mover.
+/// Mueve a `.bara-trash/`. Si el traslado falla, no borra: el archivo sigue en su sitio.
 pub fn delete_entry(root: &str, relative: &str) -> Result<String, String> {
     if assistant_path_denied(relative) {
         return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
@@ -906,19 +906,28 @@ pub fn delete_entry(root: &str, relative: &str) -> Result<String, String> {
         return Err("la papelera quedó fuera de la jaula".to_string());
     }
     let trash_rel = format!(".bara-trash/{trash_name}");
-    match fs::rename(&source, &trash_path) {
+    match relocate_to_trash(&source, &trash_path) {
         Ok(()) => Ok(normalize_relative(&trash_rel)),
-        Err(_) => {
-            if source.is_dir() {
-                fs::remove_dir_all(&source)
-                    .map_err(|err| format!("no se pudo borrar «{relative}»: {err}"))?;
-            } else {
-                fs::remove_file(&source)
-                    .map_err(|err| format!("no se pudo borrar «{relative}»: {err}"))?;
-            }
-            Ok(String::new())
-        }
+        Err(err) => Err(format!(
+            "archivo en uso, ciérralo e inténtalo de nuevo ({err})"
+        )),
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TRASH_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn relocate_to_trash(source: &Path, trash: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if TRASH_FAIL.get() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "rename simulado",
+        ));
+    }
+    fs::rename(source, trash)
 }
 
 /// Escribe bytes: `create_new` si el archivo no existe; truncado seguro si ya existe.
@@ -1240,6 +1249,22 @@ mod tests {
         assert_eq!(tree.entries[0].children[0].path, "src/main.bara");
         assert!(tree.entries[0].children[0].bara);
 
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
+    fn n8_si_la_papelera_falla_el_archivo_sigue() {
+        let root = scratch("trash");
+        fs::write(root.join("src.rs"), "fn a() {}\n").expect("src");
+        let root_s = root.to_str().expect("utf8");
+        TRASH_FAIL.set(true);
+        let err = delete_entry(root_s, "src.rs").expect_err("rename");
+        TRASH_FAIL.set(false);
+        assert!(err.contains("archivo en uso"), "{err}");
+        assert_eq!(
+            fs::read_to_string(root.join("src.rs")).expect("sigue"),
+            "fn a() {}\n"
+        );
         fs::remove_dir_all(&root).expect("limpiar");
     }
 
