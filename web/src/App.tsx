@@ -26,6 +26,7 @@ import {
 import PortalMenu, { type PortalMenuItem } from "./shell/PortalMenu";
 import DraftConflictDialog from "./shell/DraftConflictDialog";
 import UnsavedRootDialog, { unsavedTabs } from "./shell/UnsavedRootDialog";
+import AppVersion from "./shell/AppVersion";
 import StatusBar from "./shell/StatusBar";
 import BottomTabStrip from "./shell/BottomTabs";
 import ErrorBanner from "./shell/ErrorBanner";
@@ -1940,6 +1941,9 @@ export default function App() {
               {sideMode === "settings" ? (
                 <div className="side-settings">
                   <p className="muted">Ajustes rápidos del escritorio.</p>
+                  <p className="muted">
+                    Versión <AppVersion />
+                  </p>
                   <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
                     <input
                       type="checkbox"

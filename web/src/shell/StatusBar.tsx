@@ -1,5 +1,7 @@
 // Barra de estado inferior: ítems clicables.
 
+import AppVersion from "./AppVersion";
+
 interface StatusBarProps {
   fileLabel: string;
   kernel: string;
@@ -55,6 +57,9 @@ export default function StatusBar({
       <button type="button" className="status-item" title="Tokens del análisis" onClick={onTokens}>
         {tokenCount === null ? "tokens —" : `${tokenCount} tokens`}
       </button>
+      <span className="status-version">
+        <AppVersion />
+      </span>
     </footer>
   );
 }

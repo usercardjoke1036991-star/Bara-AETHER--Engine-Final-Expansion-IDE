@@ -222,6 +222,50 @@ describe("ChatPanel Aceptar / Rechazar / Deshacer", () => {
     expect(onJudge).toHaveBeenCalled();
   });
 
+  it("el aviso rojo es status, deja el alert al mapa y no llama al modelo", async () => {
+    vi.mocked(liveMapGate).mockResolvedValueOnce({
+      ok: false,
+      impact: {
+        focus: ["doc.bara"],
+        filesAffected: 1,
+        testsAffected: 0,
+        related: ["doc.bara"],
+        summary: "afecta a 1 archivo(s)",
+      },
+      broken: [{ path: "doc.bara", target: "lib", detail: "roto" }],
+      blockReason: "el cambio rompería imports",
+    });
+    const onJudge = vi.fn(async () => reviewReport());
+    render(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource="ברא\n"
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        acceptRemotePatches
+        onJudge={onJudge}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(listenHandler.current).not.toBeNull();
+    });
+    listenHandler.current?.({ payload: { patch: "ברא\n" } });
+
+    const warn = await screen.findByText("Este cambio NO está verificado");
+    expect(warn.getAttribute("role")).toBe("status");
+    expect(screen.getByRole("button", { name: "Aceptar" })).toBeTruthy();
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.textContent ?? "").toMatch(/rompería imports/);
+    expect(alerts[0]?.contains(warn)).toBe(false);
+    expect(onJudge).toHaveBeenCalled();
+    expect(sendChat).not.toHaveBeenCalled();
+  });
+
   it("si el mapa cae al revalidar, Aceptar no confirma", async () => {
     const onJudge = vi.fn(async () => reviewReport());
     const onConfirm = vi.fn();

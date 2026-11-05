@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import type { BottomTab } from "./layoutState";
+import PortalMenu from "./PortalMenu";
 
 const TAB_SLOT_PX = 112;
 
@@ -29,6 +30,8 @@ export default function BottomTabStrip({
   controls,
 }: BottomTabStripProps) {
   const host = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const moreId = useId();
   const [measured, setMeasured] = useState(slots ?? tabs.length);
   const [menu, setMenu] = useState(false);
 
@@ -78,8 +81,11 @@ export default function BottomTabStrip({
       <div className="bottom-controls">
         {overflow.length > 0 ? (
           <button
+            ref={moreRef}
+            id={moreId}
             type="button"
             aria-label="Más pestañas"
+            aria-haspopup="menu"
             aria-expanded={menu}
             className={overflowActive ? "active" : undefined}
             onClick={() => setMenu((open) => !open)}
@@ -88,25 +94,19 @@ export default function BottomTabStrip({
           </button>
         ) : null}
         {controls}
-        {menu && overflow.length > 0 ? (
-          <ul className="bottom-tab-menu" role="menu">
-            {overflow.map(([id, label]) => (
-              <li key={id} role="none">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={active === id ? "active" : undefined}
-                  onClick={() => {
-                    onSelect(id);
-                    setMenu(false);
-                  }}
-                >
-                  {label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <PortalMenu
+          open={menu && overflow.length > 0}
+          anchor={moreRef.current}
+          labelledBy={moreId}
+          autoFocus
+          items={overflow.map(([id, label]) => ({
+            id,
+            label,
+            active: active === id,
+            onSelect: () => onSelect(id),
+          }))}
+          onClose={() => setMenu(false)}
+        />
       </div>
     </div>
   );

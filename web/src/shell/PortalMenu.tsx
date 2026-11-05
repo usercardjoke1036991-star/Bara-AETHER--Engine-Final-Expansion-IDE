@@ -7,6 +7,7 @@ export interface PortalMenuItem {
   id: string;
   label: string;
   description?: string;
+  active?: boolean;
   onSelect: () => void;
 }
 
@@ -16,6 +17,8 @@ interface PortalMenuProps {
   items: PortalMenuItem[];
   onClose: () => void;
   labelledBy?: string;
+  /** Mueve el foco al primer ítem y lo devuelve al ancla con Esc. */
+  autoFocus?: boolean;
 }
 
 export function placePortalMenu(input: {
@@ -51,7 +54,14 @@ export function placePortalMenu(input: {
   };
 }
 
-export default function PortalMenu({ open, anchor, items, onClose, labelledBy }: PortalMenuProps) {
+export default function PortalMenu({
+  open,
+  anchor,
+  items,
+  onClose,
+  labelledBy,
+  autoFocus = false,
+}: PortalMenuProps) {
   const menuRef = useRef<HTMLUListElement>(null);
   const [pos, setPos] = useState({
     top: 0,
@@ -78,7 +88,10 @@ export default function PortalMenu({ open, anchor, items, onClose, labelledBy }:
         viewportHeight: window.innerHeight,
       }),
     );
-  }, [open, anchor, items.length]);
+    if (autoFocus) {
+      menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
+    }
+  }, [open, anchor, items.length, autoFocus]);
 
   useEffect(() => {
     if (!open) {
@@ -88,6 +101,9 @@ export default function PortalMenu({ open, anchor, items, onClose, labelledBy }:
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        if (autoFocus && anchor instanceof HTMLElement) {
+          anchor.focus();
+        }
         onClose();
       }
     }
@@ -107,7 +123,7 @@ export default function PortalMenu({ open, anchor, items, onClose, labelledBy }:
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("mousedown", onPointer, true);
     };
-  }, [open, onClose, anchor]);
+  }, [open, onClose, anchor, autoFocus]);
 
   if (!open || typeof document === "undefined") {
     return null;
@@ -132,7 +148,7 @@ export default function PortalMenu({ open, anchor, items, onClose, labelledBy }:
           <button
             type="button"
             role="menuitem"
-            className="portal-menu-item"
+            className={item.active ? "portal-menu-item active" : "portal-menu-item"}
             onClick={() => {
               item.onSelect();
               onClose();

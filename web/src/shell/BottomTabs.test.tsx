@@ -50,7 +50,45 @@ describe("pestañas del panel inferior", () => {
     expect(controls?.closest(".bottom-tabs")).toBeNull();
     expect(screen.getByRole("button", { name: "Minimizar panel" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Más pestañas" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Núcleo" }));
+    const item = screen.getByRole("menuitem", { name: "Núcleo" });
+    expect(item.closest(".bottom-panel")).toBeNull();
+    const menu = item.closest('[role="menu"]');
+    expect(menu?.parentElement).toBe(document.body);
+    fireEvent.click(item);
     expect(onSelect).toHaveBeenCalledWith("nucleo");
+  });
+
+  it("el menú » sale del panel con overflow y se cierra con Esc o un clic fuera", () => {
+    const view = render(
+      <div className="bottom-panel" style={{ overflow: "hidden", height: 40 }}>
+        <BottomTabStrip
+          tabs={tabs}
+          active="resumen"
+          slots={3}
+          onSelect={vi.fn()}
+          controls={
+            <button type="button" aria-label="Cerrar panel">
+              ×
+            </button>
+          }
+        />
+      </div>,
+    );
+    const opener = screen.getByRole("button", { name: "Más pestañas" });
+    fireEvent.click(opener);
+    const item = screen.getByRole("menuitem", { name: "Núcleo" });
+    const panel = view.container.querySelector(".bottom-panel");
+    expect(panel?.contains(item)).toBe(false);
+    expect(document.body.contains(item)).toBe(true);
+    const menu = item.closest('[role="menu"]');
+    expect(menu?.parentElement).toBe(document.body);
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Git" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menuitem", { name: "Núcleo" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    fireEvent.click(opener);
+    expect(screen.getByRole("menuitem", { name: "Bilattice" })).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });
