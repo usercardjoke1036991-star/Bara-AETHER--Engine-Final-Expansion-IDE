@@ -915,17 +915,23 @@ pub fn delete_entry(root: &str, relative: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+fn trash_fail_init() -> bool {
+    // `black_box` no es const. En windows-gnu clippy marca un falso positivo
+    // (`missing_const_for_thread_local`) aunque el inicializador ya sea
+    // `const { ... }`; en Ubuntu, un inicializador que sí puede ser const
+    // dispara el mismo lint. Así queda en silencio en los dos.
+    std::hint::black_box(false)
+}
+
+#[cfg(test)]
 thread_local! {
-    static TRASH_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TRASH_FAIL: std::cell::Cell<bool> = std::cell::Cell::new(trash_fail_init());
 }
 
 fn relocate_to_trash(source: &Path, trash: &Path) -> std::io::Result<()> {
     #[cfg(test)]
     if TRASH_FAIL.get() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "rename simulado",
-        ));
+        return Err(std::io::Error::other("rename simulado"));
     }
     fs::rename(source, trash)
 }
