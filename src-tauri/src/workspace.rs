@@ -612,6 +612,19 @@ fn assistant_path_denied(relative: &str) -> bool {
     if lower.ends_with(".key") || lower.ends_with(".pem") {
         return true;
     }
+    if lower.starts_with("id_rsa") || lower.starts_with("id_ed25519") {
+        return true;
+    }
+    const SECRET_SUFFIXES: &[&str] = &[".pfx", ".p12", ".keystore", ".jks"];
+    if SECRET_SUFFIXES.iter().any(|suffix| lower.ends_with(suffix)) {
+        return true;
+    }
+    if matches!(
+        lower.as_str(),
+        ".npmrc" | ".pypirc" | ".git-credentials" | "keystore.properties" | ".netrc"
+    ) {
+        return true;
+    }
     lower.contains("secret") || lower.contains("credential")
 }
 
@@ -1576,6 +1589,38 @@ mod tests {
             read_assistant(root_s, ".bara-trash/nota.md").is_err(),
             "el asistente no lee la papelera"
         );
+        fs::remove_dir_all(&root).expect("limpiar");
+    }
+
+    #[test]
+    fn m6_cada_patron_sensible_esta_bloqueado() {
+        let root = scratch("m6-deny");
+        let root_s = root.to_str().expect("utf-8");
+        let blocked = [
+            "id_rsa",
+            "id_rsa.pub",
+            "keys/id_ed25519",
+            "keys/id_ed25519.pub",
+            "certs/server.pfx",
+            "certs/server.p12",
+            "app.keystore",
+            "app.jks",
+            ".npmrc",
+            "tools/.pypirc",
+            ".git-credentials",
+            "keystore.properties",
+            ".netrc",
+        ];
+        for pattern in blocked {
+            let err = read_text(root_s, pattern).expect_err(pattern);
+            assert!(
+                err.contains("bloqueado"),
+                "{pattern} tenía que estar bloqueado: {err}"
+            );
+        }
+        fs::create_dir_all(root.join("src")).expect("src");
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("fuente");
+        assert!(read_text(root_s, "src/main.rs").is_ok());
         fs::remove_dir_all(&root).expect("limpiar");
     }
 }
