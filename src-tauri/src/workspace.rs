@@ -615,12 +615,54 @@ fn assistant_path_denied(relative: &str) -> bool {
     lower.contains("secret") || lower.contains("credential")
 }
 
+/// Lectura del host de un lote. `Ok(None)` es un archivo nuevo de verdad.
+/// Si existe y no se puede leer, es `Err` (nunca se trata como nuevo).
+pub fn read_host_for_batch(root: &str, relative: &str) -> Result<Option<String>, String> {
+    if assistant_path_denied(relative) {
+        return Err(format!("«{relative}» está bloqueado (archivo sensible)"));
+    }
+    let canonical_root = resolve_root(root)?;
+    let member = safe_relative(relative)?;
+    let candidate = canonical_root.join(&member);
+    match fs::symlink_metadata(&candidate) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if !is_project_source(Path::new(relative)) {
+                return Err(format!("«{relative}» no es una fuente del proyecto"));
+            }
+            return Ok(None);
+        }
+        Err(err) => return Err(format!("no se pudo inspeccionar «{relative}»: {err}")),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!("«{relative}» es un enlace; no se lee para el lote"));
+        }
+        Ok(meta) if meta.len() > MAX_ASSISTANT_BYTES => {
+            return Err(format!(
+                "«{relative}» supera 256 KiB y no se pudo leer para el lote"
+            ));
+        }
+        Ok(_) => {}
+    }
+    let doc = read_assistant(root, relative)?;
+    Ok(Some(doc.source))
+}
+
 /// Lectura de solo lectura para el asistente (cota 256 KiB, sin salir de la jaula).
 pub fn read_assistant(root: &str, relative: &str) -> Result<WorkspaceDocument, String> {
     if assistant_path_denied(relative) {
         return Err(format!("«{relative}» no es legible por el asistente"));
     }
     let canonical_root = resolve_root(root)?;
+    let member = safe_relative(relative)?;
+    let candidate = canonical_root.join(&member);
+    match fs::symlink_metadata(&candidate) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("no existe: «{relative}»"));
+        }
+        Err(err) => {
+            return Err(format!("no se pudo inspeccionar «{relative}»: {err}"));
+        }
+        Ok(_) => {}
+    }
     let canonical = resolve_member(&canonical_root, relative)?;
     let allowed = canonical
         .extension()

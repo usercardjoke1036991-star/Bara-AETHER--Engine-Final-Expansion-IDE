@@ -146,10 +146,25 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
 
 /// Copia de seguridad bajo `.bara-backup/` antes de cualquier escritura autónoma.
 pub(crate) fn write_backup(root: &str, relative: &str, contents: &str) -> Result<String, String> {
+    write_backup_inner(root, relative, contents, false)
+}
+
+/// Respaldo vacío de una creación: el archivo no existía. El nombre lo marca.
+pub(crate) fn write_creation_backup(root: &str, relative: &str) -> Result<String, String> {
+    write_backup_inner(root, relative, "", true)
+}
+
+fn write_backup_inner(
+    root: &str,
+    relative: &str,
+    contents: &str,
+    creation: bool,
+) -> Result<String, String> {
     let root_path = workspace::resolve_root(root)?;
     let stamp = stamp();
     let safe = relative.replace('\\', "/");
-    let backup_rel = format!(".bara-backup/{stamp}/{safe}.bak");
+    let suffix = if creation { ".creacion.bak" } else { ".bak" };
+    let backup_rel = format!(".bara-backup/{stamp}/{safe}{suffix}");
     let member = workspace::safe_relative(&backup_rel)?;
     let target = root_path.join(&member);
     if let Some(parent) = target.parent() {

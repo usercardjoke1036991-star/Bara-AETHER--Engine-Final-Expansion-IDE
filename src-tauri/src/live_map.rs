@@ -275,6 +275,19 @@ pub fn gate_change(root: &str, path: &str, next_source: &str) -> Result<ChangeGa
     })
 }
 
+fn rejected_batch(changes: &[BatchChange], detail: String) -> BatchReport {
+    BatchReport {
+        applied: false,
+        paths: changes
+            .iter()
+            .map(|change| change.path.replace('\\', "/"))
+            .collect(),
+        backups: Vec::new(),
+        rolled_back: false,
+        detail,
+    }
+}
+
 /// Aplica varios archivos: todo o nada, con backup + rollback.
 ///
 /// §9.4b: si un archivo no existía antes, el rollback lo borra (papelera jaula).
@@ -305,19 +318,90 @@ pub fn apply_batch(root: &str, changes: &[BatchChange]) -> Result<BatchReport, S
         }
     }
 
-    let mut backups = Vec::new();
-    // (path, prior_source_if_existed)
     let mut previous: Vec<(String, Option<String>)> = Vec::new();
     for change in changes {
         let path = change.path.replace('\\', "/");
-        let prior = match workspace::read_text(root, &path) {
-            Ok(doc) => Some(doc.source),
-            Err(_) => None,
+        let prior = match workspace::read_host_for_batch(root, &path) {
+            Ok(body) => body,
+            Err(reason) => {
+                return Ok(rejected_batch(
+                    changes,
+                    format!("lote rechazado, no se escribió. «{path}»: {reason}"),
+                ));
+            }
         };
-        let backup_body = prior.clone().unwrap_or_default();
-        let backup = auto_apply::write_backup(root, &path, &backup_body)?;
-        backups.push(backup);
+        if let Some(src) = &prior {
+            let actual = workspace::content_hash(src);
+            match change
+                .expected_hash
+                .as_deref()
+                .map(str::trim)
+                .filter(|hash| !hash.is_empty())
+            {
+                Some(expected) if expected == actual => {}
+                Some(_) => {
+                    return Ok(rejected_batch(
+                        changes,
+                        format!(
+                            "lote rechazado, no se escribió. «{path}» cambió en disco (hash distinto)"
+                        ),
+                    ));
+                }
+                None => {
+                    return Ok(rejected_batch(
+                        changes,
+                        format!(
+                            "lote rechazado, no se escribió. «{path}» existe y falta expectedHash"
+                        ),
+                    ));
+                }
+            }
+        } else if let Some(expected) = change
+            .expected_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|hash| !hash.is_empty())
+        {
+            let empty = workspace::content_hash("");
+            if expected != empty {
+                return Ok(rejected_batch(
+                    changes,
+                    format!(
+                        "lote rechazado, no se escribió. «{path}» no existe y el hash no es el de un archivo nuevo"
+                    ),
+                ));
+            }
+        }
         previous.push((path, prior));
+    }
+
+    let mut backups = Vec::new();
+    for (path, prior) in &previous {
+        if prior.is_none() {
+            match workspace::read_host_for_batch(root, path) {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return Ok(rejected_batch(
+                        changes,
+                        format!(
+                            "lote rechazado, no se escribió. «{path}» existe y no hay respaldo del host"
+                        ),
+                    ));
+                }
+                Err(reason) => {
+                    return Ok(rejected_batch(
+                        changes,
+                        format!("lote rechazado, no se escribió. «{path}»: {reason}"),
+                    ));
+                }
+            }
+        }
+        let backup = if prior.is_none() {
+            auto_apply::write_creation_backup(root, path)?
+        } else {
+            auto_apply::write_backup(root, path, prior.as_deref().unwrap_or(""))?
+        };
+        backups.push(backup);
     }
 
     let mut written = 0usize;
@@ -1120,18 +1204,19 @@ mod tests {
         fs::write(root.join("src/ok.rs"), "fn a() {}\n").expect("ok");
         fs::write(root.join("src/bad.rs"), "fn b() {}\n").expect("bad");
         let root_s = root.to_str().expect("utf8");
+        let host = fs::read_to_string(root.join("src/ok.rs")).expect("host");
         let report = apply_batch(
             root_s,
             &[
                 BatchChange {
                     path: "src/ok.rs".into(),
                     source: "fn a() { /* changed */ }\n".into(),
-                    expected_hash: None,
+                    expected_hash: Some(workspace::content_hash(&host)),
                 },
                 BatchChange {
-                    path: "src/nope.env".into(),
-                    source: "X=1\n".into(),
-                    expected_hash: None,
+                    path: "src/missing_dir/new.rs".into(),
+                    source: "fn n() {}\n".into(),
+                    expected_hash: Some(workspace::content_hash("")),
                 },
             ],
         )
@@ -1156,18 +1241,24 @@ mod tests {
         let root_s = root.to_str().expect("utf8");
         let new_path = root.join("src/brand_new.rs");
         assert!(!new_path.exists());
+        let host = fs::read_to_string(root.join("src/ok.rs")).expect("host");
         let report = apply_batch(
             root_s,
             &[
                 BatchChange {
                     path: "src/brand_new.rs".into(),
                     source: "fn fresh() {}\n".into(),
-                    expected_hash: None,
+                    expected_hash: Some(workspace::content_hash("")),
                 },
                 BatchChange {
-                    path: "src/nope.env".into(),
-                    source: "X=1\n".into(),
-                    expected_hash: None,
+                    path: "src/ok.rs".into(),
+                    source: "fn a() { /* changed */ }\n".into(),
+                    expected_hash: Some(workspace::content_hash(&host)),
+                },
+                BatchChange {
+                    path: "src/missing_dir/new.rs".into(),
+                    source: "fn n() {}\n".into(),
+                    expected_hash: Some(workspace::content_hash("")),
                 },
             ],
         )
@@ -1178,6 +1269,102 @@ mod tests {
             !new_path.exists(),
             "el archivo nuevo debe borrarse en rollback"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn n3_archivo_grande_rechaza_el_lote_y_no_toca_disco() {
+        let root = scratch("big");
+        let big = vec![b'a'; 300 * 1024];
+        fs::write(root.join("src/big.rs"), &big).expect("big");
+        fs::write(root.join("src/ok.rs"), "fn a() {}\n").expect("ok");
+        let root_s = root.to_str().expect("utf8");
+        let before_ok = fs::read(root.join("src/ok.rs")).expect("read ok");
+        let before_big = fs::read(root.join("src/big.rs")).expect("read big");
+        let report = apply_batch(
+            root_s,
+            &[
+                BatchChange {
+                    path: "src/big.rs".into(),
+                    source: "fn replaced() {}\n".into(),
+                    expected_hash: Some(workspace::content_hash("")),
+                },
+                BatchChange {
+                    path: "src/ok.rs".into(),
+                    source: "fn a() { /* no */ }\n".into(),
+                    expected_hash: Some(workspace::content_hash("fn a() {}\n")),
+                },
+            ],
+        )
+        .expect("batch");
+        assert!(!report.applied, "{}", report.detail);
+        assert!(report.detail.contains("src/big.rs"), "{}", report.detail);
+        assert!(report.detail.contains("256 KiB"), "{}", report.detail);
+        assert!(report.backups.is_empty(), "no debe respaldar si rechaza");
+        assert_eq!(fs::read(root.join("src/ok.rs")).expect("ok"), before_ok);
+        assert_eq!(fs::read(root.join("src/big.rs")).expect("big"), before_big);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn n3_hash_distinto_rechaza_el_lote() {
+        let root = scratch("hash");
+        fs::write(root.join("src/ok.rs"), "fn a() {}\n").expect("ok");
+        let root_s = root.to_str().expect("utf8");
+        let stale = workspace::content_hash("fn a() {}\n");
+        fs::write(root.join("src/ok.rs"), "fn a() { /* editado */ }\n").expect("edit");
+        let edited = fs::read_to_string(root.join("src/ok.rs")).expect("edited");
+        let report = apply_batch(
+            root_s,
+            &[BatchChange {
+                path: "src/ok.rs".into(),
+                source: "fn a() { /* parche */ }\n".into(),
+                expected_hash: Some(stale),
+            }],
+        )
+        .expect("batch");
+        assert!(!report.applied, "{}", report.detail);
+        assert!(report.detail.contains("hash distinto"), "{}", report.detail);
+        assert_eq!(
+            fs::read_to_string(root.join("src/ok.rs")).expect("disk"),
+            edited
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn n3_archivo_nuevo_deja_respaldo_de_creacion() {
+        let root = scratch("create");
+        let root_s = root.to_str().expect("utf8");
+        let report = apply_batch(
+            root_s,
+            &[BatchChange {
+                path: "src/fresh.rs".into(),
+                source: "fn fresh() {}\n".into(),
+                expected_hash: Some(workspace::content_hash("")),
+            }],
+        )
+        .expect("batch");
+        assert!(report.applied, "{}", report.detail);
+        assert_eq!(
+            fs::read_to_string(root.join("src/fresh.rs")).expect("fresh"),
+            "fn fresh() {}\n"
+        );
+        assert!(
+            report
+                .backups
+                .iter()
+                .any(|path| path.contains(".creacion.bak")),
+            "backups={:?}",
+            report.backups
+        );
+        let backup = report
+            .backups
+            .iter()
+            .find(|path| path.contains(".creacion.bak"));
+        let backup = backup.expect("marca");
+        let bytes = fs::read(root.join(backup)).expect("bak");
+        assert!(bytes.is_empty(), "el respaldo de creación está vacío");
         let _ = fs::remove_dir_all(root);
     }
 

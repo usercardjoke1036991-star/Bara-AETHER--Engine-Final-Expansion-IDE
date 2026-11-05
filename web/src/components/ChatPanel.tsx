@@ -44,6 +44,7 @@ import { emptyReport, type AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
 import { buildReviewChrome, type ReviewChromeLive } from "../reviewChrome";
 import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
+import { contentHashOf } from "../workspace";
 import {
   filesFromUnifiedDiff,
   liveMapApplyBatch,
@@ -389,12 +390,37 @@ export default function ChatPanel({
         const batchFiles = filesFromUnifiedDiff(early.code);
         if (batchFiles.length > 1) {
           const hosts: Record<string, string> = {};
+          const hashes: Record<string, string> = {};
           for (const file of batchFiles) {
             try {
               const doc = await readProjectFile(file.path);
               hosts[file.path] = doc.source ?? "";
-            } catch {
-              hosts[file.path] = "";
+              hashes[file.path] = doc.contentHash || contentHashOf(hosts[file.path] ?? "");
+            } catch (error) {
+              const reason = reasonOf(error);
+              if (reason.startsWith("no existe:")) {
+                hosts[file.path] = "";
+                hashes[file.path] = contentHashOf("");
+                continue;
+              }
+              const msg = `no se pudo leer «${file.path}» (${reason}); el lote no se escribe`;
+              setReview({
+                patch: early.code,
+                report: {
+                  ...emptyReport(1),
+                  glyph: "∅",
+                  status: "neither",
+                  path: file.path,
+                  previewDiff: early.code,
+                  canApply: false,
+                  verified: false,
+                  blockReason: msg,
+                  judgmentId: "batch",
+                },
+                mapBlock: msg,
+              });
+              publishNotice(msg);
+              return;
             }
           }
           const merged = mergeUnifiedDiff(early.code, hosts);
@@ -420,6 +446,7 @@ export default function ChatPanel({
           const batch: BatchChange[] = merged.files.map((file) => ({
             path: file.path,
             source: file.source,
+            expectedHash: hashes[file.path] ?? contentHashOf(hosts[file.path] ?? ""),
           }));
           let mapBlock = "";
           let impactSummary = "";

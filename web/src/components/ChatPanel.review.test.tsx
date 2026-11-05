@@ -99,6 +99,17 @@ vi.mock("../baraVerify", () => ({
   statusFromAnalysis: vi.fn(() => "unverified"),
 }));
 
+vi.mock("../editorBridge", () => ({
+  PROPOSE_PATCH_EVENT: "assistant-propose-patch",
+  proposeEditorPatch: vi.fn(async () => undefined),
+  readProjectFile: vi.fn(async (path: string) => {
+    if (String(path).includes("big.rs")) {
+      throw new Error("«big.rs» supera 256 KiB y el asistente no lo lee");
+    }
+    throw new Error(`no existe: «${String(path)}»`);
+  }),
+}));
+
 import ChatPanel from "./ChatPanel";
 import { cancelAiInFlight } from "../engine";
 import { liveMapApplyBatch, liveMapGate } from "../liveMap";
@@ -309,6 +320,47 @@ describe("ChatPanel Aceptar / Rechazar / Deshacer", () => {
     });
     expect(apply).not.toHaveBeenCalled();
     expect(screen.getByRole("alert").textContent ?? "").not.toBe("beta\n");
+  });
+
+  it("un archivo de 300 KiB rechaza el lote y no escribe", async () => {
+    const apply = vi.mocked(liveMapApplyBatch);
+    const diff = [
+      "diff --git a/src/big.rs b/src/big.rs",
+      "--- a/src/big.rs",
+      "+++ b/src/big.rs",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+      "diff --git a/src/ok.rs b/src/ok.rs",
+      "--- a/src/ok.rs",
+      "+++ b/src/ok.rs",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+    render(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource="ברא\n"
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        acceptRemotePatches
+        onJudge={vi.fn()}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(listenHandler.current).not.toBeNull();
+    });
+    listenHandler.current?.({ payload: { patch: diff } });
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent ?? "").toMatch(/big\.rs/);
+    });
+    expect(screen.getByRole("alert").textContent ?? "").toMatch(/no se escribe/i);
+    expect(apply).not.toHaveBeenCalled();
   });
 
   it("si Detener falla el invoke, avisa que no se pudo detener", async () => {

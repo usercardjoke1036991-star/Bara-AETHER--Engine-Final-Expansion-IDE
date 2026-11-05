@@ -34,7 +34,9 @@ export async function onEditorContext(
 }
 
 /** Lectura de solo lectura para el asistente. */
-export function readProjectFile(path: string): Promise<{ path: string; name: string; source: string }> {
+export function readProjectFile(
+  path: string,
+): Promise<{ path: string; name: string; source: string; contentHash: string }> {
   return invoke("workspace_read_project_file", { path });
 }
 
