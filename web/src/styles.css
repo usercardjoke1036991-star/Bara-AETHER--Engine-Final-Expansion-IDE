@@ -2924,6 +2924,13 @@ tr.vb-selected td {
   overflow-y: auto;
 }
 
+.unverified-warn {
+  margin: 0;
+  color: #ff2a2a;
+  font-weight: 700;
+  font-size: 1rem;
+}
+
 .ai-warn-banner {
   margin: 0;
   padding: 0.45rem 0.65rem;

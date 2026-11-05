@@ -8,6 +8,8 @@ export type ReviewChromeState = {
   showReject: boolean;
   showUndo: boolean;
   undoLabel: string;
+  /** Aviso rojo. No cambia si Aceptar sigue disponible. */
+  warnUnverified: boolean;
 };
 
 /** Chrome vivo con handlers (banner App + barra sticky del chat). */
@@ -36,6 +38,7 @@ export function buildReviewChrome(
       showReject: true,
       showUndo: Boolean(lastBackup),
       undoLabel: lastBackup?.backupPath ?? "",
+      warnUnverified: !review.report.verified,
     };
   }
   return {
@@ -44,5 +47,6 @@ export function buildReviewChrome(
     showReject: false,
     showUndo: true,
     undoLabel: lastBackup?.backupPath ?? "",
+    warnUnverified: false,
   };
 }

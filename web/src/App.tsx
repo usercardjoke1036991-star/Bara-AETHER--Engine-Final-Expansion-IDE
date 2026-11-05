@@ -1726,6 +1726,9 @@ export default function App() {
               ¿Abrir {suggestedBara}?
             </button>
           ) : null}
+          {reviewChrome?.warnUnverified ? (
+            <strong className="unverified-warn">Este cambio NO está verificado</strong>
+          ) : null}
           {reviewChrome?.showAccept ? (
             <button type="button" className="patch-banner-accept" onClick={reviewChrome.accept}>
               Aceptar

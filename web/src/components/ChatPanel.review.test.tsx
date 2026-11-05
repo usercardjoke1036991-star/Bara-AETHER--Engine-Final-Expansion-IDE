@@ -199,6 +199,7 @@ describe("ChatPanel Aceptar / Rechazar / Deshacer", () => {
     listenHandler.current?.({ payload: { patch: "ברא\n" } });
 
     const accept = await screen.findByRole("button", { name: /^Aceptar$/i });
+    expect(screen.getByText("Este cambio NO está verificado")).toBeTruthy();
     fireEvent.click(accept);
     await waitFor(() => {
       expect(onConfirm).toHaveBeenCalled();

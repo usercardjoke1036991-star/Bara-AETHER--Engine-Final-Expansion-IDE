@@ -1317,6 +1317,11 @@ export default function ChatPanel({
           {/* Barra sticky: acciones SIEMPRE visibles; el diff scrollea aparte. */}
           {review || lastBackup ? (
             <div className="ai-review-dock" role="region" aria-label="Revisión del parche">
+              {review && !review.report.verified ? (
+                <p className="unverified-warn" role="alert">
+                  Este cambio NO está verificado
+                </p>
+              ) : null}
               <div className="row ai-review-actions">
                 {review ? (
                   <>

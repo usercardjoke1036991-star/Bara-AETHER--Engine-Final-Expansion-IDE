@@ -26,6 +26,14 @@ describe("buildReviewChrome", () => {
     expect(chrome?.showReject).toBe(true);
     expect(chrome?.showUndo).toBe(false);
     expect(chrome?.notice).toMatch(/Aceptar|rechaza|diff/i);
+    expect(chrome?.warnUnverified).toBe(true);
+    expect(chrome?.showAccept).toBe(true);
+  });
+
+  it("un cambio verificado no muestra el aviso y Aceptar sigue", () => {
+    const chrome = buildReviewChrome({ report: report({ verified: true, glyph: "⊤" }) }, null);
+    expect(chrome?.warnUnverified).toBe(false);
+    expect(chrome?.showAccept).toBe(true);
   });
 
   it("tras Accept con backup muestra Deshacer en la misma barra", () => {
