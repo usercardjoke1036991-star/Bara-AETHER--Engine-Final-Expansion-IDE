@@ -1,7 +1,9 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { emptyReport, type AutoApplyReport } from "../autoApply";
+import { DEFAULT_CONFIG, LOCAL_ACCEPTED_KEY, STORAGE_KEY } from "../ai/config";
+import { sendChat } from "../ai/providers";
 
 const listenHandler: { current: ((event: { payload: { patch?: string } }) => void) | null } = {
   current: null,
@@ -35,8 +37,12 @@ vi.mock("../ai/keyring", () => ({
   deleteKey: vi.fn(async () => undefined),
   inDesktop: () => true,
   keyExists: vi.fn(async () => false),
-  probeConnection: vi.fn(async () => ({ ok: true, detail: "ok" })),
   saveKey: vi.fn(async () => undefined),
+  probeConnection: vi.fn(async () => ({
+    ok: true,
+    steps: [{ ok: true, name: "http", detail: "ok" }],
+    models: ["otro-modelo"],
+  })),
 }));
 
 vi.mock("../ai/providers", () => ({
@@ -508,5 +514,55 @@ describe("usar en el editor", () => {
     });
     expect(proposeEditorPatch).not.toHaveBeenCalled();
     clearChatHistory("proj-n12");
+  });
+});
+
+describe("modelos vivos en el envío", () => {
+  it("Enter no envía un modelo que la sonda acaba de descartar", async () => {
+    localStorage.setItem(LOCAL_ACCEPTED_KEY, "1");
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_CONFIG,
+        provider: "local",
+        model: "llama3.2",
+        baseUrl: "http://127.0.0.1:11434",
+        apiKey: "",
+        hasKey: false,
+      }),
+    );
+    render(
+      <ChatPanel
+        open
+        documentName="doc.bara"
+        documentSource=""
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        onJudge={vi.fn()}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText(/Pregunte sobre Shoresh/i), {
+      target: { value: "hola" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "ajustes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Probar conexión" }));
+    await screen.findByText(/sonda OK/i);
+    fireEvent.click(screen.getByRole("button", { name: "chat" }));
+    const send = screen.getByRole("button", { name: "Enviar" });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    expect(send.getAttribute("title")).toMatch(/lista viva/);
+    await act(async () => {
+      fireEvent.keyDown(screen.getByPlaceholderText(/Pregunte sobre Shoresh/i), {
+        key: "Enter",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(sendChat).not.toHaveBeenCalled();
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LOCAL_ACCEPTED_KEY);
   });
 });

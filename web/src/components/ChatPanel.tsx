@@ -871,6 +871,7 @@ export default function ChatPanel({
     config,
     draft,
     messages,
+    models,
     offline,
     pending,
     promptContextBase,
