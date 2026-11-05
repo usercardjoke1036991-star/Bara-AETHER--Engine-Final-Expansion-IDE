@@ -26,7 +26,7 @@ import {
 import PortalMenu, { type PortalMenuItem } from "./shell/PortalMenu";
 import UnsavedRootDialog, { unsavedTabs } from "./shell/UnsavedRootDialog";
 import StatusBar from "./shell/StatusBar";
-import { bottomHeightCss, EXPERT_VIEW_BLURBS, nextEscTarget } from "./shell/uxRules";
+import { bottomHeightCss, escStopsAtField, EXPERT_VIEW_BLURBS, nextEscTarget } from "./shell/uxRules";
 
 import {
   CLASS_LABEL,
@@ -336,6 +336,9 @@ export default function App() {
         return;
       }
       if (event.key === "Escape") {
+        if (escStopsAtField(event)) {
+          return;
+        }
         const layer = nextEscTarget({
           menuOpen: expertMenuOpen,
           paletteOpen,

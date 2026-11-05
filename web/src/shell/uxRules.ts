@@ -14,6 +14,27 @@ export function isNestedScrollViolation(
   return scrollish(parentOverflow) && scrollish(childOverflow);
 }
 
+/**
+ * Esc dentro del editor, un textarea o un input no cierra paneles.
+ * Ahí solo quita la sugerencia o el foco. `defaultPrevented` gana igual.
+ */
+export function escStopsAtField(event: {
+  defaultPrevented: boolean;
+  target: EventTarget | null;
+}): boolean {
+  if (event.defaultPrevented) {
+    return true;
+  }
+  const nodes = [event.target, document.activeElement];
+  return nodes.some(
+    (node) =>
+      node instanceof Element &&
+      (node.closest(".cm-editor") !== null ||
+        node.tagName === "TEXTAREA" ||
+        node.tagName === "INPUT"),
+  );
+}
+
 /** Orden de cierre con Esc: menú → paleta → panel inferior → chat → lateral. */
 export type EscLayer = "menu" | "palette" | "bottom" | "chat" | "side" | "none";
 
