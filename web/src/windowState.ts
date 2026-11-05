@@ -39,6 +39,29 @@ export function saveWindowGeometry(geometry: WindowGeometry): void {
   }
 }
 
+/** Si está maximizada se conserva el tamaño restaurado; si no, se guarda el tamaño vivo. */
+export function rememberGeometry(
+  live: { maximized: boolean; width: number; height: number; x: number; y: number },
+  previous: WindowGeometry | null,
+): WindowGeometry {
+  if (live.maximized) {
+    return {
+      width: previous?.width ?? live.width,
+      height: previous?.height ?? live.height,
+      x: previous?.x ?? live.x,
+      y: previous?.y ?? live.y,
+      maximized: true,
+    };
+  }
+  return {
+    width: live.width,
+    height: live.height,
+    x: live.x,
+    y: live.y,
+    maximized: false,
+  };
+}
+
 /** Ajusta la ventana Tauri al monitor y restaura geometría guardada. */
 export async function restoreMainWindow(): Promise<void> {
   if (!("__TAURI_INTERNALS__" in window)) {
@@ -60,19 +83,22 @@ export async function restoreMainWindow(): Promise<void> {
     const availW = Math.floor(screenW / scale);
     const availH = Math.floor(screenH / scale);
 
-    // Arranque: maximizada si el monitor lógico ≤1440 de ancho (o si ya lo estaba).
-    if (saved?.maximized || (saved === null && availW <= 1440)) {
-      await current.maximize();
-      return;
-    }
-
     const width = Math.min(saved?.width ?? Math.min(1280, availW - 40), availW);
     const height = Math.min(saved?.height ?? Math.min(720, availH - 60), availH);
-    await current.setSize(new LogicalSize(width, height));
-    if (typeof saved?.x === "number" && typeof saved?.y === "number") {
-      await current.setPosition(new LogicalPosition(saved.x, saved.y));
+    // Arranque maximizado (monitor ≤1440 o preferencia guardada). El tamaño
+    // restaurado queda escrito antes, y los listeners se registran igual.
+    if (saved?.maximized || (saved === null && availW <= 1440)) {
+      if (saved === null) {
+        saveWindowGeometry({ width, height, maximized: true });
+      }
+      await current.maximize();
     } else {
-      await current.center();
+      await current.setSize(new LogicalSize(width, height));
+      if (typeof saved?.x === "number" && typeof saved?.y === "number") {
+        await current.setPosition(new LogicalPosition(saved.x, saved.y));
+      } else {
+        await current.center();
+      }
     }
   } catch {
     // Sin permisos de ventana: se queda el tamaño de tauri.conf.
@@ -84,13 +110,18 @@ export async function restoreMainWindow(): Promise<void> {
       const size = await current.outerSize();
       const pos = await current.outerPosition();
       const factor = await current.scaleFactor();
-      saveWindowGeometry({
-        width: Math.round(size.width / factor),
-        height: Math.round(size.height / factor),
-        x: Math.round(pos.x / factor),
-        y: Math.round(pos.y / factor),
-        maximized,
-      });
+      saveWindowGeometry(
+        rememberGeometry(
+          {
+            maximized,
+            width: Math.round(size.width / factor),
+            height: Math.round(size.height / factor),
+            x: Math.round(pos.x / factor),
+            y: Math.round(pos.y / factor),
+          },
+          loadWindowGeometry(),
+        ),
+      );
     } catch {
       // ignore
     }

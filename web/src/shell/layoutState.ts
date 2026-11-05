@@ -1,6 +1,7 @@
 // Persistencia de paneles abiertos (sin secretos).
 
 const KEY = "bara.panels.v2";
+const LEGACY_KEY = "bara.panels.v1";
 
 export type SideMode = "files" | "search" | "settings" | null;
 
@@ -42,20 +43,57 @@ export const DEFAULT_PANEL_LAYOUT: PanelLayout = {
   bottomTab: "resumen",
 };
 
+const BOTTOM_TABS = new Set<BottomTab>([
+  "resumen",
+  "tokens",
+  "problemas",
+  "git",
+  "mapa",
+  "oraculo",
+  "catalogo",
+  "bilattice",
+  "telemetria",
+  "topologia",
+  "ledger",
+  "lienzo",
+  "nucleo",
+]);
+
+function normalize(parsed: Partial<PanelLayout>): PanelLayout {
+  const bottomTab = BOTTOM_TABS.has(parsed.bottomTab as BottomTab)
+    ? (parsed.bottomTab as BottomTab)
+    : DEFAULT_PANEL_LAYOUT.bottomTab;
+  const sideMode =
+    parsed.sideMode === "files" ||
+    parsed.sideMode === "search" ||
+    parsed.sideMode === "settings" ||
+    parsed.sideMode === null
+      ? parsed.sideMode
+      : DEFAULT_PANEL_LAYOUT.sideMode;
+  return {
+    ...DEFAULT_PANEL_LAYOUT,
+    ...parsed,
+    sideMode,
+    bottomTab,
+    bottomFrac: clamp(parsed.bottomFrac ?? 0.35, 0.15, 0.6),
+    sideFrac: clamp(parsed.sideFrac ?? 0.18, 0.12, 0.32),
+    chatFrac: clamp(parsed.chatFrac ?? 0.48, 0.32, 0.62),
+  };
+}
+
 export function loadPanelLayout(): PanelLayout {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) {
+    const current = localStorage.getItem(KEY);
+    if (current) {
+      return normalize(JSON.parse(current) as Partial<PanelLayout>);
+    }
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (!legacy) {
       return { ...DEFAULT_PANEL_LAYOUT };
     }
-    const parsed = JSON.parse(raw) as Partial<PanelLayout>;
-    return {
-      ...DEFAULT_PANEL_LAYOUT,
-      ...parsed,
-      bottomFrac: clamp(parsed.bottomFrac ?? 0.35, 0.15, 0.6),
-      sideFrac: clamp(parsed.sideFrac ?? 0.18, 0.12, 0.32),
-      chatFrac: clamp(parsed.chatFrac ?? 0.48, 0.32, 0.62),
-    };
+    const migrated = normalize(JSON.parse(legacy) as Partial<PanelLayout>);
+    savePanelLayout(migrated);
+    return migrated;
   } catch {
     return { ...DEFAULT_PANEL_LAYOUT };
   }
