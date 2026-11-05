@@ -27,7 +27,11 @@ function viewOf(container: HTMLElement): EditorView {
   if (!(editor instanceof HTMLElement)) {
     throw new Error("falta el editor");
   }
-  return EditorView.findFromDOM(editor);
+  const view = EditorView.findFromDOM(editor);
+  if (view === null) {
+    throw new Error("falta la vista");
+  }
+  return view;
 }
 
 function press(view: EditorView, key: string): void {
