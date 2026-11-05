@@ -25,7 +25,6 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [commitArmed, setCommitArmed] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!workspaceRoot) {
@@ -68,31 +67,21 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
     setBusy(true);
     setError(null);
     try {
-      if (!commitArmed) {
-        try {
-          await gitCommit(text, false);
-        } catch (reason: unknown) {
-          const msg = describeError(reason);
-          if (!/segunda confirmación/i.test(msg)) {
-            setError(msg);
-            return;
-          }
-        }
-        setCommitArmed(true);
-        setNotice("Segunda confirmación: el commit hace git add -A. Pulsa otra vez.");
-        return;
-      }
-      const report = await gitCommit(text, true);
+      const report = await gitCommit(text);
       setNotice(report.summary);
       setMessage("");
-      setCommitArmed(false);
       await refresh();
     } catch (reason: unknown) {
-      setError(describeError(reason));
+      const msg = describeError(reason);
+      if (msg.trim() === "cancelado") {
+        setNotice("Commit cancelado. No se escribió nada.");
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
-  }, [commitArmed, message, refresh]);
+  }, [message, refresh]);
 
   const onSwitch = useCallback(
     async (name: string, create: boolean) => {
@@ -159,13 +148,10 @@ export default function GitPanel({ workspaceRoot }: GitPanelProps) {
         value={message}
         disabled={busy}
         placeholder="Mensaje del commit"
-        onChange={(event) => {
-          setMessage(event.target.value);
-          setCommitArmed(false);
-        }}
+        onChange={(event) => setMessage(event.target.value)}
       />
       <button type="button" disabled={busy || !message.trim()} onClick={() => void onCommit()}>
-        {commitArmed ? "Confirmar commit (git add -A)" : "Crear commit"}
+        Crear commit
       </button>
 
       <h4>Ramas</h4>

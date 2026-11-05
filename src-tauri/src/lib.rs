@@ -770,6 +770,7 @@ fn release_folder(kernel: &KernelHost, path: &str) {
 
 /// Instala una raíz ya validada por el diálogo o por el clon y purga la expulsada.
 fn adopt_root(state: &workspace::ActiveWorkspace, kernel: &KernelHost, root: String) {
+    let _ = git_workspace::ensure_bara_exclude(&root);
     if let Some(evicted) = state.set(root) {
         release_folder(kernel, &evicted);
     }
@@ -1154,6 +1155,7 @@ fn workspace_activate(
 ) -> Result<workspace::WorkspaceShelf, String> {
     let shelf = state.activate(id.trim())?;
     if let Ok(root) = state.get() {
+        let _ = git_workspace::ensure_bara_exclude(&root);
         let _ = app.emit(
             "workspace-root-changed",
             json!({ "root": root, "reason": "activate" }),
@@ -1419,15 +1421,38 @@ fn git_branches(
     git_workspace::branches(&state.get()?)
 }
 
+/// El bool del WebView no existe: la lista sale en un diálogo nativo Sí/No.
 #[tauri::command]
-fn git_commit(
+async fn git_commit(
     window: tauri::WebviewWindow,
     message: String,
-    confirmed: bool,
     state: tauri::State<'_, workspace::ActiveWorkspace>,
 ) -> Result<git_workspace::GitCommitReport, String> {
     window_guard::require(&window, window_guard::WRITE)?;
-    git_workspace::commit(&state.get()?, &message, confirmed)
+    let root = state.get()?;
+    let preview = git_workspace::stage_for_commit(&root)?;
+    if preview.files.is_empty() {
+        return Err("no hay cambios para confirmar".to_string());
+    }
+    let body = git_workspace::commit_dialog_text(&preview);
+    let kind = if preview.secrets.is_empty() {
+        tauri_plugin_dialog::MessageDialogKind::Warning
+    } else {
+        tauri_plugin_dialog::MessageDialogKind::Error
+    };
+    let accepted = tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        window
+            .dialog()
+            .message(body)
+            .title("Confirmar commit")
+            .kind(kind)
+            .buttons(MessageDialogButtons::YesNo)
+            .blocking_show()
+    })
+    .await
+    .map_err(|_| "el diálogo de commit se interrumpió".to_string())?;
+    git_workspace::finish_commit(&root, &message, accepted)
 }
 
 #[tauri::command]

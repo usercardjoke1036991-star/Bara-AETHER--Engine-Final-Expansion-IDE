@@ -45,8 +45,8 @@ export function gitBranches(): Promise<GitBranchReport> {
   return invoke<GitBranchReport>("git_branches");
 }
 
-export function gitCommit(message: string, confirmed: boolean): Promise<GitCommitReport> {
-  return invoke<GitCommitReport>("git_commit", { message, confirmed });
+export function gitCommit(message: string): Promise<GitCommitReport> {
+  return invoke<GitCommitReport>("git_commit", { message });
 }
 
 export function gitCheckout(name: string, create: boolean): Promise<GitBranchReport> {

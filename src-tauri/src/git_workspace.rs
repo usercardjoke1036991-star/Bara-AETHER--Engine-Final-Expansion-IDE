@@ -5,11 +5,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -204,48 +201,157 @@ pub fn branches(root: &str) -> Result<GitBranchReport, String> {
     })
 }
 
-struct CommitArm {
-    message: String,
-    at: Instant,
+const BARA_EXCLUDE_LINES: &[&str] = &[".bara-backup/", ".bara-trash/"];
+
+/// Lista que el diálogo nativo muestra antes de `git commit`.
+/// El WebView no puede aceptar el commit por su cuenta.
+#[derive(Debug, Clone)]
+pub struct CommitPreview {
+    pub files: Vec<String>,
+    pub secrets: Vec<String>,
 }
 
-fn commit_arms() -> &'static Mutex<BTreeMap<String, CommitArm>> {
-    static ARMS: OnceLock<Mutex<BTreeMap<String, CommitArm>>> = OnceLock::new();
-    ARMS.get_or_init(|| Mutex::new(BTreeMap::new()))
+/// Si la carpeta es un repo, añade `.bara-backup/` y `.bara-trash/` a
+/// `.git/info/exclude`. No toca el `.gitignore` del usuario.
+pub fn ensure_bara_exclude(root: &str) -> Result<(), String> {
+    let Ok(cwd) = ensure_repo(root) else {
+        return Ok(());
+    };
+    write_exclude(&cwd)
 }
 
-const ARM_TTL: Duration = Duration::from_secs(120);
-const ARM_AGAIN: &str = "segunda confirmación: git add -A abarca todo el árbol; confirma otra vez";
+fn write_exclude(cwd: &Path) -> Result<(), String> {
+    let (code, out, err) = run_git(cwd, &["rev-parse", "--git-path", "info/exclude"])?;
+    if code != 0 {
+        return Err(if err.trim().is_empty() {
+            "no se pudo localizar info/exclude".to_string()
+        } else {
+            err.trim().to_string()
+        });
+    }
+    let rel = out.trim();
+    let path = {
+        let candidate = PathBuf::from(rel);
+        if candidate.is_absolute() {
+            candidate
+        } else {
+            cwd.join(candidate)
+        }
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| format!("no se pudo crear info/: {err}"))?;
+    }
+    let mut text = if path.is_file() {
+        std::fs::read_to_string(&path).map_err(|err| format!("no se pudo leer exclude: {err}"))?
+    } else {
+        String::new()
+    };
+    let mut changed = false;
+    for line in BARA_EXCLUDE_LINES {
+        if !exclude_has(&text, line) {
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(line);
+            text.push('\n');
+            changed = true;
+        }
+    }
+    if changed {
+        std::fs::write(&path, text).map_err(|err| format!("no se pudo escribir exclude: {err}"))?;
+    }
+    Ok(())
+}
 
-/// Arma o consume la segunda confirmación en este proceso.
-///
-/// Un `confirmed: true` aislado no hace `git add`. Hace falta un armado previo
-/// del mismo mensaje en esta raíz (el bool del WebView no basta).
-fn take_commit_arm(key: &str, message: &str, confirmed: bool) -> Result<(), String> {
-    let mut arms = commit_arms()
-        .lock()
-        .map_err(|_| "el confirmador de git está ocupado".to_string())?;
-    let fresh = arms
-        .get(key)
-        .is_some_and(|arm| arm.message == message && arm.at.elapsed() <= ARM_TTL);
-    if confirmed && fresh {
-        arms.remove(key);
+fn exclude_has(text: &str, needle: &str) -> bool {
+    let bare = needle.trim_end_matches('/');
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == needle || trimmed == bare
+    })
+}
+
+fn is_bara_private(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    let normalized = normalized.trim_start_matches("./");
+    normalized == ".bara-backup"
+        || normalized.starts_with(".bara-backup/")
+        || normalized == ".bara-trash"
+        || normalized.starts_with(".bara-trash/")
+}
+
+fn looks_like_secret(path: &str) -> bool {
+    let name = path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase();
+    name.starts_with(".env")
+        || name.ends_with(".key")
+        || name.ends_with(".pem")
+        || name.starts_with("id_rsa")
+        || name.ends_with(".pfx")
+        || name.ends_with(".p12")
+        || name.ends_with(".keystore")
+        || name == ".npmrc"
+        || name == ".git-credentials"
+        || name == "keystore.properties"
+}
+
+fn staged_names(cwd: &Path) -> Result<Vec<String>, String> {
+    let (code, out, err) = run_git(cwd, &["diff", "--cached", "--name-only", "-z"])?;
+    if code != 0 {
+        return Err(err.trim().to_string());
+    }
+    Ok(out
+        .split('\0')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.replace('\\', "/"))
+        .collect())
+}
+
+fn unstage_all(cwd: &Path) -> Result<(), String> {
+    let (head, _, _) = run_git(cwd, &["rev-parse", "--verify", "HEAD"])?;
+    if head == 0 {
+        let (code, _, err) = run_git(cwd, &["reset", "-q"])?;
+        if code != 0 {
+            return Err(err.trim().to_string());
+        }
         return Ok(());
     }
-    arms.insert(
-        key.to_string(),
-        CommitArm {
-            message: message.to_string(),
-            at: Instant::now(),
-        },
-    );
-    Err(ARM_AGAIN.to_string())
+    let (code, _, err) = run_git(
+        cwd,
+        &["rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", "."],
+    )?;
+    if code != 0 {
+        return Err(err.trim().to_string());
+    }
+    Ok(())
 }
 
-/// `git add -A` + `git commit -m`. Sin push.
-///
-/// La segunda confirmación vive en el proceso: sin un armado previo no hay `add -A`.
-pub fn commit(root: &str, message: &str, confirmed: bool) -> Result<GitCommitReport, String> {
+fn add_only_ignored(stderr: &str) -> bool {
+    let mut saw_ignored = false;
+    for line in stderr.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with("hint:")
+            || line.starts_with("warning:")
+            || line.starts_with(".bara-backup")
+            || line.starts_with(".bara-trash")
+        {
+            continue;
+        }
+        if line.contains("ignored by one of your .gitignore") {
+            saw_ignored = true;
+            continue;
+        }
+        return false;
+    }
+    saw_ignored
+}
+
+fn validate_message(message: &str) -> Result<&str, String> {
     let msg = message.trim();
     if msg.is_empty() {
         return Err("el mensaje de commit está vacío".to_string());
@@ -256,17 +362,90 @@ pub fn commit(root: &str, message: &str, confirmed: bool) -> Result<GitCommitRep
     if msg.contains('\0') {
         return Err("el mensaje de commit no puede llevar NUL".to_string());
     }
+    Ok(msg)
+}
+
+/// Prepara el índice sin `.bara-backup/` ni `.bara-trash/` y devuelve la lista.
+pub fn stage_for_commit(root: &str) -> Result<CommitPreview, String> {
     let cwd = ensure_repo(root)?;
-    let key = cwd.to_string_lossy().to_string();
-    take_commit_arm(&key, msg, confirmed)?;
-    let (code_add, _, err_add) = run_git(&cwd, &["add", "-A"])?;
-    if code_add != 0 {
-        let _ = take_commit_arm(&key, msg, false);
+    write_exclude(&cwd)?;
+    let _ = run_git(&cwd, &["reset", "-q", "--", ".bara-backup", ".bara-trash"]);
+    let (code_add, _, err_add) = run_git(
+        &cwd,
+        &[
+            "add",
+            "-A",
+            "--",
+            ".",
+            ":(exclude).bara-backup",
+            ":(exclude).bara-trash",
+        ],
+    )?;
+    // Git sale con código 1 si el pathspec nombra una ruta ya ignorada por
+    // info/exclude. No es un fallo si el índice no se llevó esas carpetas.
+    if code_add != 0 && !add_only_ignored(&err_add) {
         return Err(err_add.trim().to_string());
+    }
+    let files = staged_names(&cwd)?;
+    if files.iter().any(|path| is_bara_private(path)) {
+        let _ = unstage_all(&cwd);
+        return Err("el índice incluye .bara-backup o .bara-trash; no se confirma".to_string());
+    }
+    let secrets = files
+        .iter()
+        .filter(|path| looks_like_secret(path))
+        .cloned()
+        .collect();
+    Ok(CommitPreview { files, secrets })
+}
+
+/// Texto del diálogo nativo. Los secretos van primero para que se vean.
+pub fn commit_dialog_text(preview: &CommitPreview) -> String {
+    let mut out = String::new();
+    if !preview.secrets.is_empty() {
+        out.push_str("AVISO: estos archivos parecen secretos y entrarían en el commit:\n");
+        for path in &preview.secrets {
+            out.push_str("  ");
+            out.push_str(path);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "Archivos que entran en el commit ({}):\n",
+        preview.files.len()
+    ));
+    for (index, path) in preview.files.iter().enumerate() {
+        if index >= 200 {
+            out.push_str(&format!("  … y {} más\n", preview.files.len() - index));
+            break;
+        }
+        out.push_str("  ");
+        out.push_str(path);
+        out.push('\n');
+    }
+    out.push_str("\n¿Crear el commit?");
+    out
+}
+
+/// Confirma o deshace el índice preparado. `accepted` sale del diálogo nativo.
+pub fn finish_commit(root: &str, message: &str, accepted: bool) -> Result<GitCommitReport, String> {
+    let msg = validate_message(message)?;
+    let cwd = ensure_repo(root)?;
+    if !accepted {
+        unstage_all(&cwd)?;
+        return Err("cancelado".to_string());
+    }
+    let files = staged_names(&cwd)?;
+    if files.iter().any(|path| is_bara_private(path)) {
+        let _ = unstage_all(&cwd);
+        return Err("el índice incluye .bara-backup o .bara-trash; no se confirma".to_string());
+    }
+    if files.is_empty() {
+        return Err("no hay cambios para confirmar".to_string());
     }
     let (code, out, err) = run_git(&cwd, &["commit", "-m", msg])?;
     if code != 0 {
-        let _ = take_commit_arm(&key, msg, false);
         let detail = if err.trim().is_empty() {
             out.trim().to_string()
         } else {
@@ -340,12 +519,9 @@ mod tests {
         assert!(!st.entries.is_empty());
         let before = diff(root).expect("diff sin HEAD");
         assert!(!before.patch.is_empty());
-        assert!(
-            commit(root, "chore: semilla a6", false).is_err(),
-            "sin segunda confirmación no hay git add -A"
-        );
-        assert!(status(root).expect("sigue sucio").dirty);
-        let done = commit(root, "chore: semilla a6", true).expect("commit");
+        let preview = stage_for_commit(root).expect("stage");
+        assert!(preview.files.iter().any(|path| path == "nota.md"));
+        let done = finish_commit(root, "chore: semilla a6", true).expect("commit");
         assert!(done.ok);
         let clean = status(root).expect("clean");
         assert!(!clean.dirty);
@@ -357,19 +533,78 @@ mod tests {
     }
 
     #[test]
-    fn a6_un_true_no_hace_add() {
+    fn n2_el_commit_no_incluye_respaldo_ni_papelera() {
         let dir = scratch();
         git_init(&dir);
-        fs::write(dir.join("nota.md"), "hola\n").expect("write");
+        fs::create_dir_all(dir.join(".bara-backup")).expect("backup");
+        fs::create_dir_all(dir.join(".bara-trash")).expect("trash");
+        fs::write(dir.join(".bara-backup").join("x"), "bak").expect("x");
+        fs::write(dir.join(".bara-trash").join("y"), "trash").expect("y");
+        fs::write(dir.join("nota.md"), "hola\n").expect("nota");
         let root = dir.to_str().expect("utf8");
-        assert!(
-            commit(root, "chore: uno", true).is_err(),
-            "un solo confirmed=true no hace git add"
-        );
-        assert!(status(root).expect("sigue sucio").dirty);
-        let done = commit(root, "chore: uno", true).expect("segundo");
-        assert!(done.ok);
-        assert!(!status(root).expect("limpio").dirty);
+        ensure_bara_exclude(root).expect("exclude");
+        let exclude =
+            fs::read_to_string(dir.join(".git").join("info").join("exclude")).expect("leer");
+        assert!(exclude.contains(".bara-backup/"));
+        assert!(exclude.contains(".bara-trash/"));
+        let preview = stage_for_commit(root).expect("stage");
+        assert_eq!(preview.files, vec!["nota.md".to_string()]);
+        assert!(preview.secrets.is_empty());
+        assert!(!commit_dialog_text(&preview).contains(".bara-backup"));
+        finish_commit(root, "chore: n2", true).expect("commit");
+        let (code, stat, err) = run_git(&dir, &["show", "--stat", "--format="]).expect("show");
+        assert_eq!(code, 0, "{err}");
+        assert!(stat.contains("nota.md"), "{stat}");
+        assert!(!stat.contains(".bara-backup"), "{stat}");
+        assert!(!stat.contains(".bara-trash"), "{stat}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn n2_marca_secretos_y_cancelar_no_confirma() {
+        let dir = scratch();
+        git_init(&dir);
+        fs::write(dir.join("nota.md"), "hola\n").expect("nota");
+        let root = dir.to_str().expect("utf8");
+        stage_for_commit(root).expect("stage inicial");
+        finish_commit(root, "chore: base", true).expect("base");
+        let secretos = [
+            ".env",
+            ".env.local",
+            "clave.key",
+            "cert.pem",
+            "id_rsa",
+            "id_rsa_backup",
+            "tienda.pfx",
+            "tienda.p12",
+            "app.keystore",
+            ".npmrc",
+            ".git-credentials",
+            "keystore.properties",
+        ];
+        for name in secretos {
+            fs::write(dir.join(name), "secreto\n").expect(name);
+        }
+        fs::write(dir.join("nota.md"), "cambio\n").expect("nota2");
+        let preview = stage_for_commit(root).expect("stage");
+        for name in secretos {
+            assert!(
+                preview.secrets.iter().any(|path| path == name),
+                "falta {name} en {:?}",
+                preview.secrets
+            );
+        }
+        assert!(preview.secrets.iter().all(|path| path != "nota.md"));
+        let dialog = commit_dialog_text(&preview);
+        assert!(dialog.contains("parecen secretos"));
+        assert!(dialog.contains(".env"));
+        assert!(finish_commit(root, "chore: no", false).is_err());
+        let (code, cached, _) =
+            run_git(&dir, &["diff", "--cached", "--name-only"]).expect("cached");
+        assert_eq!(code, 0);
+        assert!(cached.trim().is_empty(), "{cached}");
+        let (head, _, _) = run_git(&dir, &["rev-parse", "HEAD"]).expect("head");
+        assert_eq!(head, 0);
         let _ = fs::remove_dir_all(&dir);
     }
 
