@@ -3,8 +3,9 @@
 
 #![forbid(unsafe_code)]
 
-/// Ventanas que alojan el chat y pueden tocar el llavero o `ai_exchange`.
-pub const CHAT: &[&str] = &["main", "ai-workspace"];
+/// Sólo la ventana principal toca el llavero o `ai_exchange`.
+/// Asistencia no llama al modelo ni lee la clave.
+pub const CHAT: &[&str] = &["main"];
 
 /// Escritura de documentos `.bara` del workspace: sólo la ventana principal.
 /// Asistencia envía adjuntos al chat; no guarda a disco.
@@ -30,9 +31,9 @@ pub fn require(window: &tauri::WebviewWindow, allowed: &[&str]) -> Result<(), St
 #[cfg(test)]
 mod tests {
     #[test]
-    fn el_chat_cubre_main_y_asistencia() {
-        assert!(super::CHAT.contains(&"main"));
-        assert!(super::CHAT.contains(&"ai-workspace"));
+    fn el_chat_y_el_llavero_quedan_en_main() {
+        assert_eq!(super::CHAT, &["main"]);
+        assert!(!super::CHAT.contains(&"ai-workspace"));
         assert!(!super::CHAT.contains(&"topology"));
         assert!(!super::CHAT.contains(&"telemetry"));
         assert!(!super::CHAT.contains(&"autopoiesis"));

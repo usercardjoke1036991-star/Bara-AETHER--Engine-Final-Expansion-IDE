@@ -1859,7 +1859,7 @@ mod ipc_boundary {
                 assert!(!has_write, "{label} no escribe el workspace");
             }
             if label == "ai-workspace" {
-                assert!(has_llavero, "la asistencia necesita el llavero");
+                assert!(!has_llavero, "la asistencia no toca el llavero ni llama al modelo");
                 assert!(!has_receta, "la asistencia no lanza recetas");
                 assert!(!has_github, "la asistencia no clona");
                 // A2: Asistencia no escribe a disco; solo adjuntos al chat principal.

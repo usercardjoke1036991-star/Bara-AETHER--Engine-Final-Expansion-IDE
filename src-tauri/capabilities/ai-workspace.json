@@ -1,11 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "ai-workspace",
-  "description": "Asistencia multimodal: chat, llavero, carpeta de contexto, catálogo y medios",
+  "description": "Asistencia: contexto, catálogo y medios. Sin llavero ni llamada al modelo.",
   "windows": ["ai-workspace"],
   "permissions": [
     "core:default",
-    "llavero",
     "medios",
     "allow-workspace-roots",
     "allow-workspace-tree",
