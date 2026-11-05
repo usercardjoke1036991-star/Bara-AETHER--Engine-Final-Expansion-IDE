@@ -27,6 +27,7 @@ import PortalMenu, { type PortalMenuItem } from "./shell/PortalMenu";
 import DraftConflictDialog from "./shell/DraftConflictDialog";
 import UnsavedRootDialog, { unsavedTabs } from "./shell/UnsavedRootDialog";
 import StatusBar from "./shell/StatusBar";
+import BottomTabStrip from "./shell/BottomTabs";
 import { bottomHeightCss, escStopsAtField, EXPERT_VIEW_BLURBS, nextEscTarget } from "./shell/uxRules";
 
 import {
@@ -2185,56 +2186,48 @@ export default function App() {
                 window.addEventListener("mouseup", onUp);
               }}
             />
-            <div className="bottom-tabs" role="tablist">
-              {bottomTabs.map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={bottomTab === id}
-                  className={bottomTab === id ? "active" : undefined}
-                  title={label}
-                  onClick={() => openBottomTab(id)}
-                >
-                  {label}
-                </button>
-              ))}
-              <span className="grow" />
-              <button
-                type="button"
-                title="Minimizar panel"
-                aria-label="Minimizar panel"
-                onClick={() => {
-                  setBottomOpen(true);
-                  setBottomMaximized(false);
-                  setBottomFrac(0.15);
-                }}
-              >
-                ▬
-              </button>
-              <button
-                type="button"
-                title={bottomMaximized ? "Restaurar panel" : "Maximizar panel (60%)"}
-                aria-label={bottomMaximized ? "Restaurar panel" : "Maximizar panel"}
-                onClick={() => {
-                  setBottomOpen(true);
-                  setBottomMaximized((v) => !v);
-                }}
-              >
-                {bottomMaximized ? "❐" : "□"}
-              </button>
-              <button
-                type="button"
-                title="Cerrar panel (Ctrl+J)"
-                aria-label="Cerrar panel inferior"
-                onClick={() => {
-                  setBottomOpen(false);
-                  setBottomMaximized(false);
-                }}
-              >
-                ×
-              </button>
-            </div>
+            <BottomTabStrip
+              tabs={bottomTabs}
+              active={bottomTab}
+              onSelect={openBottomTab}
+              controls={
+                <>
+                  <button
+                    type="button"
+                    title="Minimizar panel"
+                    aria-label="Minimizar panel"
+                    onClick={() => {
+                      setBottomOpen(false);
+                      setBottomMaximized(false);
+                    }}
+                  >
+                    ▬
+                  </button>
+                  <button
+                    type="button"
+                    title={bottomMaximized ? "Restaurar panel" : "Maximizar panel (60%)"}
+                    aria-label={bottomMaximized ? "Restaurar panel" : "Maximizar panel"}
+                    onClick={() => {
+                      setBottomOpen(true);
+                      setBottomMaximized((v) => !v);
+                    }}
+                  >
+                    {bottomMaximized ? "❐" : "□"}
+                  </button>
+                  <button
+                    type="button"
+                    title="Cerrar panel (Ctrl+J)"
+                    aria-label="Cerrar panel inferior"
+                    onClick={() => {
+                      setBottomOpen(false);
+                      setBottomMaximized(false);
+                    }}
+                  >
+                    ×
+                  </button>
+                </>
+              }
+            />
             {bottomOpen ? (
               <div className="bottom-body">
                 {bottomTab === "resumen" ? (
