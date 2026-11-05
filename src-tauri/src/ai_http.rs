@@ -1199,4 +1199,51 @@ mod tests {
             "el corte debe ser pronto, no el timeout de 90s"
         );
     }
+
+    #[test]
+    fn el_parser_aguanta_chunked_content_length_y_cortes() {
+        let exact = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+        assert!(respuesta_completa(exact));
+        let (status, body) = partir_respuesta(exact).expect("completo");
+        assert_eq!(status, 200);
+        assert_eq!(body, "hello");
+
+        let corto = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhel";
+        assert!(!respuesta_completa(corto));
+        let (_, parcial) = partir_respuesta(corto).expect("parcial");
+        assert_eq!(parcial, "hel");
+
+        let chunked =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        assert!(respuesta_completa(chunked));
+        assert_eq!(partir_respuesta(chunked).expect("chunk").1, "hello");
+
+        let cortado = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel";
+        assert!(!respuesta_completa(cortado));
+        assert!(partir_respuesta(cortado).is_err());
+
+        let mut state = 0xC0FFEE_u64;
+        for _ in 0..128 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let n = (state as usize) % 48;
+            let mut raw = b"HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n".to_vec();
+            raw.extend(std::iter::repeat_n(b'a', n));
+            if n < 40 {
+                assert!(!respuesta_completa(&raw));
+            } else {
+                assert!(respuesta_completa(&raw));
+            }
+            let parsed = partir_respuesta(&raw).expect("length");
+            assert!(parsed.1.len() <= 40);
+
+            let mut piece = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+            let size = n % 15;
+            piece.extend(format!("{size:x}\r\n").into_bytes());
+            piece.extend(std::iter::repeat_n(b'b', size.saturating_sub(1)));
+            if size > 0 {
+                assert!(!respuesta_completa(&piece));
+                assert!(partir_respuesta(&piece).is_err());
+            }
+        }
+    }
 }
