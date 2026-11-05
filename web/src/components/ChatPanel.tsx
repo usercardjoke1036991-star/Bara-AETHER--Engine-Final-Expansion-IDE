@@ -46,7 +46,7 @@ import {
 import { emptyReport, type AutoApplyReport } from "../autoApply";
 import { readAutoApplyEnabled, writeAutoApplyEnabled } from "../autoApply";
 import { buildReviewChrome, type ReviewChromeLive } from "../reviewChrome";
-import { PROPOSE_PATCH_EVENT, proposeEditorPatch, readProjectFile } from "../editorBridge";
+import { PROPOSE_PATCH_EVENT, readProjectFile } from "../editorBridge";
 import { contentHashOf } from "../workspace";
 import {
   filesFromUnifiedDiff,
@@ -74,7 +74,6 @@ import {
   type RootEntry,
   type Translation,
 } from "../engine";
-import { currentVista, openDeskWindow } from "../windows";
 import AiSettings from "./AiSettings";
 import AssistantText, { codeBlocks, firstBaraCodeBlock } from "./AssistantText";
 
@@ -140,11 +139,6 @@ export interface ChatPanelProps {
   sample: string;
   /** Árbol de la carpeta abierta, ya formateado para el prompt. */
   treeOutline?: string;
-  /**
-   * Opcional: pegar código en el editor sin diff (p. ej. Visual Builder).
-   * «usar en el editor» del chat **no** usa esto: abre previewDiff.
-   */
-  onUseCode?: (code: string) => void;
   /** Juzga un bloque sin escribir (diff + canApply). */
   onJudge: (patch: string) => Promise<AutoApplyReport>;
   /** Escribe tras aceptar el diff (con respaldo). */
@@ -573,30 +567,11 @@ export default function ChatPanel({
     [autoApply, documentName, documentSource, onConfirm, onEnsureOpen, onJudge, publishNotice],
   );
 
-  /**
-   * «usar en el editor»: en `main` abre el diff; desde Asistencia emite a
-   * la ventana principal y la enfoca.
-   */
+  /** «usar en el editor» abre el diff. No pega el bloque en el documento. */
   const useInEditor = useCallback(
     (code: string) => {
       void (async () => {
         try {
-          const vista = await currentVista();
-          if (vista !== "main") {
-            console.info(
-              formatPatchDebug({
-                phase: "emit",
-                vista,
-                document: documentName,
-                detail: `len=${code.trim().length}`,
-              }),
-            );
-            publishNotice("Enviando diff a la ventana principal…");
-            await proposeEditorPatch(code);
-            await openDeskWindow("main");
-            publishNotice("Diff enviado a la ventana principal. Si no ves el panel, ábrelo en main.");
-            return;
-          }
           console.info(
             formatPatchDebug({
               phase: "ensure_open",

@@ -97,7 +97,7 @@ import { idleApply, idleDismiss, idleProposal, type IdleNotice } from "./idle";
 import { runWithBusy } from "./busyGuard";
 import { runWorkspaceRecipe, type RecipeName } from "./recipes";
 import { publishVeto } from "./topology";
-import { openDevtools, outlineTree, publishEditorContext } from "./editorBridge";
+import { openDevtools, outlineTree, proposeEditorPatch, publishEditorContext } from "./editorBridge";
 import { formatPatchDebug } from "./patchFlow";
 import { dedupeTreeByPathKey, pathsEqual } from "./paths";
 import type { ReviewChromeLive } from "./reviewChrome";
@@ -1395,17 +1395,6 @@ export default function App() {
     [applyReportToEditor],
   );
 
-  const applyCode = useCallback(
-    (code: string) => {
-      updateActiveSource((previous) =>
-        previous.trim().length === 0
-          ? code
-          : `${previous.trimEnd()}\n\n${code}`,
-      );
-    },
-    [updateActiveSource],
-  );
-
   const rows = useMemo<TokenInfo[]>(
     () => (analysis ? analysis.tokens.slice(0, MAX_ROWS) : []),
     [analysis],
@@ -2023,7 +2012,6 @@ export default function App() {
                 catalogue={catalogue}
                 sample={sample}
                 treeOutline={treeOutline}
-                onUseCode={applyCode}
                 onJudge={judgeSuggestion}
                 onConfirm={confirmSuggestion}
                 onUndo={undoSuggestion}
@@ -2420,7 +2408,14 @@ export default function App() {
                     <h3>{EXPERT_VIEW_BLURBS.lienzo.title}</h3>
                     <p className="muted">{EXPERT_VIEW_BLURBS.lienzo.blurb}</p>
                     <PanelGuard name="lienzo" resetKey={bottomTab === "lienzo"}>
-                      <VisualBuilder open onUseCode={applyCode} />
+                      <VisualBuilder
+                        open
+                        onUseCode={(code) => {
+                          void proposeEditorPatch(code)
+                            .then(() => setAiOpen(true))
+                            .catch((reason: unknown) => setError(describeError(reason)));
+                        }}
+                      />
                     </PanelGuard>
                   </div>
                 ) : null}

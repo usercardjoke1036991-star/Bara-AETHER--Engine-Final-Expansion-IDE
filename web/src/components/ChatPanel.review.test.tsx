@@ -469,3 +469,44 @@ describe("adjunto desde Asistencia", () => {
     expect(screen.queryByText("nota.rs")).toBeNull();
   });
 });
+
+describe("usar en el editor", () => {
+  it("abre el diff aunque la vista no sea main", async () => {
+    const { saveChatHistory, clearChatHistory } = await import("../ai/chatHistory");
+    const { proposeEditorPatch } = await import("../editorBridge");
+    const { currentVista } = await import("../windows");
+    vi.mocked(currentVista).mockResolvedValue("ai-workspace");
+    saveChatHistory("proj-n12", [
+      {
+        id: "1",
+        role: "assistant",
+        text: "```rust\nfn a() {}\n```",
+        images: [],
+        model: "test",
+        createdAt: 1,
+        error: null,
+      },
+    ]);
+    const onJudge = vi.fn(async () => reviewReport());
+    render(
+      <ChatPanel
+        open
+        projectId="proj-n12"
+        documentName="doc.bara"
+        documentSource="fn a() {}\n"
+        analysis={null}
+        catalogue={[]}
+        sample=""
+        onJudge={onJudge}
+        onConfirm={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "usar en el editor" }));
+    await waitFor(() => {
+      expect(onJudge).toHaveBeenCalled();
+    });
+    expect(proposeEditorPatch).not.toHaveBeenCalled();
+    clearChatHistory("proj-n12");
+  });
+});
