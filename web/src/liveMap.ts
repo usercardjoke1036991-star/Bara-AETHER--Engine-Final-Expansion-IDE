@@ -232,6 +232,10 @@ function parseUnifiedFiles(diff: string): ParsedDiffFile[] {
   return files;
 }
 
+function hostEnding(host: string): "\r\n" | "\n" {
+  return host.includes("\r\n") ? "\r\n" : "\n";
+}
+
 function hostLinesOf(host: string): string[] {
   const normalized = host.replace(/\r\n/g, "\n");
   if (normalized.length === 0) {
@@ -244,8 +248,18 @@ function hostLinesOf(host: string): string[] {
   return lines;
 }
 
+function joinHost(lines: string[], eol: "\r\n" | "\n", trailing: boolean): string {
+  if (lines.length === 0) {
+    return "";
+  }
+  const body = lines.join(eol);
+  return trailing ? `${body}${eol}` : body;
+}
+
 /** Aplica hunks `@@` sobre el host. `null` si el contexto no encaja. */
 function applyHunks(host: string, hunks: ParsedHunk[]): string | null {
+  const eol = hostEnding(host);
+  const trailing = host.endsWith("\n");
   const lines = hostLinesOf(host);
   const out: string[] = [];
   let cursor = 0;
@@ -257,11 +271,12 @@ function applyHunks(host: string, hunks: ParsedHunk[]): string | null {
     out.push(...lines.slice(cursor, start));
     cursor = start;
     for (const line of hunk.lines) {
+      const text = line.text.replace(/\r$/, "");
       if (line.kind === "+") {
-        out.push(line.text);
+        out.push(text);
         continue;
       }
-      if (cursor >= lines.length || lines[cursor] !== line.text) {
+      if (cursor >= lines.length || lines[cursor] !== text) {
         return null;
       }
       if (line.kind === " ") {
@@ -271,10 +286,7 @@ function applyHunks(host: string, hunks: ParsedHunk[]): string | null {
     }
   }
   out.push(...lines.slice(cursor));
-  if (out.length === 0) {
-    return "";
-  }
-  return `${out.join("\n")}\n`;
+  return joinHost(out, eol, trailing);
 }
 
 /**
@@ -323,18 +335,11 @@ export function liveMapContext(focus: string[], maxLines = 48): Promise<MapConte
 
 /** Empalme local (misma idea que el splice Rust) para simular el archivo tras el parche. */
 export function spliceHost(host: string, patch: string, line: number): string {
-  const normalized = host.replace(/\r\n/g, "\n");
-  const endsNl = normalized.endsWith("\n");
-  const lines =
-    normalized.length === 0
-      ? []
-      : normalized.split("\n");
-  if (endsNl && lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
+  const eol = hostEnding(host);
+  const trailing = host.endsWith("\n");
+  const lines = hostLinesOf(host);
   const at = Math.max(0, Math.min(lines.length, Math.max(0, line - 1)));
   const patchBody = patch.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
   const patchLines = patchBody.length === 0 ? [] : patchBody.split("\n");
-  const out = [...lines.slice(0, at), ...patchLines, ...lines.slice(at)].join("\n");
-  return out.length > 0 && !out.endsWith("\n") ? `${out}\n` : out;
+  return joinHost([...lines.slice(0, at), ...patchLines, ...lines.slice(at)], eol, trailing);
 }

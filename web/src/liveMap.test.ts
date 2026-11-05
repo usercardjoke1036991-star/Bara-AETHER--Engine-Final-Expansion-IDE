@@ -94,6 +94,22 @@ describe("mergeUnifiedDiff", () => {
   });
 });
 
+describe("fin de línea", () => {
+  it("un hunk de una línea conserva CRLF y la ausencia de salto final", () => {
+    const host = "uno\r\ndos\r\ntres";
+    const diff = ["--- a/src/a.rs", "+++ b/src/a.rs", "@@ -2,1 +2,1 @@", "-dos", "+DOS"].join("\n");
+    const merged = mergeUnifiedDiff(diff, { "src/a.rs": host });
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) {
+      return;
+    }
+    expect(merged.files[0]?.source).toBe("uno\r\nDOS\r\ntres");
+    const spliced = spliceHost(host, "DOS", 2);
+    expect(spliced).toBe("uno\r\nDOS\r\ndos\r\ntres");
+    expect(spliced.endsWith("\n")).toBe(false);
+  });
+});
+
 describe("isExternalJsSpecifier", () => {
   it("trata @tauri-apps y bare como externos", () => {
     expect(isExternalJsSpecifier("@tauri-apps/api/core")).toBe(true);

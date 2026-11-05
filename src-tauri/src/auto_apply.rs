@@ -71,20 +71,26 @@ pub(crate) fn planned_next(host: &str, patch: &str, line: u32) -> String {
 }
 
 fn splice(host: &str, patch: &str, line: u32) -> (String, u32, u32) {
+    let eol = if host.contains("\r\n") { "\r\n" } else { "\n" };
+    let trailing = host.ends_with('\n');
     let patch = patch.trim_matches(|ch: char| ch == '\r' || ch == '\n');
-    let patch_lines: Vec<&str> = if patch.is_empty() {
+    let patch_lines: Vec<String> = if patch.is_empty() {
         Vec::new()
     } else {
-        patch.split('\n').collect()
+        patch
+            .split('\n')
+            .map(|row| row.trim_end_matches('\r').to_string())
+            .collect()
     };
     let inserted = u32::try_from(patch_lines.len()).unwrap_or(u32::MAX);
-    let ends_nl = host.ends_with('\n');
-    let mut lines: Vec<&str> = if host.is_empty() {
+    let mut lines: Vec<String> = if host.is_empty() {
         Vec::new()
     } else {
-        host.split('\n').collect()
+        host.split('\n')
+            .map(|row| row.trim_end_matches('\r').to_string())
+            .collect()
     };
-    if ends_nl && lines.last().is_some_and(|row| row.is_empty()) {
+    if trailing && lines.last().is_some_and(|row| row.is_empty()) {
         lines.pop();
     }
     let index = if line == 0 {
@@ -93,11 +99,11 @@ fn splice(host: &str, patch: &str, line: u32) -> (String, u32, u32) {
         (line as usize).saturating_sub(1).min(lines.len())
     };
     for (offset, row) in patch_lines.iter().enumerate() {
-        lines.insert(index.saturating_add(offset), row);
+        lines.insert(index.saturating_add(offset), row.clone());
     }
-    let mut out = lines.join("\n");
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+    let mut out = lines.join(eol);
+    if trailing && !out.is_empty() {
+        out.push_str(eol);
     }
     let at = u32::try_from(index).unwrap_or(0).saturating_add(1);
     (out, at, inserted)
@@ -974,5 +980,12 @@ mod tests {
             fs::read_to_string(root.join("src/other.rs")).expect("other"),
             "fn other() {}\n"
         );
+    }
+
+    #[test]
+    fn n9_splice_conserva_crlf_sin_salto_final() {
+        let (out, _, _) = splice("uno\r\ndos\r\ntres", "DOS", 2);
+        assert_eq!(out, "uno\r\nDOS\r\ndos\r\ntres");
+        assert!(!out.ends_with('\n'));
     }
 }
