@@ -1318,7 +1318,7 @@ export default function ChatPanel({
           {review || lastBackup ? (
             <div className="ai-review-dock" role="region" aria-label="Revisión del parche">
               {review && !review.report.verified ? (
-                <p className="unverified-warn" role="alert">
+                <p className="unverified-warn" role="status">
                   Este cambio NO está verificado
                 </p>
               ) : null}
