@@ -28,6 +28,7 @@ import DraftConflictDialog from "./shell/DraftConflictDialog";
 import UnsavedRootDialog, { unsavedTabs } from "./shell/UnsavedRootDialog";
 import StatusBar from "./shell/StatusBar";
 import BottomTabStrip from "./shell/BottomTabs";
+import ErrorBanner from "./shell/ErrorBanner";
 import { bottomHeightCss, escStopsAtField, EXPERT_VIEW_BLURBS, nextEscTarget } from "./shell/uxRules";
 
 import {
@@ -1656,7 +1657,7 @@ export default function App() {
         />
       ) : null}
 
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}
       {diskWarn ? (
         <div className="disk-warn" role="status">
           <span>{diskWarn}</span>
