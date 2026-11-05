@@ -207,23 +207,44 @@ pub fn propagate(root: &str, path: &str, from: &str, to: &str) -> Result<GlobalR
     let mut written: Vec<(String, String)> = Vec::new();
     for plan in &plans {
         if let Err(err) = auto_apply::write_backup(root, &plan.path, &plan.previous) {
-            for (path, previous) in written.iter().rev() {
-                let _ = workspace::write_source(root, path, previous);
-            }
-            return Err(err);
+            return abort_with_restore(root, &written, err);
         }
         let expected = workspace::content_hash(&plan.previous);
         if let Err(err) =
             workspace::write_source_checked(root, &plan.path, &plan.next, Some(expected.as_str()))
         {
-            for (path, previous) in written.iter().rev() {
-                let _ = workspace::write_source(root, path, previous);
-            }
-            return Err(err);
+            return abort_with_restore(root, &written, err);
         }
         written.push((plan.path.clone(), plan.previous.clone()));
     }
     Ok(report(from, to, network, true, files))
+}
+
+/// Restaura lo ya escrito. Si alguna restauración falla, el error se devuelve
+/// (no se descarta): el llamador tiene que mostrarlo.
+fn restore_written(root: &str, written: &[(String, String)]) -> Result<(), String> {
+    let mut failed = Vec::new();
+    for (path, previous) in written.iter().rev() {
+        if let Err(err) = workspace::write_source(root, path, previous) {
+            failed.push(format!("{path}: {err}"));
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("\n"))
+    }
+}
+
+fn abort_with_restore(
+    root: &str,
+    written: &[(String, String)],
+    cause: String,
+) -> Result<GlobalReport, String> {
+    match restore_written(root, written) {
+        Ok(()) => Err(cause),
+        Err(detail) => Err(format!("{cause}\nno se pudo deshacer:\n{detail}")),
+    }
 }
 
 fn report(
@@ -295,5 +316,51 @@ mod tests {
         let root = scratch();
         fs::write(root.join("src/a.rs"), "fn alpha() {}\n").expect("a");
         assert!(propagate(&root.display().to_string(), "../a.rs", "alpha", "beta").is_err());
+    }
+
+    #[test]
+    fn m4_un_fallo_a_medias_restaura_y_el_rollback_roto_se_muestra() {
+        let root = scratch();
+        let original = "fn alpha() {}\nfn main() { alpha(); }\n";
+        fs::write(root.join("src/a.rs"), original).expect("a");
+        let b = root.join("src/b.rs");
+        fs::write(&b, "fn otro() { alpha(); }\n").expect("b");
+        let mut perms = fs::metadata(&b).expect("meta").permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&b, perms).expect("solo lectura");
+        let root_text = root.display().to_string();
+        let err = propagate(&root_text, "src/a.rs", "alpha", "beta").expect_err("escritura");
+        assert!(
+            !err.contains("no se pudo deshacer"),
+            "el rollback de a.rs tenía que funcionar: {err}"
+        );
+        let restored = fs::read_to_string(root.join("src/a.rs")).expect("a2");
+        assert_eq!(restored, original);
+        let mut perms = fs::metadata(&b).expect("meta2").permissions();
+        perms.set_readonly(false);
+        fs::set_permissions(&b, perms).expect("quitar solo lectura");
+
+        let shown = restore_written(&root_text, &[("../fuera.rs".to_string(), "x".to_string())])
+            .expect_err("rollback");
+        assert!(shown.contains("../fuera.rs"), "{shown}");
+        let wrapped = abort_with_restore(
+            &root_text,
+            &[("../fuera.rs".to_string(), "x".to_string())],
+            "falló la escritura".to_string(),
+        )
+        .expect_err("aviso");
+        assert!(wrapped.contains("falló la escritura"), "{wrapped}");
+        assert!(wrapped.contains("no se pudo deshacer"), "{wrapped}");
+        assert!(wrapped.contains("../fuera.rs"), "{wrapped}");
+    }
+
+    #[test]
+    fn m4_topologia_no_tiene_el_permiso_de_propagar() {
+        let caps = include_str!("../capabilities/topology.json");
+        assert!(
+            !caps.contains("allow-transmute-global"),
+            "la propagación sólo vive en main"
+        );
+        assert!(caps.contains("allow-get-workspace-topology-graph"));
     }
 }
