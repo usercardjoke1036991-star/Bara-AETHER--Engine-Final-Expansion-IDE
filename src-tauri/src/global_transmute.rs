@@ -336,9 +336,6 @@ mod tests {
         );
         let restored = fs::read_to_string(root.join("src/a.rs")).expect("a2");
         assert_eq!(restored, original);
-        let mut perms = fs::metadata(&b).expect("meta2").permissions();
-        perms.set_readonly(false);
-        fs::set_permissions(&b, perms).expect("quitar solo lectura");
 
         let shown = restore_written(&root_text, &[("../fuera.rs".to_string(), "x".to_string())])
             .expect_err("rollback");
