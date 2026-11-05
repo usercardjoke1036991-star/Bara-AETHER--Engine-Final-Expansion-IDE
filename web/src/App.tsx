@@ -24,6 +24,7 @@ import {
   type SideMode,
 } from "./shell/layoutState";
 import PortalMenu, { type PortalMenuItem } from "./shell/PortalMenu";
+import UnsavedRootDialog, { unsavedTabs } from "./shell/UnsavedRootDialog";
 import StatusBar from "./shell/StatusBar";
 import { bottomHeightCss, EXPERT_VIEW_BLURBS, nextEscTarget } from "./shell/uxRules";
 
@@ -236,6 +237,8 @@ export default function App() {
   const [idle, setIdle] = useState<IdleNotice | null>(null);
   /** A9 — aviso si C: < 8 GB. */
   const [diskWarn, setDiskWarn] = useState<string | null>(null);
+  /** A3: nombres sucios pendientes de Guardar / Descartar / Cancelar. */
+  const [unsavedNames, setUnsavedNames] = useState<string[] | null>(null);
   const [diskBusy, setDiskBusy] = useState(false);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
@@ -254,6 +257,18 @@ export default function App() {
   const [reveal, setReveal] = useState<{ path: string; line: number; token: number } | null>(null);
   const revealToken = useRef(0);
   const tabsRef = useRef(tabs);
+  const rootContinue = useRef<(() => Promise<void>) | null>(null);
+
+  /** Si hay pestañas sucias, no cambia de carpeta hasta Guardar / Descartar / Cancelar. */
+  const guardRootChange = useCallback((run: () => Promise<void>) => {
+    const names = unsavedTabs(tabsRef.current).map((tab) => tab.name);
+    if (names.length > 0) {
+      rootContinue.current = run;
+      setUnsavedNames(names);
+      return;
+    }
+    void run();
+  }, []);
 
   useEffect(() => {
     void currentVista().then(setVista);
@@ -576,8 +591,10 @@ export default function App() {
             if (cancel) {
               return;
             }
-            resetEditorForRootChange(event.payload?.reason ?? "event");
-            void refreshWorkspace();
+            guardRootChange(async () => {
+              resetEditorForRootChange(event.payload?.reason ?? "event");
+              await refreshWorkspace();
+            });
           },
         );
       } catch {
@@ -588,7 +605,7 @@ export default function App() {
       cancel = true;
       unlisten?.();
     };
-  }, [vista, refreshWorkspace, resetEditorForRootChange]);
+  }, [vista, refreshWorkspace, resetEditorForRootChange, guardRootChange]);
 
   useEffect(() => {
     if (vista !== "main") {
@@ -678,6 +695,45 @@ export default function App() {
     setTrustPrompt(null);
   }, []);
 
+  const finishRootChoice = useCallback(
+    async (mode: "save" | "discard" | "cancel") => {
+      const run = rootContinue.current;
+      rootContinue.current = null;
+      setUnsavedNames(null);
+      if (mode === "cancel" || !run) {
+        setPatchBanner("Cambio de carpeta cancelado: los cambios siguen en el editor.");
+        return;
+      }
+      if (mode === "save") {
+        setSaving(true);
+        try {
+          for (const tab of unsavedTabs(tabsRef.current)) {
+            const document = await workspaceWriteDocument(
+              tab.path,
+              tab.source,
+              contentHashOf(tab.saved),
+            );
+            setTabs((current) =>
+              current.map((item) =>
+                item.path === document.path ? { ...item, saved: document.source } : item,
+              ),
+            );
+            if (workspaceRoot) {
+              clearDraft(workspaceRoot, document.path);
+            }
+          }
+        } catch (failure) {
+          setError(describeError(failure));
+          setSaving(false);
+          return;
+        }
+        setSaving(false);
+      }
+      await run();
+    },
+    [workspaceRoot],
+  );
+
   const revokeTrusted = useCallback(
     async (path: string) => {
       try {
@@ -695,23 +751,26 @@ export default function App() {
 
   /** El diálogo del sistema elige la carpeta; el WebView no manda la ruta. */
   const pickFolder = useCallback(async () => {
-    setWorkspaceLoading(true);
-    setError(null);
-    try {
-      adoptWorkspace(await workspaceOpenDialog());
-    } catch (failure) {
-      const message = describeError(failure);
-      if (message !== "cancelado") {
-        setError(message);
+    guardRootChange(async () => {
+      setWorkspaceLoading(true);
+      setError(null);
+      try {
+        adoptWorkspace(await workspaceOpenDialog());
+      } catch (failure) {
+        const message = describeError(failure);
+        if (message !== "cancelado") {
+          setError(message);
+        }
+      } finally {
+        setWorkspaceLoading(false);
       }
-    } finally {
-      setWorkspaceLoading(false);
-    }
-  }, [adoptWorkspace]);
+    });
+  }, [adoptWorkspace, guardRootChange]);
 
   /** URL allowlist en Rust, carpeta por diálogo, `git clone` sin shell. */
   const cloneRepository = useCallback(
     async (url: string) => {
+      guardRootChange(async () => {
       setImporting(true);
       setCloneProgress("comprobando la URL…");
       setError(null);
@@ -737,8 +796,9 @@ export default function App() {
         }
         setImporting(false);
       }
+      });
     },
-    [adoptWorkspace],
+    [adoptWorkspace, guardRootChange],
   );
 
   // Análisis en vivo con retardo: no se invoca al kernel en cada tecla.
@@ -1483,6 +1543,15 @@ export default function App() {
         } as CSSProperties
       }
     >
+      {unsavedNames ? (
+        <UnsavedRootDialog
+          names={unsavedNames}
+          busy={saving}
+          onSave={() => void finishRootChoice("save")}
+          onDiscard={() => void finishRootChoice("discard")}
+          onCancel={() => void finishRootChoice("cancel")}
+        />
+      ) : null}
       {trustPrompt ? (
         <div className="trust-dialog" role="dialog" aria-modal="true" aria-labelledby="trust-title">
           <div className="trust-dialog-card">
