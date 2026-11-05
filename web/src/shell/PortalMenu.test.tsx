@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import PortalMenu from "./PortalMenu";
+import PortalMenu, { placePortalMenu } from "./PortalMenu";
 
 afterEach(() => {
   cleanup();
@@ -33,5 +33,31 @@ describe("PortalMenu", () => {
     fireEvent.mouseDown(document.body);
     expect(onClose).toHaveBeenCalled();
     anchor.remove();
+  });
+
+  it("hacia arriba resta la altura y, si no cabe, hace scroll interno", () => {
+    const up = placePortalMenu({
+      anchorTop: 700,
+      anchorBottom: 740,
+      anchorLeft: 20,
+      anchorWidth: 80,
+      menuHeight: 200,
+      viewportWidth: 1366,
+      viewportHeight: 768,
+    });
+    expect(up.top).toBe(700 - 200 - 4);
+    expect(up.scroll).toBe(false);
+    const cramped = placePortalMenu({
+      anchorTop: 40,
+      anchorBottom: 80,
+      anchorLeft: 20,
+      anchorWidth: 80,
+      menuHeight: 400,
+      viewportWidth: 320,
+      viewportHeight: 200,
+    });
+    expect(cramped.top).toBe(8);
+    expect(cramped.scroll).toBe(true);
+    expect(cramped.maxHeight).toBe(184);
   });
 });

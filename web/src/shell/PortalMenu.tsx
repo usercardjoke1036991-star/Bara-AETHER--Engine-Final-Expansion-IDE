@@ -18,25 +18,66 @@ interface PortalMenuProps {
   labelledBy?: string;
 }
 
+export function placePortalMenu(input: {
+  anchorTop: number;
+  anchorBottom: number;
+  anchorLeft: number;
+  anchorWidth: number;
+  menuHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}): { top: number; left: number; width: number; maxHeight: number | undefined; scroll: boolean } {
+  const width = Math.max(240, input.anchorWidth);
+  let left = input.anchorLeft;
+  if (left + width > input.viewportWidth - 8) {
+    left = Math.max(8, input.viewportWidth - width - 8);
+  }
+  const below = input.anchorBottom + 4;
+  const above = input.anchorTop - input.menuHeight - 4;
+  const fitsBelow = below + input.menuHeight <= input.viewportHeight - 8;
+  const fitsAbove = above >= 8;
+  if (fitsBelow) {
+    return { top: below, left, width, maxHeight: undefined, scroll: false };
+  }
+  if (fitsAbove) {
+    return { top: above, left, width, maxHeight: undefined, scroll: false };
+  }
+  return {
+    top: 8,
+    left,
+    width,
+    maxHeight: Math.max(80, input.viewportHeight - 16),
+    scroll: true,
+  };
+}
+
 export default function PortalMenu({ open, anchor, items, onClose, labelledBy }: PortalMenuProps) {
   const menuRef = useRef<HTMLUListElement>(null);
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 240 });
+  const [pos, setPos] = useState({
+    top: 0,
+    left: 0,
+    width: 240,
+    maxHeight: undefined as number | undefined,
+    scroll: false,
+  });
 
   useLayoutEffect(() => {
     if (!open || !anchor) {
       return;
     }
     const rect = anchor.getBoundingClientRect();
-    const width = Math.max(240, rect.width);
-    let left = rect.left;
-    let top = rect.bottom + 4;
-    if (left + width > window.innerWidth - 8) {
-      left = Math.max(8, window.innerWidth - width - 8);
-    }
-    if (top + 320 > window.innerHeight) {
-      top = Math.max(8, rect.top - 4);
-    }
-    setPos({ top, left, width });
+    const menuHeight = menuRef.current?.offsetHeight ?? 0;
+    setPos(
+      placePortalMenu({
+        anchorTop: rect.top,
+        anchorBottom: rect.bottom,
+        anchorLeft: rect.left,
+        anchorWidth: rect.width,
+        menuHeight,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }),
+    );
   }, [open, anchor, items.length]);
 
   useEffect(() => {
@@ -75,10 +116,16 @@ export default function PortalMenu({ open, anchor, items, onClose, labelledBy }:
   return createPortal(
     <ul
       ref={menuRef}
-      className="portal-menu"
+      className={pos.scroll ? "portal-menu portal-menu-scroll" : "portal-menu"}
       role="menu"
       aria-labelledby={labelledBy}
-      style={{ top: pos.top, left: pos.left, minWidth: pos.width }}
+      style={{
+        top: pos.top,
+        left: pos.left,
+        minWidth: pos.width,
+        maxHeight: pos.maxHeight,
+        overflow: pos.scroll ? "auto" : undefined,
+      }}
     >
       {items.map((item) => (
         <li key={item.id} role="none">

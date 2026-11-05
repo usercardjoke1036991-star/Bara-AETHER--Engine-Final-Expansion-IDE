@@ -547,6 +547,10 @@ body,
   overflow: visible;
 }
 
+.portal-menu-scroll {
+  overflow: auto;
+}
+
 .portal-menu-item {
   display: flex;
   flex-direction: column;
