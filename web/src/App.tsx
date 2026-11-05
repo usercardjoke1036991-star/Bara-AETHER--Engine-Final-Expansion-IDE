@@ -1935,7 +1935,7 @@ export default function App() {
                   <button type="button" onClick={() => setPaletteOpen(true)}>
                     Abrir paleta de comandos
                   </button>
-                  <p className="muted">Tipografía mínima 14px · contraste AA · Esc cierra paneles.</p>
+                  <p className="muted">Tipografía mínima 14 px en el texto legible · contraste AA · Esc cierra paneles.</p>
                   <section className="trust-settings" aria-label="Carpetas de confianza">
                     <h3>Carpetas de confianza</h3>
                     <p className="muted">

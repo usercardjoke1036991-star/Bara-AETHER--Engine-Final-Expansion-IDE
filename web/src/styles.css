@@ -223,13 +223,13 @@ body,
 
 .activity-brand-he {
   color: var(--brand-green);
-  font-size: 0.65rem;
+  font-size: 1rem;
   font-weight: 600;
 }
 
 .activity-brand-en {
   color: var(--root);
-  font-size: 0.58rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -241,7 +241,7 @@ body,
   border-radius: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.01em;
   display: flex;
@@ -253,7 +253,7 @@ body,
 }
 
 .activity-glyph {
-  font-size: 0.95rem;
+  font-size: 1rem;
   line-height: 1;
   color: var(--brand-green);
 }
@@ -665,7 +665,7 @@ body,
 }
 
 .kernel-pill {
-  font-size: 0.75rem;
+  font-size: 1rem;
   letter-spacing: 0.02em;
   padding: 0.1rem 0.45rem;
   border: 1px solid var(--line);
@@ -693,7 +693,7 @@ body,
   background: #2a1418;
   border-bottom: 1px solid var(--error);
   color: var(--error);
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .grid {
@@ -717,7 +717,7 @@ body,
 
 .pane h2 {
   margin: 0.4rem 0 0;
-  font-size: 0.8rem;
+  font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent);
@@ -835,7 +835,7 @@ body,
   padding: 0.45rem 0.75rem;
   background: color-mix(in srgb, var(--warn, #b45309) 18%, transparent);
   border-bottom: 1px solid var(--line);
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .problems-panel,
@@ -848,7 +848,7 @@ body,
 
 .live-map-panel h4 {
   margin: 0.5rem 0 0.25rem;
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .live-map-toolbar {
@@ -861,7 +861,7 @@ body,
   list-style: none;
   margin: 0;
   padding: 0 0 0.75rem;
-  font-size: 0.82rem;
+  font-size: 1rem;
 }
 
 .live-map-deps li,
@@ -872,12 +872,12 @@ body,
 
 .live-map-kind {
   opacity: 0.65;
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .ai-impact {
   margin: 0.35rem 0;
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .problems-list {
@@ -905,7 +905,7 @@ body,
 
 .problem-loc {
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 0.8rem;
+  font-size: 1rem;
   opacity: 0.75;
 }
 
@@ -950,7 +950,7 @@ body,
   border-radius: 4px;
   background: transparent;
   color: var(--text);
-  font-size: 0.78rem;
+  font-size: 1rem;
   line-height: 1.25;
 }
 
@@ -972,7 +972,7 @@ body,
 
 .shelf-name {
   font-weight: 600;
-  font-size: 0.8rem;
+  font-size: 1rem;
   letter-spacing: 0.01em;
   max-width: 100%;
   overflow: hidden;
@@ -1017,7 +1017,7 @@ body,
 .ws-section-head h2 {
   margin: 0;
   flex: 1;
-  font-size: 0.7rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   color: var(--accent);
@@ -1026,7 +1026,7 @@ body,
 
 .ws-empty {
   margin: 0.25rem 0;
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .workspace-tree {
@@ -1103,7 +1103,7 @@ body,
 .welcome-kicker {
   margin: 0;
   color: var(--brand-green);
-  font-size: 0.78rem;
+  font-size: 1rem;
   letter-spacing: 0.06em;
 }
 
@@ -1124,7 +1124,7 @@ body,
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
@@ -1132,7 +1132,7 @@ body,
   margin: 0.5rem 0 0;
   color: var(--root);
   font-family: Consolas, "Segoe UI Mono", monospace;
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .welcome-dismiss {
@@ -1172,7 +1172,7 @@ body,
   margin: 0.65rem 0 0.85rem;
   padding: 0.45rem 0.55rem;
   overflow-wrap: anywhere;
-  font-size: 0.78rem;
+  font-size: 1rem;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: color-mix(in srgb, var(--bg) 80%, var(--line));
@@ -1194,7 +1194,7 @@ body,
 
 .trust-settings h3 {
   margin: 0 0 0.35rem;
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 
 .trust-list {
@@ -1217,7 +1217,7 @@ body,
 .trust-list .inline-code {
   flex: 1 1 8rem;
   overflow-wrap: anywhere;
-  font-size: 0.72rem;
+  font-size: 1rem;
 }
 
 .fold {
@@ -1241,13 +1241,13 @@ body,
 
 .console-fold summary {
   padding: 0.35rem 0.7rem 0;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
 .icon-button {
   padding: 0.1rem 0.4rem;
-  font-size: 0.85rem;
+  font-size: 1rem;
   line-height: 1.2;
 }
 
@@ -1255,7 +1255,7 @@ body,
   display: block;
   margin: 0;
   padding: 0 0.15rem;
-  font-size: 0.62rem;
+  font-size: 1rem;
   line-height: 1.3;
   color: var(--muted);
   opacity: 0.75;
@@ -1265,23 +1265,23 @@ body,
 }
 
 .workspace-root.path {
-  font-size: 0.62rem;
+  font-size: 1rem;
 }
 
 .workspace-root .path {
-  font-size: 0.62rem;
+  font-size: 1rem;
 }
 
 .workspace-root button {
   padding: 0.3rem 0.5rem;
-  font-size: 0.72rem;
+  font-size: 1rem;
 }
 
 .workspace-meta,
 .workspace-note {
   margin: 0;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 1rem;
   line-height: 1.35;
 }
 
@@ -1327,7 +1327,7 @@ body,
   border-radius: 4px;
   background: transparent;
   color: var(--text);
-  font-size: 0.78rem;
+  font-size: 1rem;
   line-height: 1.25;
   text-align: left;
 }
@@ -1375,14 +1375,14 @@ body,
 .tree-count {
   margin-left: auto;
   color: var(--muted);
-  font-size: 0.65rem;
+  font-size: 1rem;
 }
 
 .tree-empty {
   margin: 0;
   padding: 0.25rem;
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 1rem;
 }
 
 .editor-main {
@@ -1432,7 +1432,7 @@ body,
   padding: 0.25rem 0.4rem;
   border: 0;
   background: transparent;
-  font-size: 0.75rem;
+  font-size: 1rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1450,7 +1450,7 @@ body,
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 1rem;
   line-height: 1;
 }
 
@@ -1469,7 +1469,7 @@ body,
 
 .tab-empty {
   padding: 0.3rem 0.4rem;
-  font-size: 0.72rem;
+  font-size: 1rem;
 }
 
 .editor-toolbar {
@@ -1558,14 +1558,14 @@ body,
 
 .belnap-glyph {
   color: var(--root);
-  font-size: 0.95rem;
+  font-size: 1rem;
 }
 
 .belnap-name,
 .belnap-mass,
 .console-roots {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 1rem;
 }
 
 .console-log {
@@ -1573,7 +1573,7 @@ body,
   min-height: 0;
   overflow: auto;
   font-family: Consolas, "Segoe UI Mono", monospace;
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .console-log p {
@@ -1628,7 +1628,7 @@ button:disabled {
 table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.8rem;
+  font-size: 1rem;
 }
 
 th,
@@ -1674,7 +1674,7 @@ td {
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .roots li {
@@ -1741,7 +1741,7 @@ td {
 .ai-head h2,
 .ai-head-title {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--accent);
@@ -1816,7 +1816,7 @@ td {
 
 .ai-welcome p {
   margin: 0 0 0.4rem;
-  font-size: 0.8rem;
+  font-size: 1rem;
 }
 
 .ai-msg {
@@ -1842,7 +1842,7 @@ td {
 
 .ai-msg-head button {
   padding: 0.1rem 0.4rem;
-  font-size: 0.7rem;
+  font-size: 1rem;
 }
 
 .ai-answer {
@@ -1861,18 +1861,18 @@ td {
 .ai-answer-actions button,
 .ai-copy-code {
   padding: 0.15rem 0.45rem;
-  font-size: 0.72rem;
+  font-size: 1rem;
 }
 
 .tab-save-state {
-  font-size: 0.7rem;
+  font-size: 1rem;
   font-weight: 400;
   opacity: 0.75;
 }
 
 .ai-text {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 1rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -1884,7 +1884,7 @@ td {
   border-radius: 3px;
   background: var(--pane);
   font-family: "Consolas", "Segoe UI Mono", monospace;
-  font-size: 0.85em;
+  font-size: 1rem;
 }
 
 /* ---------- Código, imágenes y redacción del asistente ---------- */
@@ -1902,12 +1902,12 @@ td {
   gap: 0.35rem;
   padding: 0.25rem 0.4rem;
   border-bottom: 1px solid var(--line);
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .ai-code-head button {
   padding: 0.1rem 0.4rem;
-  font-size: 0.7rem;
+  font-size: 1rem;
 }
 
 .ai-code-body {
@@ -1916,7 +1916,7 @@ td {
   padding: 0.5rem;
   overflow: auto;
   font-family: "Consolas", "Segoe UI Mono", monospace;
-  font-size: 0.78rem;
+  font-size: 1rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1944,7 +1944,7 @@ td {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .ai-chip img {
@@ -2007,7 +2007,7 @@ td {
 
 .ai-backup-hint {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: 1rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2024,7 +2024,7 @@ td {
   border-radius: 4px;
   background: var(--pane);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .ai-attach:hover {
@@ -2035,14 +2035,14 @@ td {
 .ai-error {
   margin: 0;
   color: var(--error);
-  font-size: 0.8rem;
+  font-size: 1rem;
 }
 
 .ai-problems {
   margin: 0;
   padding-left: 1.1rem;
   color: var(--accent);
-  font-size: 0.8rem;
+  font-size: 1rem;
 }
 
 /* ---------- Ajustes del cliente de IA ---------- */
@@ -2059,7 +2059,7 @@ td {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
@@ -2086,7 +2086,7 @@ td {
   display: flex;
   align-items: flex-start;
   gap: 0.4rem;
-  font-size: 0.78rem;
+  font-size: 1rem;
 }
 
 .ai-check input {
@@ -2095,7 +2095,7 @@ td {
 
 .ai-report summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 /* ---------- Panel AETHER-Ω: proyecciones del kernel ---------- */
@@ -2138,7 +2138,7 @@ td {
 .kx-card h3,
 .kx-sub h4 {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--accent);
@@ -2165,7 +2165,7 @@ td {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
@@ -2183,7 +2183,7 @@ td {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.78rem;
+  font-size: 1rem;
 }
 
 .kx-ok {
@@ -2208,23 +2208,23 @@ td {
   border: 1px solid var(--line);
   border-radius: 3px;
   background: var(--pane);
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .kx-list,
 .kx-checks {
   margin: 0;
   padding-left: 1rem;
-  font-size: 0.78rem;
+  font-size: 1rem;
 }
 
 .kx-checks {
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .kx-detail summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
@@ -2239,7 +2239,7 @@ td {
   border: 1px solid var(--line);
   border-radius: 3px;
   color: var(--accent);
-  font-size: 0.7rem;
+  font-size: 1rem;
 }
 
 /* ---------- Panel del constructor visual: lienzo, retícula y sello ---------- */
@@ -2277,13 +2277,13 @@ td {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
 .vb-field .code {
   min-height: 16rem;
-  font-size: 0.78rem;
+  font-size: 1rem;
 }
 
 /* Disco del lienzo: las coordenadas son las de la espiral áurea del kernel. */
@@ -2314,7 +2314,7 @@ td {
   background: var(--pane);
   color: var(--text);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 1rem;
   transform: translate(-50%, -50%);
   white-space: nowrap;
   cursor: pointer;
@@ -2328,7 +2328,7 @@ tr.vb-selected td {
 
 .vb-node small {
   color: var(--muted);
-  font-size: 0.65rem;
+  font-size: 1rem;
 }
 
 .vb-node em {
@@ -2363,11 +2363,11 @@ tr.vb-selected td {
   margin: 0;
   max-height: 12rem;
   overflow: auto;
-  font-size: 0.72rem;
+  font-size: 1rem;
 }
 
 .vb-cards table button {
-  font-size: 0.7rem;
+  font-size: 1rem;
 }
 
 /* ---------- Cockpit de telemetría ---------- */
@@ -2394,14 +2394,14 @@ tr.vb-selected td {
 
 .ck-head h2 {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent);
 }
 
 .ck-status {
-  font-size: 0.72rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
@@ -2432,7 +2432,7 @@ tr.vb-selected td {
   background: var(--bg);
   color: var(--text);
   font-family: "Consolas", "Segoe UI Mono", monospace;
-  font-size: 0.78rem;
+  font-size: 1rem;
   line-height: 1.4;
   tab-size: 2;
 }
@@ -2492,7 +2492,7 @@ tr.vb-selected td {
 .ck-cell .ck-label {
   grid-area: label;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -2514,7 +2514,7 @@ tr.vb-selected td {
 .ck-cell .ck-pct {
   grid-area: pct;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 1rem;
 }
 
 .ck-true {
@@ -2540,7 +2540,7 @@ tr.vb-selected td {
 
 .ck-mono {
   font-family: "Consolas", "Segoe UI Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 1rem;
 }
 
 .ck-break {
@@ -2556,7 +2556,7 @@ tr.vb-selected td {
 .ck-subhead {
   margin: 0;
   color: var(--root);
-  font-size: 0.75rem;
+  font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -2572,14 +2572,14 @@ tr.vb-selected td {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--bg);
-  font-size: 0.68rem;
+  font-size: 1rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .ck-card details summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 1rem;
 }
 
 .desk {
@@ -2639,7 +2639,7 @@ tr.vb-selected td {
   display: flex;
   gap: 0.4rem;
   align-items: center;
-  font-size: 0.82rem;
+  font-size: 1rem;
 }
 
 .topo-card {
@@ -2647,7 +2647,7 @@ tr.vb-selected td {
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--line);
   border-radius: 4px;
-  font-size: 0.82rem;
+  font-size: 1rem;
   line-height: 1.4;
 }
 
@@ -2705,7 +2705,7 @@ tr.vb-selected td {
 
 .desk-facts dt {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 1rem;
 }
 
 .desk-facts dd {
@@ -2720,7 +2720,7 @@ tr.vb-selected td {
 .desk-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: 1rem;
 }
 
 .desk-table th,
@@ -2741,7 +2741,7 @@ tr.vb-selected td {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: var(--muted);
 }
 
@@ -2780,7 +2780,7 @@ tr.vb-selected td {
 }
 
 .ai-badge {
-  font-size: 0.75rem;
+  font-size: 1rem;
   letter-spacing: 0.02em;
   padding: 0.1rem 0.45rem;
   border: 1px solid #3a4a58;
@@ -2806,7 +2806,7 @@ tr.vb-selected td {
   background: #1a2830;
   color: #e8f0f6;
   border-bottom: 1px solid #c9a227;
-  font-size: 13px;
+  font-size: 1rem;
   flex-shrink: 0;
   z-index: 40;
 }
@@ -2851,7 +2851,7 @@ tr.vb-selected td {
   color: #f0c9a0;
   border: 1px solid #e07a5f;
   border-radius: 4px;
-  font-size: 0.85rem;
+  font-size: 1rem;
   line-height: 1.35;
   flex-shrink: 0;
 }
@@ -2881,7 +2881,7 @@ tr.vb-selected td {
   margin: 0;
   overflow-x: auto;
   overflow-y: auto;
-  font-size: 0.8rem;
+  font-size: 1rem;
 }
 
 /* Ventana pequeña: chrome siempre visible; scroll por zona, no corte. */
@@ -2889,7 +2889,7 @@ tr.vb-selected td {
   :root {
     --side-frac: 0.16;
     --chat-frac: 0.44;
-    --font-min: 13px;
+    --font-min: 14px;
   }
 
   .ide-side {
@@ -2917,7 +2917,7 @@ tr.vb-selected td {
 
   .activity-btn {
     min-height: 2.7rem;
-    font-size: 0.58rem;
+    font-size: 1rem;
   }
 }
 
@@ -2925,7 +2925,7 @@ tr.vb-selected td {
   :root {
     --side-frac: 0.14;
     --chat-frac: 0.48;
-    --font-min: 12px;
+    --font-min: 14px;
   }
 
   .ide-side {
@@ -2950,7 +2950,7 @@ tr.vb-selected td {
   .title-bar button {
     min-height: 1.9rem;
     padding: 0.25rem 0.5rem;
-    font-size: 12px;
+    font-size: 1rem;
   }
 
   .bottom-panel {
@@ -2966,7 +2966,7 @@ tr.vb-selected td {
   background: #132028;
   color: #d7e3f0;
   border-bottom: 1px solid #4fd1c5;
-  font-size: 13px;
+  font-size: 1rem;
 }
 
 .idle-note span {

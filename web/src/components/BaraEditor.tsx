@@ -30,7 +30,7 @@ const baraTheme = EditorView.theme({
     height: "100%",
     backgroundColor: "transparent",
     color: "#d7e3f0",
-    fontSize: "13px",
+    fontSize: "14px",
   },
   ".cm-scroller": {
     fontFamily: "Consolas, 'Segoe UI Mono', monospace",
