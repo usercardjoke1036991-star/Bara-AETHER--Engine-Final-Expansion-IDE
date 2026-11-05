@@ -7,6 +7,7 @@ function handlers(): CommandHandlers {
   return {
     toggleSide: vi.fn(),
     toggleChat: vi.fn(),
+    swapChatEditor: vi.fn(),
     toggleBottom: vi.fn(),
     openBottomTab: vi.fn(),
     openPalette: vi.fn(),

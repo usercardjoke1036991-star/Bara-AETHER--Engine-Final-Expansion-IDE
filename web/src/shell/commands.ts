@@ -12,6 +12,7 @@ export interface CommandAction {
 export interface CommandHandlers {
   toggleSide: (mode: Exclude<SideMode, null>) => void;
   toggleChat: () => void;
+  swapChatEditor: () => void;
   toggleBottom: () => void;
   openBottomTab: (tab: BottomTab) => void;
   openPalette: () => void;
@@ -35,6 +36,12 @@ export function buildCommands(h: CommandHandlers): CommandAction[] {
     { id: "search", label: "Mostrar u ocultar Buscar", keywords: "filtrar archivos", run: () => h.toggleSide("search") },
     { id: "settings", label: "Mostrar u ocultar Ajustes", keywords: "preferencias", run: () => h.toggleSide("settings") },
     { id: "chat", label: "Mostrar u ocultar Chat", keywords: "asistente derecha", run: h.toggleChat },
+    {
+      id: "swap-chat-editor",
+      label: "Intercambiar chat ⇄ editor",
+      keywords: "ctrl alt e orden",
+      run: h.swapChatEditor,
+    },
     { id: "bottom", label: "Mostrar u ocultar panel inferior", keywords: "terminal ctrl j", run: h.toggleBottom },
     { id: "bottom-max", label: "Maximizar panel inferior", keywords: "60%", run: h.maximizeBottom },
     { id: "bottom-min", label: "Minimizar panel inferior", keywords: "solo pestañas", run: h.minimizeBottom },

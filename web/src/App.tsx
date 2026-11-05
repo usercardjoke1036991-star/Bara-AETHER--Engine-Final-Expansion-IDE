@@ -223,6 +223,7 @@ export default function App() {
   /** Anchos flexibles de laterales (fracción CSS, no px fijos del layout). */
   const [sideFrac, setSideFrac] = useState(initialLayout.sideFrac);
   const [chatFrac, setChatFrac] = useState(initialLayout.chatFrac);
+  const [editorFirst, setEditorFirst] = useState(initialLayout.editorFirst);
   /** Banner de parche visible aunque el chat estuviera cerrado. */
   const [patchBanner, setPatchBanner] = useState<string | null>(null);
   /** Aceptar/Rechazar/Deshacer elevados desde ChatPanel (siempre visibles). */
@@ -301,8 +302,9 @@ export default function App() {
       sideFrac,
       chatFrac,
       bottomTab,
+      editorFirst,
     });
-  }, [sideMode, aiOpen, bottomOpen, bottomMaximized, bottomFrac, sideFrac, chatFrac, bottomTab]);
+  }, [sideMode, aiOpen, bottomOpen, bottomMaximized, bottomFrac, sideFrac, chatFrac, bottomTab, editorFirst]);
 
   const toggleSide = useCallback((mode: Exclude<SideMode, null>) => {
     setSideMode((current) => (current === mode ? null : mode));
@@ -341,6 +343,11 @@ export default function App() {
       if (mod && event.altKey && key === "a") {
         event.preventDefault();
         setAiOpen((v) => !v);
+        return;
+      }
+      if (mod && event.altKey && key === "e") {
+        event.preventDefault();
+        setEditorFirst((current) => !current);
         return;
       }
       if (mod && key === "b") {
@@ -1510,6 +1517,7 @@ export default function App() {
   const commands = buildCommands({
     toggleSide,
     toggleChat: () => setAiOpen((v) => !v),
+    swapChatEditor: () => setEditorFirst((current) => !current),
     toggleBottom: () => setBottomOpen((v) => !v),
     openBottomTab,
     openPalette: () => setPaletteOpen(true),
@@ -1635,6 +1643,14 @@ export default function App() {
           onClick={() => setAiOpen((v) => !v)}
         >
           {aiOpen ? "Chat" : "Chat ▸"}
+        </button>
+        <button
+          type="button"
+          title="Intercambiar chat ⇄ editor (Ctrl+Alt+E)"
+          aria-pressed={editorFirst}
+          onClick={() => setEditorFirst((current) => !current)}
+        >
+          ⇄
         </button>
       </header>
       {idle ? (
@@ -1996,7 +2012,7 @@ export default function App() {
         ) : null}
 
         <div className="ide-main-column">
-          <div className="ide-center-row">
+          <div className={`ide-center-row${editorFirst ? " editor-first" : ""}`}>
             {/* Modelo mockup: Asistente al CENTRO · editor a la DERECHA.
                 Chat siempre montado (listener propose-patch). Sticky review intacto. */}
             <aside
@@ -2042,8 +2058,9 @@ export default function App() {
                   const startX = event.clientX;
                   const start = chatFrac;
                   const onMove = (ev: MouseEvent) => {
-                    // Chat a la izquierda del editor: arrastrar a la derecha ensancha el chat.
-                    const delta = (ev.clientX - startX) / window.innerWidth;
+                    // Con el chat a la izquierda, arrastrar a la derecha lo ensancha.
+                    const sign = editorFirst ? -1 : 1;
+                    const delta = (sign * (ev.clientX - startX)) / window.innerWidth;
                     setChatFrac(Math.min(0.62, Math.max(0.32, start + delta)));
                   };
                   const onUp = () => {

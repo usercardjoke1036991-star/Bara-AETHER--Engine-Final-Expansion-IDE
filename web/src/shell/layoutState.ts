@@ -29,6 +29,8 @@ export interface PanelLayout {
   sideFrac: number;
   chatFrac: number;
   bottomTab: BottomTab;
+  /** true: el editor queda a la izquierda y el chat a la derecha. */
+  editorFirst: boolean;
 }
 
 export const DEFAULT_PANEL_LAYOUT: PanelLayout = {
@@ -41,6 +43,7 @@ export const DEFAULT_PANEL_LAYOUT: PanelLayout = {
   // Chat centro = panel principal; editor a la derecha más estrecho.
   chatFrac: 0.48,
   bottomTab: "resumen",
+  editorFirst: false,
 };
 
 const BOTTOM_TABS = new Set<BottomTab>([
@@ -78,6 +81,7 @@ function normalize(parsed: Partial<PanelLayout>): PanelLayout {
     bottomFrac: clamp(parsed.bottomFrac ?? 0.35, 0.15, 0.6),
     sideFrac: clamp(parsed.sideFrac ?? 0.18, 0.12, 0.32),
     chatFrac: clamp(parsed.chatFrac ?? 0.48, 0.32, 0.62),
+    editorFirst: parsed.editorFirst === true,
   };
 }
 

@@ -394,6 +394,32 @@ body,
   background: var(--pane);
 }
 
+.ide-center-row.editor-first .ide-center {
+  order: 1;
+}
+
+.ide-center-row.editor-first .ide-split {
+  order: 2;
+}
+
+.ide-center-row.editor-first .ide-chat {
+  order: 3;
+  border-right: none;
+  border-left: 1px solid var(--line);
+}
+
+@media (min-width: 1366px) {
+  .ide-center {
+    flex: 1 1 480px;
+    min-width: 480px;
+  }
+
+  .ide-chat {
+    flex: 1 1 calc(var(--chat-frac) * 100%);
+    max-width: min(62%, calc(100% - 486px));
+  }
+}
+
 .ide-chat.is-closed,
 .ide-chat[hidden] {
   display: none !important;

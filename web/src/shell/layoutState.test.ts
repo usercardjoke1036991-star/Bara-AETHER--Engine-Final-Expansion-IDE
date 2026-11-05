@@ -37,5 +37,14 @@ describe("migración de paneles", () => {
     expect(stored.bottomTab).toBe("oraculo");
     expect(stored.sideMode).toBe("settings");
     expect(localStorage.getItem("bara.panels.v1")).toContain("oraculo");
+    expect(layout.editorFirst).toBe(false);
+  });
+
+  it("recuerda el intercambio chat ⇄ editor", () => {
+    localStorage.setItem(
+      "bara.panels.v2",
+      JSON.stringify({ editorFirst: true, chatOpen: true, sideMode: "files" }),
+    );
+    expect(loadPanelLayout().editorFirst).toBe(true);
   });
 });

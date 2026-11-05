@@ -47,6 +47,13 @@ describe("tipografía legible", () => {
     expect(small).toEqual([]);
   });
 
+  it("a 1366 px el editor no baja de 480 px", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(join(here, "../styles.css"), "utf8");
+    const block = source.slice(source.indexOf("@media (min-width: 1366px)"));
+    expect(block).toMatch(/\.ide-center\s*\{[^}]*min-width:\s*480px/);
+  });
+
   it("el editor usa 14 px", () => {
     expect(editorSource).toContain('fontSize: "14px"');
     expect(editorSource).not.toContain('fontSize: "13px"');
