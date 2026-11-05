@@ -959,6 +959,46 @@ thread_local! {
     static ATOMIC_FAIL: std::cell::Cell<bool> = std::cell::Cell::new(atomic_fail_init());
 }
 
+#[cfg(test)]
+fn write_counter_init() -> u32 {
+    std::hint::black_box(0)
+}
+
+// `fail_on == 0` no inyecta nada. `fail_on == 2` deja pasar la primera,
+// falla la segunda y las siguientes (el rollback) vuelven a pasar.
+#[cfg(test)]
+thread_local! {
+    static WRITE_CALLS: std::cell::Cell<u32> = std::cell::Cell::new(write_counter_init());
+    static WRITE_FAIL_ON: std::cell::Cell<u32> = std::cell::Cell::new(write_counter_init());
+}
+
+#[cfg(test)]
+pub(crate) fn fail_write_on_call(n: u32) {
+    WRITE_CALLS.set(0);
+    WRITE_FAIL_ON.set(n);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_write_fail() {
+    WRITE_CALLS.set(0);
+    WRITE_FAIL_ON.set(0);
+}
+
+#[cfg(test)]
+fn planned_write_failure() -> Result<(), std::io::Error> {
+    let fail_on = WRITE_FAIL_ON.get();
+    if fail_on == 0 {
+        return Ok(());
+    }
+    let n = WRITE_CALLS.get().saturating_add(1);
+    WRITE_CALLS.set(n);
+    if n == fail_on {
+        Err(std::io::Error::other("escritura simulada"))
+    } else {
+        Ok(())
+    }
+}
+
 /// Escribe en un temporal de la misma carpeta, hace fsync y renombra.
 ///
 /// En Windows 10, `std::fs::rename` usa `MoveFileEx` con reemplazo
@@ -978,6 +1018,8 @@ fn write_atomic(canonical: &Path, source: &str) -> Result<(), std::io::Error> {
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
     let tmp = parent.join(format!(".{name}.{}.{nonce}.bara-tmp", std::process::id()));
+    #[cfg(test)]
+    planned_write_failure()?;
     let written = (|| {
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -998,6 +1040,14 @@ fn write_atomic(canonical: &Path, source: &str) -> Result<(), std::io::Error> {
     if let Err(err) = fs::rename(&tmp, canonical) {
         let _ = fs::remove_file(&tmp);
         return Err(err);
+    }
+    #[cfg(unix)]
+    {
+        // El rename ya sustituyó la entrada. fsync del directorio fija ese
+        // nombre en disco si el proceso muere justo después.
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
     }
     Ok(())
 }

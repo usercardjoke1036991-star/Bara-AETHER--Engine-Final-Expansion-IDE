@@ -271,6 +271,13 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    struct ClearWriteFail;
+    impl Drop for ClearWriteFail {
+        fn drop(&mut self) {
+            workspace::clear_write_fail();
+        }
+    }
+
     fn scratch() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -325,17 +332,24 @@ mod tests {
         fs::write(root.join("src/a.rs"), original).expect("a");
         let b = root.join("src/b.rs");
         fs::write(&b, "fn otro() { alpha(); }\n").expect("b");
-        let mut perms = fs::metadata(&b).expect("meta").permissions();
-        perms.set_readonly(true);
-        fs::set_permissions(&b, perms).expect("solo lectura");
+        // En Linux `rename` sustituye un destino de solo lectura: el permiso
+        // se exige sobre el directorio. La segunda escritura se corta aquí.
+        workspace::fail_write_on_call(2);
+        let _clear = ClearWriteFail;
         let root_text = root.display().to_string();
         let err = propagate(&root_text, "src/a.rs", "alpha", "beta").expect_err("escritura");
         assert!(
             !err.contains("no se pudo deshacer"),
             "el rollback de a.rs tenía que funcionar: {err}"
         );
+        assert!(
+            err.contains("escritura simulada"),
+            "tenía que fallar la segunda escritura: {err}"
+        );
         let restored = fs::read_to_string(root.join("src/a.rs")).expect("a2");
         assert_eq!(restored, original);
+        let untouched = fs::read_to_string(&b).expect("b2");
+        assert!(untouched.contains("alpha"), "{untouched}");
 
         let shown = restore_written(&root_text, &[("../fuera.rs".to_string(), "x".to_string())])
             .expect_err("rollback");
