@@ -15,7 +15,8 @@ export type TokenClass =
   | "str"
   | "newline"
   | "eof"
-  | "punctuation";
+  | "punctuation"
+  | "diagnostic";
 
 /** Token del documento con su posición y sus dos representaciones. */
 export interface TokenInfo {
@@ -39,6 +40,7 @@ export interface Summary {
   punctuation: number;
   newlines: number;
   eof: number;
+  diagnostics: number;
 }
 
 /** Uso de una raíz conocida dentro del documento (`RootUsage`). */
@@ -83,6 +85,7 @@ export const CLASS_LABEL: Record<TokenClass, string> = {
   newline: "nl",
   eof: "eof",
   punctuation: "signo",
+  diagnostic: "aviso",
 };
 
 /** Analiza el texto del editor con el lexer del kernel Bara. */

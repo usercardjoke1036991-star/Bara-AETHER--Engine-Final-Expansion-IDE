@@ -101,6 +101,8 @@ pub enum TokenClass {
     Eof,
     /// Signo de puntuación u operador paraconsistente.
     Punctuation,
+    /// Aviso léxico del kernel (`TokenKind::Diagnostic`, PR #7).
+    Diagnostic,
 }
 
 impl TokenClass {
@@ -115,6 +117,7 @@ impl TokenClass {
             TokenClass::Newline => "nl",
             TokenClass::Eof => "eof",
             TokenClass::Punctuation => "signo",
+            TokenClass::Diagnostic => "aviso",
         }
     }
 }
@@ -164,6 +167,8 @@ pub struct Summary {
     pub newlines: usize,
     /// Centinelas de fin de entrada.
     pub eof: usize,
+    /// Avisos léxicos (`TokenKind::Diagnostic`).
+    pub diagnostics: usize,
 }
 
 /// Uso de una raíz reconocida dentro del documento (panel *outline* del IDE).
@@ -257,6 +262,8 @@ fn token_class(token: &Token) -> TokenClass {
         | TokenKind::Punct(_) => TokenClass::Punctuation,
         TokenKind::Newline => TokenClass::Newline,
         TokenKind::Eof => TokenClass::Eof,
+        // Rama prep/kernel-pr7. No compila con el pin fa3d308.
+        TokenKind::Diagnostic { .. } => TokenClass::Diagnostic,
     }
 }
 
@@ -279,6 +286,7 @@ fn lexeme(token: &Token) -> String {
         TokenKind::Punct(c) => c.to_string(),
         TokenKind::Newline => "\n".to_string(),
         TokenKind::Eof => String::new(),
+        TokenKind::Diagnostic { message } => message.clone(),
     }
 }
 
@@ -310,6 +318,7 @@ fn summarize(tokens: &[Token]) -> Summary {
             TokenClass::Punctuation => summary.punctuation += 1,
             TokenClass::Newline => summary.newlines += 1,
             TokenClass::Eof => summary.eof += 1,
+            TokenClass::Diagnostic => summary.diagnostics += 1,
         }
     }
     summary
@@ -1259,9 +1268,26 @@ mod tests {
             + summary.strings
             + summary.punctuation
             + summary.newlines
-            + summary.eof;
+            + summary.eof
+            + summary.diagnostics;
         assert_eq!(sum, summary.total, "las clases no suman el total");
         assert_eq!(analysis.tokens.len(), summary.total, "tokens != total");
+    }
+
+    #[test]
+    fn un_diagnostico_lexico_cuenta_como_aviso() {
+        let token = Token {
+            kind: TokenKind::Diagnostic {
+                message: "cadena sin cerrar".to_string(),
+            },
+            line: 1,
+            column: 1,
+        };
+        assert_eq!(token_class(&token), TokenClass::Diagnostic);
+        assert_eq!(lexeme(&token), "cadena sin cerrar");
+        let summary = summarize(std::slice::from_ref(&token));
+        assert_eq!(summary.diagnostics, 1);
+        assert_eq!(summary.total, 1);
     }
 
     #[test]

@@ -422,6 +422,7 @@ const CHECKS: Check[] = [
           numbers: 0,
           strings: 0,
           punctuation: 0,
+          diagnostics: 0,
           newlines: 0,
           eof: 1,
         },
