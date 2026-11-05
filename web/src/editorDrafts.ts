@@ -2,6 +2,7 @@
 // Preferencia de autoguardado a disco (on/off).
 
 import { projectKey } from "./ai/projectKey";
+import { contentHashOf } from "./workspace";
 
 const DRAFTS_KEY = "bara.editor.drafts.v1";
 const AUTOSAVE_KEY = "bara.editor.autosave.v1";
@@ -98,6 +99,43 @@ export function listDraftsForProject(workspaceRoot: string): EditorDraft[] {
   return Object.values(readBucket())
     .filter((draft) => draft.projectId === projectId && draft.source.length > 0)
     .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export type DraftSavePlan =
+  | { kind: "write"; expectedHash: string }
+  | { kind: "conflict"; disk: string; draft: string; diskHash: string };
+
+/** Si el disco sigue en la huella del borrador, se puede guardar. Si no, hay conflicto. */
+export function planDraftSave(
+  baseHash: string,
+  diskSource: string,
+  draftSource: string,
+): DraftSavePlan {
+  const diskHash = contentHashOf(diskSource);
+  if (diskHash === baseHash) {
+    return { kind: "write", expectedHash: baseHash };
+  }
+  return { kind: "conflict", disk: diskSource, draft: draftSource, diskHash };
+}
+
+/** Diff línea a línea entre el disco y el borrador. */
+export function draftLineDiff(disk: string, draft: string): string {
+  const left = disk.split("\n");
+  const right = draft.split("\n");
+  const lines: string[] = [];
+  const count = Math.max(left.length, right.length);
+  for (let index = 0; index < count; index += 1) {
+    if (left[index] === right[index]) {
+      continue;
+    }
+    if (left[index] !== undefined) {
+      lines.push(`- ${left[index]}`);
+    }
+    if (right[index] !== undefined) {
+      lines.push(`+ ${right[index]}`);
+    }
+  }
+  return lines.length > 0 ? lines.join("\n") : "(el contenido no coincide, pero las líneas se ven iguales)";
 }
 
 export function takeDraft(workspaceRoot: string, path: string): EditorDraft | null {

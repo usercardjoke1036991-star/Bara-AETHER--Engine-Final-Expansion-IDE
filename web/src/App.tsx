@@ -24,6 +24,7 @@ import {
   type SideMode,
 } from "./shell/layoutState";
 import PortalMenu, { type PortalMenuItem } from "./shell/PortalMenu";
+import DraftConflictDialog from "./shell/DraftConflictDialog";
 import UnsavedRootDialog, { unsavedTabs } from "./shell/UnsavedRootDialog";
 import StatusBar from "./shell/StatusBar";
 import { bottomHeightCss, escStopsAtField, EXPERT_VIEW_BLURBS, nextEscTarget } from "./shell/uxRules";
@@ -49,9 +50,11 @@ import {
 } from "./engine";
 import {
   clearDraft,
+  draftLineDiff,
   listDraftsForProject,
   loadAutosaveEnabled,
   saveAutosaveEnabled,
+  planDraftSave,
   saveDraft,
   takeDraft,
 } from "./editorDrafts";
@@ -142,6 +145,8 @@ interface EditorTab {
   source: string;
   /** Último texto confirmado en disco. */
   saved: string;
+  /** Huella del disco cuando nació el borrador. El guardado la usa en vez de `saved`. */
+  baseHash?: string;
 }
 
 /**
@@ -239,6 +244,12 @@ export default function App() {
   const [diskWarn, setDiskWarn] = useState<string | null>(null);
   /** A3: nombres sucios pendientes de Guardar / Descartar / Cancelar. */
   const [unsavedNames, setUnsavedNames] = useState<string[] | null>(null);
+  const [draftConflict, setDraftConflict] = useState<{
+    path: string;
+    disk: string;
+    draft: string;
+    diskHash: string;
+  } | null>(null);
   const [diskBusy, setDiskBusy] = useState(false);
   /** Sesión del oráculo: estado que mide el kernel y último turno conversado. */
   const [oracle, setOracle] = useState<SessionStatus | null>(null);
@@ -960,6 +971,31 @@ export default function App() {
     [activePath, tabs],
   );
 
+  /** Guarda una pestaña. `expectedHash` pisa el disco cuando el usuario ya vio el conflicto. */
+  const persistTab = useCallback(
+    async (path: string, source: string, expectedHash: string) => {
+      setSaving(true);
+      try {
+        const document = await workspaceWriteDocument(path, source, expectedHash);
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.path === document.path
+              ? { ...tab, saved: document.source, baseHash: undefined }
+              : tab,
+          ),
+        );
+        clearDraft(workspaceRoot, document.path);
+        setDraftConflict(null);
+        setError(null);
+      } catch (failure) {
+        setError(describeError(failure));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [workspaceRoot],
+  );
+
   /** Guarda el documento activo con `workspace_write_document`. */
   const saveActive = useCallback(async () => {
     if (!activeTab || activeTab.source === activeTab.saved) {
@@ -970,28 +1006,24 @@ export default function App() {
       return;
     }
 
-    setSaving(true);
+    const baseHash = activeTab.baseHash ?? contentHashOf(activeTab.saved);
     try {
-      const document = await workspaceWriteDocument(
-        activeTab.path,
-        activeTab.source,
-        contentHashOf(activeTab.saved),
-      );
-      // Se actualiza sólo la marca de guardado: si el usuario escribió
-      // mientras se persistía, su texto vivo no se pisa.
-      setTabs((current) =>
-        current.map((tab) =>
-          tab.path === document.path ? { ...tab, saved: document.source } : tab,
-        ),
-      );
-      clearDraft(workspaceRoot, document.path);
-      setError(null);
-    } catch (failure) {
-      setError(describeError(failure));
-    } finally {
-      setSaving(false);
+      const onDisk = await workspaceReadDocument(activeTab.path);
+      const plan = planDraftSave(baseHash, onDisk.source, activeTab.source);
+      if (plan.kind === "conflict") {
+        setDraftConflict({
+          path: activeTab.path,
+          disk: plan.disk,
+          draft: plan.draft,
+          diskHash: plan.diskHash,
+        });
+        return;
+      }
+      await persistTab(activeTab.path, activeTab.source, plan.expectedHash);
+    } catch {
+      await persistTab(activeTab.path, activeTab.source, baseHash);
     }
-  }, [activeTab, workspaceRoot]);
+  }, [activeTab, persistTab, workspaceRoot]);
 
   // Ctrl/Cmd+S guarda el documento activo sin sacar el foco del editor.
   useEffect(() => {
@@ -1014,7 +1046,7 @@ export default function App() {
       workspaceRoot,
       activeTab.path,
       activeTab.source,
-      contentHashOf(activeTab.saved),
+      activeTab.baseHash ?? contentHashOf(activeTab.saved),
     );
     if (!loadAutosaveEnabled()) {
       return undefined;
@@ -1052,14 +1084,12 @@ export default function App() {
     if (!draft) {
       return;
     }
-    // `saved` distinto → queda «sin guardar» hasta que el usuario persista.
-    const diskPlaceholder = draft.source === "" ? " " : "";
     setTabs((current) => {
       const hit = current.find((tab) => pathsEqual(tab.path, draft.path));
       if (hit) {
         return current.map((tab) =>
           pathsEqual(tab.path, draft.path)
-            ? { ...tab, source: draft.source, saved: diskPlaceholder }
+            ? { ...tab, source: draft.source, baseHash: draft.savedHash }
             : tab,
         );
       }
@@ -1069,7 +1099,8 @@ export default function App() {
           path: draft.path,
           name: draft.path.split("/").pop() ?? draft.path,
           source: draft.source,
-          saved: diskPlaceholder,
+          saved: draft.source === "" ? " " : "",
+          baseHash: draft.savedHash,
         },
       ];
     });
@@ -1546,6 +1577,22 @@ export default function App() {
         } as CSSProperties
       }
     >
+      {draftConflict ? (
+        <DraftConflictDialog
+          path={draftConflict.path}
+          diff={draftLineDiff(draftConflict.disk, draftConflict.draft)}
+          busy={saving}
+          onOverwrite={() => {
+            const live = tabsRef.current.find((tab) => tab.path === draftConflict.path);
+            void persistTab(
+              draftConflict.path,
+              live?.source ?? draftConflict.draft,
+              draftConflict.diskHash,
+            );
+          }}
+          onCancel={() => setDraftConflict(null)}
+        />
+      ) : null}
       {unsavedNames ? (
         <UnsavedRootDialog
           names={unsavedNames}
