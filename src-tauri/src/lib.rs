@@ -514,7 +514,7 @@ fn confirm_auto_patch(
 
 /// Restaura un archivo desde un respaldo relativo bajo `.bara-backup/`.
 #[tauri::command]
-fn undo_auto_patch(
+async fn undo_auto_patch(
     window: tauri::WebviewWindow,
     path: String,
     backup_path: String,
@@ -522,15 +522,45 @@ fn undo_auto_patch(
     kernel: tauri::State<'_, KernelHost>,
 ) -> Result<Value, String> {
     window_guard::require(&window, window_guard::MAIN)?;
-    kernel_call(
-        &kernel,
-        "undo_patch",
-        json!({
-            "root": state.get()?,
-            "path": path,
-            "backup_path": backup_path,
-        }),
-    )
+    let root = state.get()?;
+    let args = json!({
+        "root": root,
+        "path": path,
+        "backup_path": backup_path,
+    });
+    match kernel_call(&kernel, "undo_patch", args.clone()) {
+        Ok(value) => Ok(value),
+        Err(error) if error.contains("conflicto:") => {
+            let diff = error
+                .split_once("conflicto:")
+                .map(|(_, rest)| rest.trim())
+                .unwrap_or(error.as_str());
+            let body = format!(
+                "El archivo cambió después de aceptar. El disco no se ha tocado.\n\n{diff}\n\n¿Restaurar igualmente?"
+            );
+            let accepted = tauri::async_runtime::spawn_blocking(move || {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+                window
+                    .dialog()
+                    .message(body)
+                    .title("Conflicto al deshacer")
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::YesNo)
+                    .blocking_show()
+            })
+            .await
+            .map_err(|_| "el diálogo de conflicto se interrumpió".to_string())?;
+            if !accepted {
+                return Err("cancelado".to_string());
+            }
+            let mut forced = args;
+            if let Some(map) = forced.as_object_mut() {
+                map.insert("force".to_string(), Value::Bool(true));
+            }
+            kernel_call(&kernel, "undo_patch", forced)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Elige un `.gguf` en el diálogo del sistema y guarda sólo su cabecera.

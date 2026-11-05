@@ -215,11 +215,23 @@ fn handle(world: &mut World, op: &str, args: &Value) -> Result<Value, String> {
             text(args, "patch")?,
             text(args, "judgment_id")?,
         )),
-        "undo_patch" => result_of(auto_apply::undo(
-            text(args, "root")?,
-            text(args, "path")?,
-            text(args, "backup_path")?,
-        )),
+        "undo_patch" => {
+            let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+            let restore = if force {
+                auto_apply::undo_forced(
+                    text(args, "root")?,
+                    text(args, "path")?,
+                    text(args, "backup_path")?,
+                )
+            } else {
+                auto_apply::undo(
+                    text(args, "root")?,
+                    text(args, "path")?,
+                    text(args, "backup_path")?,
+                )
+            };
+            result_of(restore)
+        }
         "transmute_global" => result_of(global_transmute::propagate(
             text(args, "root")?,
             text(args, "path")?,

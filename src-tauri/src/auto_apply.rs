@@ -486,9 +486,17 @@ pub fn confirm(
             return Err(format!("mapa no disponible; no se escribió: {err}"));
         }
     }
+    let prior_hash = on_disk.content_hash.clone();
     let backup_path = write_backup(root, path, &on_disk.source)?;
     let document: WorkspaceDocument =
         workspace::write_source_checked(root, path, &next, Some(on_disk.content_hash.as_str()))?;
+    write_manifest(
+        root,
+        &backup_path,
+        path,
+        &prior_hash,
+        &document.content_hash,
+    )?;
     Ok(AutoApplyReport {
         glyph: verdict.value.glyph().to_string(),
         status: status_key(verdict.value).to_string(),
@@ -507,16 +515,98 @@ pub fn confirm(
     })
 }
 
+fn manifest_rel(backup_path: &str) -> String {
+    format!("{}.manifest.json", backup_path.replace('\\', "/"))
+}
+
+fn write_manifest(
+    root: &str,
+    backup_path: &str,
+    path: &str,
+    prior_hash: &str,
+    post_hash: &str,
+) -> Result<(), String> {
+    let rel = manifest_rel(backup_path);
+    let root_path = workspace::resolve_root(root)?;
+    let member = workspace::safe_relative(&rel)?;
+    let target = root_path.join(member);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("no se pudo crear el manifiesto: {err}"))?;
+    }
+    let body = serde_json::json!({
+        "path": path.replace('\\', "/"),
+        "priorHash": prior_hash,
+        "postHash": post_hash,
+    });
+    let bytes = serde_json::to_vec_pretty(&body)
+        .map_err(|err| format!("no se pudo serializar el manifiesto: {err}"))?;
+    fs::write(&target, bytes).map_err(|err| format!("no se pudo guardar el manifiesto: {err}"))?;
+    Ok(())
+}
+
+struct BackupManifest {
+    path: String,
+    post_hash: String,
+}
+
+fn read_manifest(root_path: &Path, backup_path: &str) -> Result<BackupManifest, String> {
+    let rel = manifest_rel(backup_path);
+    let member = workspace::safe_relative(&rel)?;
+    let target = root_path.join(member);
+    let bytes = fs::read(&target)
+        .map_err(|_| format!("el respaldo «{backup_path}» no tiene manifiesto; no se deshace"))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|err| format!("el manifiesto del respaldo no se lee: {err}"))?;
+    let path = value
+        .get("path")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .replace('\\', "/");
+    let post_hash = value
+        .get("postHash")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string();
+    if path.is_empty() || post_hash.is_empty() {
+        return Err("el manifiesto del respaldo está incompleto".to_string());
+    }
+    Ok(BackupManifest { path, post_hash })
+}
+
 /// Restaura el archivo desde un respaldo relativo bajo `.bara-backup/`.
 pub fn undo(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport, String> {
+    undo_inner(root, path, backup_path, false)
+}
+
+/// Igual que [`undo`], pero confirma un conflicto de hash ya mostrado al usuario.
+pub fn undo_forced(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport, String> {
+    undo_inner(root, path, backup_path, true)
+}
+
+fn undo_inner(
+    root: &str,
+    path: &str,
+    backup_path: &str,
+    force: bool,
+) -> Result<AutoApplyReport, String> {
     if backup_path.trim().is_empty() {
         return Err("deshacer exige la ruta del respaldo en .bara-backup/".to_string());
     }
-    if !backup_path.replace('\\', "/").starts_with(".bara-backup/") {
+    let backup_path = backup_path.replace('\\', "/");
+    if !backup_path.starts_with(".bara-backup/") {
         return Err("el respaldo debe vivir bajo .bara-backup/".to_string());
     }
     let root_path = workspace::resolve_root(root)?;
-    let member = workspace::safe_relative(backup_path)?;
+    let manifest = read_manifest(&root_path, &backup_path)?;
+    let wanted = path.replace('\\', "/");
+    if manifest.path != wanted {
+        return Err(format!(
+            "el respaldo pertenece a «{}», no a «{wanted}»; no se deshace",
+            manifest.path
+        ));
+    }
+    let member = workspace::safe_relative(&backup_path)?;
     let backup = root_path.join(member);
     let canonical =
         fs::canonicalize(&backup).map_err(|err| format!("no se pudo abrir el respaldo: {err}"))?;
@@ -525,6 +615,12 @@ pub fn undo(root: &str, path: &str, backup_path: &str) -> Result<AutoApplyReport
     }
     let previous = fs::read_to_string(&canonical)
         .map_err(|err| format!("no se pudo leer el respaldo: {err}"))?;
+    let current = workspace::read_text(root, path)?;
+    if current.content_hash != manifest.post_hash && !force {
+        let diff = unified_diff(path, &previous, &current.source);
+        return Err(format!("conflicto:\n{diff}"));
+    }
+    let _safety = write_backup(root, path, &current.source)?;
     let document = workspace::write_source(root, path, &previous)?;
     Ok(AutoApplyReport {
         glyph: "⊤".to_string(),
@@ -816,5 +912,67 @@ mod tests {
         assert!(undone.applied);
         let restored = fs::read_to_string(root.join("src/lib.rs")).expect("restored");
         assert_eq!(restored, host);
+    }
+
+    #[test]
+    fn m2_edicion_posterior_avisa_y_no_pisa_el_disco() {
+        let root = scratch();
+        fs::write(root.join("src/lib.rs"), "fn alpha() {}\n").expect("semilla");
+        let root_text = root.display().to_string();
+        let host = "fn alpha() {}\n";
+        let patch = "fn beta() {}\n";
+        let preview = judge(&root_text, "src/lib.rs", 2, host, patch).expect("juicio");
+        let written = confirm(
+            &root_text,
+            "src/lib.rs",
+            2,
+            host,
+            patch,
+            &preview.judgment_id,
+        )
+        .expect("aceptar");
+        let edited = "fn beta() { /* a mano */ }\n";
+        fs::write(root.join("src/lib.rs"), edited).expect("edicion");
+        let conflict = undo(&root_text, "src/lib.rs", &written.backup_path).expect_err("conflicto");
+        assert!(conflict.contains("conflicto:"), "{conflict}");
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).expect("intacto"),
+            edited
+        );
+        let restored = undo_forced(&root_text, "src/lib.rs", &written.backup_path).expect("forzar");
+        assert!(restored.applied);
+        assert_eq!(
+            fs::read_to_string(root.join("src/lib.rs")).expect("original"),
+            host
+        );
+    }
+
+    #[test]
+    fn m2_manifiesto_de_otra_ruta_rechaza() {
+        let root = scratch();
+        fs::write(root.join("src/lib.rs"), "fn alpha() {}\n").expect("semilla");
+        fs::write(root.join("src/other.rs"), "fn other() {}\n").expect("otro");
+        let root_text = root.display().to_string();
+        let host = "fn alpha() {}\n";
+        let patch = "fn beta() {}\n";
+        let preview = judge(&root_text, "src/lib.rs", 2, host, patch).expect("juicio");
+        let written = confirm(
+            &root_text,
+            "src/lib.rs",
+            2,
+            host,
+            patch,
+            &preview.judgment_id,
+        )
+        .expect("aceptar");
+        let err = undo(&root_text, "src/other.rs", &written.backup_path).expect_err("ruta");
+        assert!(err.contains("no a"), "{err}");
+        assert!(fs::read_to_string(root.join("src/lib.rs"))
+            .expect("lib")
+            .contains("beta"));
+        assert_eq!(
+            fs::read_to_string(root.join("src/other.rs")).expect("other"),
+            "fn other() {}\n"
+        );
     }
 }
